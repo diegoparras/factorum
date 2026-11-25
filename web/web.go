@@ -3,5 +3,5 @@ package web
 
 import "embed"
 
-//go:embed index.html app.js estilo.css
+//go:embed index.html app.js estilo.css tema.js escriba-ui.css
 var Archivos embed.FS

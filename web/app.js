@@ -1,0 +1,578 @@
+'use strict';
+// Factorum: interfaz sin frameworks ni build. Sin scripts ni handlers inline (CSP): todo por delegación.
+
+const $ = (s, el = document) => el.querySelector(s);
+const $$ = (s, el = document) => [...el.querySelectorAll(s)];
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const soloDig = (s) => String(s || '').replace(/\D/g, '');
+
+// ---------- Íconos (SVG line, sin emojis: regla de la suite) ----------
+const svg = (d) => `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
+const I = {
+  verificar: svg('<path d="M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6z"/><path d="M9 12l2 2 4-4"/>'),
+  subir: svg('<path d="M12 16V4M7 9l5-5 5 5"/><path d="M4 20h16"/>'),
+  lotes: svg('<rect x="4" y="4" width="16" height="5" rx="1.5"/><rect x="4" y="11" width="16" height="9" rx="1.5"/>'),
+  comprobantes: svg('<path d="M6 3h9l3 3v15l-3-2-3 2-3-2-3 2z"/><path d="M9 9h6M9 13h6"/>'),
+  resumen: svg('<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>'),
+  canales: svg('<path d="M21 12a8 8 0 0 1-11.5 7.2L4 21l1.8-5.5A8 8 0 1 1 21 12z"/>'),
+  ojo: svg('<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>'),
+  ojoNo: svg('<path d="M3 3l18 18"/><path d="M10.6 5.1A10 10 0 0 1 12 5c6.5 0 10 7 10 7a17 17 0 0 1-3 3.9M6.6 6.6C3.8 8.4 2 12 2 12s3.5 7 10 7a9.8 9.8 0 0 0 5.4-1.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/>'),
+  sol: svg('<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>'),
+  luna: svg('<path d="M21 13A9 9 0 1 1 11 3a7 7 0 0 0 10 10z"/>'),
+  salir: svg('<path d="M15 4h4v16h-4M10 8l-4 4 4 4M6 12h11"/>'),
+  info: svg('<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/>'),
+};
+
+const VISTAS = [
+  ['verificar', 'Verificar'], ['subir', 'Cargar facturas'], ['lotes', 'Lotes'],
+  ['comprobantes', 'Comprobantes'], ['resumen', 'Resumen'], ['canales', 'Canales'],
+];
+
+// ---------- Estado ----------
+let CLAVE = '';
+let SALUD = null;
+let vista = 'verificar';
+const filtro = { estado: '', q: '', cliente: '', desde: '', hasta: '', lote: '', offset: 0, limite: 100 };
+let listado = []; // comprobantes de la tabla, para Anterior / Siguiente
+let rev = null; // { idx, cbte, original }
+let timerLotes = null;
+let timerCanales = null;
+
+function leerClave() {
+  try { return sessionStorage.getItem('factorum.clave') || localStorage.getItem('factorum.clave') || ''; } catch { return ''; }
+}
+function guardarClave(c, recordar) {
+  try {
+    sessionStorage.setItem('factorum.clave', c);
+    if (recordar) localStorage.setItem('factorum.clave', c); else localStorage.removeItem('factorum.clave');
+  } catch { /* sin almacenamiento */ }
+}
+function borrarClave() {
+  try { sessionStorage.removeItem('factorum.clave'); localStorage.removeItem('factorum.clave'); } catch { /* nada */ }
+}
+
+// ---------- API ----------
+async function api(ruta, opts = {}) {
+  const h = Object.assign({ 'X-API-Key': CLAVE }, opts.headers || {});
+  if (opts.json !== undefined) { h['Content-Type'] = 'application/json'; opts.body = JSON.stringify(opts.json); }
+  const r = await fetch(ruta, { method: opts.method || 'GET', headers: h, body: opts.body });
+  if (r.status === 401) { salir(); throw new Error('La clave no es válida'); }
+  if (opts.binario) {
+    if (!r.ok) throw new Error(`Error ${r.status}`);
+    return r.blob();
+  }
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok || d.ok === false) throw new Error(d.error || `Error ${r.status}`);
+  return d;
+}
+
+function toast(msg, err) {
+  const t = $('#toast');
+  t.textContent = msg;
+  t.className = 'toast' + (err ? ' err' : '');
+  clearTimeout(toast.t);
+  toast.t = setTimeout(() => t.classList.add('hidden'), err ? 6000 : 3000);
+}
+
+// ---------- Formatos ----------
+const pesos = (v) => {
+  const n = Number(v || 0);
+  return n.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+};
+const fecha = (s) => (s ? String(s).slice(0, 10).split('-').reverse().join('/') : '');
+const cuit = (s) => { const d = soloDig(s); return d.length === 11 ? `${d.slice(0, 2)}-${d.slice(2, 10)}-${d.slice(10)}` : (s || ''); };
+const TIPOS = { 1: 'Factura A', 2: 'Nota de Débito A', 3: 'Nota de Crédito A', 6: 'Factura B', 7: 'Nota de Débito B', 8: 'Nota de Crédito B',
+  11: 'Factura C', 12: 'Nota de Débito C', 13: 'Nota de Crédito C', 19: 'Factura E', 51: 'Factura M', 201: 'FCE MiPyME A', 206: 'FCE MiPyME B', 211: 'FCE MiPyME C' };
+const nombreCbte = (c) => `${TIPOS[c.tipo] || 'Comprobante ' + (c.tipo || '')} ${String(c.punto_venta || 0).padStart(5, '0')}-${String(c.numero || 0).padStart(8, '0')}`;
+const ETQ = { ok: 'Bien', revisar: 'Revisar', error: 'Con errores', aprobado: 'Aprobado',
+  valida: 'Válida', invalida: 'No válida', apocrifa: 'Emisor apócrifo', con_errores: 'Con errores', no_verificable: 'No verificable' };
+const estado = (e) => `<span class="est ${esc(e)}">${esc(ETQ[e] || e)}</span>`;
+const ORIGEN = { qr: 'QR', texto: 'texto', ocr: 'OCR', vision: 'IA', manual: 'manual', arcanum: 'ARCA', calculo: 'cálculo' };
+
+function hallazgosHTML(h) {
+  if (!h || !h.length) return '';
+  return `<ul class="hall">${h.map((x) => `<li class="${esc(x.nivel)}">${esc(x.mensaje)}</li>`).join('')}</ul>`;
+}
+
+// ---------- Navegación ----------
+function pintarNav() {
+  $('#nav').innerHTML = VISTAS.map(([id, t]) =>
+    `<button type="button" class="nav-it${id === vista ? ' active' : ''}" data-accion="ir" data-vista="${id}" title="${t}" aria-label="${t}"${id === vista ? ' aria-current="page"' : ''}>${I[id]}<span>${t}</span></button>`).join('');
+}
+
+function ir(v) {
+  vista = v;
+  $$('.vista').forEach((s) => s.classList.toggle('hidden', s.id !== 'v-' + v));
+  pintarNav();
+  document.documentElement.removeAttribute('data-nav-movil');
+  clearInterval(timerLotes); clearInterval(timerCanales);
+  if (v === 'lotes') { cargarLotes(); timerLotes = setInterval(cargarLotes, 3000); }
+  if (v === 'comprobantes') cargarCbtes();
+  if (v === 'resumen') cargarResumen();
+  if (v === 'canales') { cargarCanales(); timerCanales = setInterval(cargarCanales, 5000); }
+  try { history.replaceState(null, '', '#' + v); } catch { /* nada */ }
+}
+
+function toggleNav() {
+  if (matchMedia('(max-width: 760px)').matches) {
+    const el = document.documentElement;
+    if (el.getAttribute('data-nav-movil') === 'abierto') el.removeAttribute('data-nav-movil'); else el.setAttribute('data-nav-movil', 'abierto');
+    return;
+  }
+  const min = document.documentElement.getAttribute('data-nav') === 'min';
+  if (min) document.documentElement.removeAttribute('data-nav'); else document.documentElement.setAttribute('data-nav', 'min');
+  try { localStorage.setItem('factorum.nav', min ? '' : 'min'); } catch { /* nada */ }
+}
+
+function pintarMenu() {
+  const dark = document.documentElement.getAttribute('data-theme') === 'dark';
+  const s = SALUD || {};
+  const ia = s.ia && s.ia.habilitada ? `${esc(s.ia.modelo)}${s.ia.local ? ' (local)' : ' (externo)'}` : 'apagada';
+  $('#menu').innerHTML = `
+    <div class="menu-user">Factorum ${esc(s.version || '')}</div>
+    <div class="menu-field"><dl class="kv">
+      <dt>OCR</dt><dd>${s.ocr ? 'Tesseract' : 'no instalado'}</dd>
+      <dt>IA</dt><dd>${ia}</dd>
+      <dt>Arcanum</dt><dd>${s.arcanum ? 'conectado' : 'sin configurar'}</dd>
+      <dt>Almacén</dt><dd>${esc(s.almacen || '')}${s.cifrado ? ', cifrado' : ', sin cifrar'}</dd>
+    </dl></div>
+    <div class="menu-sep"></div>
+    <button class="menu-item" data-accion="tema">${dark ? I.sol : I.luna}<span>${dark ? 'Tema claro' : 'Tema oscuro'}</span></button>
+    <a class="menu-item" href="https://github.com/diegoparras/contadorfacturas" target="_blank" rel="noopener">${I.info}<span>Acerca de Factorum</span></a>
+    <div class="menu-sep"></div>
+    <button class="menu-item" data-accion="salir">${I.salir}<span>Cerrar sesión</span></button>`;
+}
+
+async function cargarSalud() {
+  try {
+    const r = await fetch('/healthz');
+    SALUD = await r.json();
+    const chip = $('#saludChip');
+    chip.textContent = SALUD.base ? '' : 'Sin conexión con la base';
+    chip.classList.toggle('mal', !SALUD.base);
+    $('#loteConstatar').closest('label').classList.toggle('hidden', !SALUD.arcanum);
+    $('#loteIA').closest('label').classList.toggle('hidden', !(SALUD.ia && SALUD.ia.habilitada));
+    $('#iaVerificar').closest('label').classList.toggle('hidden', !(SALUD.ia && SALUD.ia.habilitada));
+  } catch { /* se reintenta en la próxima acción */ }
+}
+
+// ---------- Login ----------
+function mostrarLogin(err) {
+  $('#login').classList.remove('hidden');
+  $('#loginErr').textContent = err || '';
+  $('#loginErr').classList.toggle('hidden', !err);
+  setTimeout(() => $('#clave').focus(), 50);
+}
+
+async function entrar(c, recordar) {
+  CLAVE = c;
+  try {
+    await api('/api/lotes?limite=1');
+    guardarClave(c, recordar);
+    $('#login').classList.add('hidden');
+    await cargarSalud();
+    const pedida = location.hash.slice(1);
+    ir(VISTAS.some(([id]) => id === pedida) ? pedida : 'verificar');
+  } catch (e) {
+    CLAVE = '';
+    mostrarLogin(e.message);
+  }
+}
+
+function salir() {
+  CLAVE = '';
+  borrarClave();
+  clearInterval(timerLotes); clearInterval(timerCanales);
+  mostrarLogin();
+}
+
+// ---------- Verificar ----------
+async function verificar(ev) {
+  ev.preventDefault();
+  const f = $('#archVerificar').files[0];
+  if (!f) return;
+  const fd = new FormData();
+  fd.append('archivo', f);
+  if (soloDig($('#cuitConsultante').value)) fd.append('cuit_consultante', soloDig($('#cuitConsultante').value));
+  fd.append('ia', $('#iaVerificar').checked ? 'true' : 'false');
+  const btn = $('#fVerificar button[type=submit]');
+  btn.disabled = true; btn.textContent = 'Verificando...';
+  try {
+    const r = await api('/api/verificar', { method: 'POST', body: fd });
+    pintarVerificacion(r);
+  } catch (e) {
+    toast(e.message, true);
+  } finally {
+    btn.disabled = false; btn.textContent = 'Verificar';
+  }
+}
+
+function pintarVerificacion(r) {
+  const res = r.resultado || {};
+  const cbs = res.comprobantes || [];
+  const kons = r.constatacion || [];
+  const filas = cbs.map((rc, i) => {
+    const c = rc.comprobante;
+    const k = kons[i];
+    const v = (r.comprobantes || [])[i];
+    return `<div class="card">
+      <div class="fila" style="justify-content:space-between"><strong>${esc(nombreCbte(c))}</strong>${v ? estado(v.veredicto) : estado(rc.estado)}</div>
+      <dl class="kv">
+        <dt>Emisor</dt><dd>${esc(c.razon_social_emisor || '')} <span class="mono">${esc(cuit(c.cuit_emisor))}</span></dd>
+        <dt>Fecha</dt><dd>${fecha(c.fecha)}</dd>
+        <dt>Total</dt><dd class="mono">$ ${pesos(c.total)} ${c.moneda && c.moneda !== 'PES' ? esc(c.moneda) : ''}</dd>
+        <dt>CAE</dt><dd class="mono">${esc(c.cae || 'no encontrado')} ${c.vto_cae ? '(vence ' + fecha(c.vto_cae) + ')' : ''}</dd>
+        ${k && k.resultado ? `<dt>ARCA</dt><dd>${k.valido ? 'Constatado: el comprobante existe con estos datos.' : 'Rechazado: ' + esc((k.observaciones || []).map((o) => o.message).join(' '))}</dd>` : ''}
+        ${k && k.apoc && k.apoc.consultado ? `<dt>Apócrifos</dt><dd>${k.apoc.esApocrifo ? '<strong class="est error">El emisor figura como apócrifo</strong>' : 'El emisor no figura en la base'}</dd>` : ''}
+        <dt>Leído con</dt><dd>${(res.extractores || []).map((x) => `<span class="origen ${esc(x)}">${esc(ORIGEN[x] || x)}</span>`).join(' ')} <span class="muted">${res.duracion_ms} ms</span></dd>
+      </dl>
+      ${hallazgosHTML(rc.hallazgos.filter((h) => h.nivel !== 'info' || h.codigo === 'constatado'))}
+    </div>`;
+  }).join('');
+  $('#resVerificar').innerHTML = `<div class="veredicto ${esc(r.veredicto)}"><div class="titulo">${esc(ETQ[r.veredicto] || r.veredicto)}</div><div>${esc(r.mensaje)}</div></div>${filas}`;
+}
+
+// ---------- Subir ----------
+async function subir(ev) {
+  ev.preventDefault();
+  const files = $('#archSubir').files;
+  if (!files.length) return;
+  const fd = new FormData();
+  for (const f of files) fd.append('archivos', f);
+  fd.append('nombre', $('#loteNombre').value.trim());
+  fd.append('cliente_cuit', soloDig($('#loteCliente').value));
+  fd.append('ia', $('#loteIA').checked ? 'true' : 'false');
+  fd.append('constatar', $('#loteConstatar').checked ? 'true' : 'false');
+  const prog = $('#progSubir');
+  prog.classList.remove('hidden');
+  const btn = $('#fSubir button[type=submit]');
+  btn.disabled = true;
+  // XHR para tener el progreso de la subida (fetch no lo da).
+  const xhr = new XMLHttpRequest();
+  xhr.open('POST', '/api/lotes');
+  xhr.setRequestHeader('X-API-Key', CLAVE);
+  xhr.upload.onprogress = (e) => { if (e.lengthComputable) prog.firstElementChild.style.width = `${Math.round((e.loaded / e.total) * 100)}%`; };
+  xhr.onload = () => {
+    btn.disabled = false;
+    prog.classList.add('hidden');
+    prog.firstElementChild.style.width = '0';
+    let d = {};
+    try { d = JSON.parse(xhr.responseText); } catch { /* nada */ }
+    if (xhr.status >= 300 || !d.ok) { toast(d.error || `Error ${xhr.status}`, true); return; }
+    let msg = `Lote ${d.lote.id}: ${d.recibidos} archivo(s) recibidos.`;
+    if (d.repetidos) msg += ` ${d.repetidos} ya estaban cargados.`;
+    if (d.descartados && d.descartados.length) msg += ` Se omitieron: ${d.descartados.join(', ')}.`;
+    toast(msg);
+    $('#fSubir').reset();
+    ir('lotes');
+  };
+  xhr.onerror = () => { btn.disabled = false; prog.classList.add('hidden'); toast('No se pudo subir', true); };
+  xhr.send(fd);
+}
+
+// ---------- Lotes ----------
+async function cargarLotes() {
+  try {
+    const { lotes } = await api('/api/lotes?limite=50');
+    if (!lotes.length) { $('#tablaLotes').innerHTML = '<p class="muted">Todavía no hay lotes. Cargá facturas desde "Cargar facturas" o mandalas por chat.</p>'; return; }
+    $('#tablaLotes').innerHTML = `<div class="tabla-scroll"><table class="t"><thead><tr><th>Lote</th><th>Origen</th><th>Cliente</th><th>Creado</th><th>Progreso</th><th>Bien</th><th>Revisar</th><th>Errores</th><th></th></tr></thead><tbody>
+      ${lotes.map((l) => {
+        const pct = l.documentos ? Math.round((l.procesados / l.documentos) * 100) : 100;
+        const c = l.comprobantes || {};
+        return `<tr class="clic" data-accion="verLote" data-id="${l.id}"><td><strong>${l.id}</strong> ${esc(l.nombre)}</td><td>${esc(l.origen)}</td><td class="mono">${esc(cuit(l.cliente_cuit))}</td>
+          <td>${new Date(l.creado).toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' })}</td>
+          <td><span class="prog mini-prog"><div style="width:${pct}%"></div></span> <span class="muted">${l.procesados}/${l.documentos}</span>${l.con_error ? ` <span class="est error">${l.con_error} ilegibles</span>` : ''}</td>
+          <td class="num">${(c.ok || 0) + (c.aprobado || 0)}</td><td class="num">${c.revisar || 0}</td><td class="num">${c.error || 0}</td>
+          <td><button class="ghost mini" data-accion="exportarLote" data-id="${l.id}">Excel</button></td></tr>`;
+      }).join('')}</tbody></table></div>`;
+  } catch (e) { toast(e.message, true); }
+}
+
+// ---------- Comprobantes ----------
+function qsFiltro(extra = {}) {
+  const p = new URLSearchParams();
+  const f = Object.assign({}, filtro, extra);
+  for (const k of ['estado', 'q', 'cliente', 'desde', 'hasta', 'lote', 'limite', 'offset']) if (f[k] !== '' && f[k] !== undefined && f[k] !== null) p.set(k, f[k]);
+  return p.toString();
+}
+
+function leerFiltro() {
+  filtro.estado = $('#fEstado').value;
+  filtro.q = $('#fQ').value.trim();
+  filtro.cliente = soloDig($('#fCliente').value);
+  filtro.desde = $('#fDesde').value;
+  filtro.hasta = $('#fHasta').value;
+  filtro.lote = soloDig($('#fLote').value);
+}
+
+function pintarFiltro() {
+  $('#fEstado').value = filtro.estado; $('#fQ').value = filtro.q; $('#fCliente').value = filtro.cliente;
+  $('#fDesde').value = filtro.desde; $('#fHasta').value = filtro.hasta; $('#fLote').value = filtro.lote;
+}
+
+async function cargarCbtes() {
+  pintarFiltro();
+  try {
+    const { comprobantes, total } = await api('/api/comprobantes?' + qsFiltro());
+    listado = comprobantes;
+    if (!comprobantes.length) { $('#tablaCbtes').innerHTML = '<p class="muted">No hay comprobantes con estos filtros.</p>'; $('#pager').innerHTML = ''; return; }
+    $('#tablaCbtes').innerHTML = `<div class="tabla-scroll"><table class="t"><thead><tr><th>Fecha</th><th>Comprobante</th><th>Emisor</th><th class="num">Neto</th><th class="num">IVA</th><th class="num">Total</th><th>Estado</th><th>Observaciones</th></tr></thead><tbody>
+      ${comprobantes.map((c, i) => {
+        const iva = ['iva_27', 'iva_21', 'iva_10_5', 'iva_5', 'iva_2_5'].reduce((s, k) => s + Number(c[k] || 0), 0);
+        const obs = (c.hallazgos || []).filter((h) => h.nivel !== 'info').map((h) => h.mensaje)[0] || '';
+        return `<tr class="clic" data-accion="revisar" data-idx="${i}"><td>${fecha(c.fecha)}</td><td>${esc(nombreCbte(c))}</td>
+          <td>${esc(c.razon_social_emisor || '')}<div class="muted mono">${esc(cuit(c.cuit_emisor))}</div></td>
+          <td class="num">${pesos(c.neto_gravado)}</td><td class="num">${pesos(iva)}</td><td class="num">${pesos(c.total)}${c.moneda && c.moneda !== 'PES' ? ' ' + esc(c.moneda) : ''}</td>
+          <td>${estado(c.estado)}</td><td class="muted">${esc(obs)}</td></tr>`;
+      }).join('')}</tbody></table></div>`;
+    const desde = filtro.offset + 1, hasta = filtro.offset + comprobantes.length;
+    $('#pager').innerHTML = `<span>${desde} a ${hasta} de ${total}</span>
+      ${filtro.offset > 0 ? '<button class="ghost mini" data-accion="pagina" data-dir="-1">Anteriores</button>' : ''}
+      ${hasta < total ? '<button class="ghost mini" data-accion="pagina" data-dir="1">Siguientes</button>' : ''}`;
+  } catch (e) { toast(e.message, true); }
+}
+
+async function descargar(ruta, nombre) {
+  try {
+    const b = await api(ruta, { binario: true });
+    const u = URL.createObjectURL(b);
+    const a = document.createElement('a');
+    a.href = u; a.download = nombre;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(u), 10000);
+  } catch (e) { toast(e.message, true); }
+}
+
+// ---------- Revisión ----------
+const CAMPOS = [
+  ['fecha', 'Fecha', 'date'], ['tipo', 'Código de tipo'], ['punto_venta', 'Punto de venta'], ['numero', 'Número'],
+  ['cuit_emisor', 'CUIT emisor'], ['razon_social_emisor', 'Razón social emisor', 'texto', true], ['condicion_iva_emisor', 'Condición IVA emisor', 'texto', true],
+  ['doc_nro_receptor', 'Doc. receptor'], ['razon_social_receptor', 'Razón social receptor'],
+  ['neto_gravado', 'Neto gravado', 'm'], ['no_gravado', 'No gravado', 'm'], ['exento', 'Exento', 'm'],
+  ['iva_21', 'IVA 21%', 'm'], ['iva_10_5', 'IVA 10,5%', 'm'], ['iva_27', 'IVA 27%', 'm'], ['iva_5', 'IVA 5%', 'm'], ['iva_2_5', 'IVA 2,5%', 'm'],
+  ['otros_tributos', 'Otros tributos', 'm'], ['subtotal', 'Subtotal (B y C)', 'm'], ['total', 'Total', 'm'],
+  ['moneda', 'Moneda'], ['cotizacion', 'Cotización'], ['cae', 'CAE'], ['vto_cae', 'Vto. CAE', 'date'],
+];
+
+async function abrirRevision(idx) {
+  if (idx < 0 || idx >= listado.length) return;
+  const id = listado[idx].id;
+  try {
+    const { comprobante: c, correcciones } = await api('/api/comprobantes/' + id);
+    if (rev && rev.url) URL.revokeObjectURL(rev.url);
+    rev = { idx, cbte: c, url: null };
+    $('#revision').classList.remove('hidden');
+    $('#revTitulo').textContent = `${nombreCbte(c)}  ·  ${c.archivo}`;
+    $('#revPos').textContent = `${idx + 1} de ${listado.length}`;
+    $('#revHallazgos').innerHTML = `<div class="fila" style="justify-content:space-between;margin-bottom:8px">${estado(c.estado)}<span class="muted">confianza ${Math.round((c.confianza || 0) * 100)}%</span></div>${hallazgosHTML(c.hallazgos)}`;
+    $('#revForm').innerHTML = CAMPOS.map(([k, t, tipo, ancho]) => {
+      const o = (c.origenes || {})[k];
+      const v = tipo === 'm' ? (Number(c[k] || 0) ? Number(c[k]).toFixed(2) : '') : (c[k] ?? '');
+      return `<label class="${ancho ? 'ancho' : ''}"><span class="et"><span>${t}</span>${o ? `<span class="origen ${esc(o)}" title="Origen del dato">${esc(ORIGEN[o] || o)}</span>` : ''}</span>
+        <input name="${k}" value="${esc(v === 0 ? '' : v)}" data-orig="${esc(v === 0 ? '' : v)}" ${tipo === 'date' ? 'type="date"' : ''} class="${tipo === 'm' ? 'num' : ''}" inputmode="${tipo === 'm' ? 'decimal' : 'text'}"></label>`;
+    }).join('');
+    $('#btnConstatar').classList.toggle('hidden', !(SALUD && SALUD.arcanum));
+    const k = c.constatacion;
+    $('#revConstatacion').innerHTML = k ? `<div class="card"><strong>Constatación ARCA</strong><dl class="kv">
+      <dt>Resultado</dt><dd>${k.valido === true ? 'Aprobado (el comprobante existe)' : k.valido === false ? 'Rechazado' : esc(k.error || 'sin respuesta')}</dd>
+      ${(k.observaciones || []).length ? `<dt>Observaciones</dt><dd>${esc(k.observaciones.map((o) => o.message).join(' '))}</dd>` : ''}
+      ${k.apoc && k.apoc.consultado ? `<dt>Apócrifos</dt><dd>${k.apoc.esApocrifo ? 'El emisor figura como apócrifo' : 'No figura'}</dd>` : ''}
+      <dt>Fecha</dt><dd>${k.fecha ? new Date(k.fecha).toLocaleString('es-AR') : ''}</dd></dl></div>` : '';
+    const det = $('#revCorrecciones');
+    det.classList.toggle('hidden', !correcciones.length);
+    det.lastElementChild.innerHTML = correcciones.length ? `<table class="t"><thead><tr><th>Campo</th><th>Antes</th><th>Después</th><th>Quién</th><th>Cuándo</th></tr></thead><tbody>${correcciones.map((x) =>
+      `<tr><td>${esc(x.campo)}</td><td class="mono">${esc(x.antes)}</td><td class="mono">${esc(x.despues)}</td><td>${esc(x.usuario)}</td><td>${new Date(x.creado).toLocaleString('es-AR')}</td></tr>`).join('')}</tbody></table>` : '';
+    // Original a la izquierda.
+    $('#revDoc').innerHTML = '<p class="muted" style="padding:16px">Cargando el archivo...</p>';
+    const pag = (c.paginas || [1])[0];
+    const b = await api(`/api/documentos/${c.documento_id}/pagina/${pag}`, { binario: true });
+    rev.url = URL.createObjectURL(b);
+    $('#revDoc').innerHTML = `<div class="rev-doc-barra"><span class="muted">${esc(c.archivo)}${(c.paginas || []).length ? ', página ' + pag : ''}</span>
+      <button class="ghost mini" data-accion="abrirOriginal" data-doc="${c.documento_id}">Abrir el original</button></div>
+      <div class="rev-doc-img"><img src="${rev.url}" alt="Comprobante original"></div>`;
+  } catch (e) { toast(e.message, true); }
+}
+
+function cerrarRevision() {
+  $('#revision').classList.add('hidden');
+  if (rev && rev.url) URL.revokeObjectURL(rev.url);
+  rev = null;
+  cargarCbtes();
+}
+
+function cambiosRevision() {
+  const campos = {};
+  $$('#revForm input').forEach((i) => { if (i.value !== i.dataset.orig) campos[i.name] = i.value; });
+  return campos;
+}
+
+async function guardarRevision(aprobar) {
+  if (!rev) return;
+  const campos = cambiosRevision();
+  if (!aprobar && !Object.keys(campos).length) { toast('No hay cambios'); return; }
+  try {
+    const { comprobante } = await api('/api/comprobantes/' + rev.cbte.id, { method: 'PATCH', json: { campos, aprobar, usuario: 'panel' } });
+    listado[rev.idx] = comprobante;
+    if (aprobar) {
+      toast('Aprobado');
+      if (rev.idx + 1 < listado.length) abrirRevision(rev.idx + 1); else cerrarRevision();
+    } else {
+      toast('Guardado');
+      abrirRevision(rev.idx);
+    }
+  } catch (e) { toast(e.message, true); }
+}
+
+async function constatarRevision() {
+  if (!rev) return;
+  try {
+    await api(`/api/comprobantes/${rev.cbte.id}/constatar`, { method: 'POST' });
+    toast('Constatado');
+    abrirRevision(rev.idx);
+  } catch (e) { toast(e.message, true); }
+}
+
+// ---------- Resumen ----------
+async function cargarResumen() {
+  try {
+    const { resumen: r } = await api('/api/resumen?' + qsFiltro({ limite: '', offset: '' }));
+    const fila = (t, v, fuerte) => `<tr><td>${fuerte ? `<strong>${t}</strong>` : t}</td><td class="num">${fuerte ? `<strong>$ ${pesos(v)}</strong>` : '$ ' + pesos(v)}</td></tr>`;
+    $('#resumen').innerHTML = `<div class="fila" style="align-items:flex-start">
+      <table class="t" style="max-width:460px"><tbody>
+        <tr><td>Comprobantes</td><td class="num">${r.cantidad}</td></tr>
+        ${fila('Neto gravado', r.neto_gravado)}${fila('No gravado', r.no_gravado)}${fila('Exento', r.exento)}
+        ${fila('IVA 21%', r.iva_21)}${fila('IVA 10,5%', r.iva_10_5)}${fila('IVA 27%', r.iva_27)}${fila('IVA 5%', r.iva_5)}${fila('IVA 2,5%', r.iva_2_5)}
+        ${fila('IVA total', r.iva_total, true)}${fila('Otros tributos', r.otros_tributos)}${fila('Subtotal B y C', r.subtotal_b_c)}${fila('Total', r.total, true)}
+      </tbody></table>
+      <div class="card" style="flex:1;min-width:260px"><strong>Estados</strong><dl class="kv">
+        ${Object.entries(r.por_estado || {}).map(([k, v]) => `<dt>${estado(k)}</dt><dd>${v}</dd>`).join('')}
+        <dt>Moneda extranjera</dt><dd>${r.moneda_extranjera} (no sumados)</dd></dl>
+        <strong>Tipos</strong><dl class="kv">${Object.entries(r.por_tipo || {}).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${v}</dd>`).join('')}</dl>
+        <div class="fila"><button class="ghost" data-accion="exportar" data-formato="xlsx">Descargar Excel</button><button class="ghost" data-accion="exportar" data-formato="csv">Descargar CSV</button></div>
+      </div></div>`;
+  } catch (e) { toast(e.message, true); }
+}
+
+// ---------- Canales ----------
+async function cargarCanales() {
+  try {
+    const { canales } = await api('/api/canales');
+    const NOM = { telegram: 'Telegram', whatsapp: 'WhatsApp', webhook: 'Webhook (secretaria, Evolution API, n8n)' };
+    const html = canales.map((c) => {
+      let extra = '';
+      if (c.canal === 'whatsapp' && c.habilitado && !c.conectado) {
+        extra = c.qr ? `<div><p>Escaneá este código desde WhatsApp: Dispositivos vinculados, Vincular un dispositivo.</p><img class="qr" id="qrWa" alt="Código QR de vinculación"></div>`
+          : '<p class="muted">Esperando el código de vinculación...</p>';
+        extra += `<form class="fila" id="fVincular"><label>O vinculá con un código de 8 letras<input id="telVincular" placeholder="Teléfono con código de país, ej. 5491155550000" inputmode="numeric"></label><button class="ghost" type="submit">Pedir código</button></form>`;
+      }
+      if (c.canal === 'whatsapp' && c.conectado) extra = '<button class="ghost mini" data-accion="desvincularWa">Desvincular</button>';
+      return `<div class="card"><div class="fila" style="justify-content:space-between"><strong>${NOM[c.canal] || esc(c.canal)}</strong>
+        ${!c.habilitado ? '<span class="est">Sin configurar</span>' : c.conectado ? '<span class="est ok">Conectado</span>' : '<span class="est revisar">Desconectado</span>'}</div>
+        ${c.detalle ? `<p class="muted">${esc(c.detalle)}</p>` : ''}${extra}</div>`;
+    }).join('');
+    // No repintar mientras se escribe el teléfono.
+    if (document.activeElement && document.activeElement.id === 'telVincular') return;
+    $('#canales').innerHTML = html;
+    if ($('#qrWa')) {
+      const b = await api('/api/canales/whatsapp/qr.png', { binario: true }).catch(() => null);
+      if (b && $('#qrWa')) $('#qrWa').src = URL.createObjectURL(b);
+    }
+  } catch (e) { toast(e.message, true); }
+}
+
+// ---------- Eventos ----------
+document.addEventListener('click', (ev) => {
+  const el = ev.target.closest('[data-accion]');
+  if (!el) {
+    if (!ev.target.closest('.menu-wrap')) $('#menu').classList.add('hidden');
+    return;
+  }
+  const a = el.dataset.accion;
+  switch (a) {
+    case 'ir': ir(el.dataset.vista); break;
+    case 'nav': toggleNav(); break;
+    case 'cerrarNav': document.documentElement.removeAttribute('data-nav-movil'); break;
+    case 'menu': pintarMenu(); $('#menu').classList.toggle('hidden'); break;
+    case 'tema': {
+      const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+      document.documentElement.setAttribute('data-theme', next);
+      try { localStorage.setItem('factorum.tema', next); } catch { /* nada */ }
+      pintarMenu();
+      break;
+    }
+    case 'salir': $('#menu').classList.add('hidden'); salir(); break;
+    case 'ojo': {
+      const i = document.getElementById(el.dataset.para);
+      i.type = i.type === 'password' ? 'text' : 'password';
+      el.innerHTML = i.type === 'password' ? I.ojo : I.ojoNo;
+      break;
+    }
+    case 'verLote': if (!ev.target.closest('button')) { Object.assign(filtro, { lote: el.dataset.id, estado: '', q: '', offset: 0 }); ir('comprobantes'); } break;
+    case 'exportarLote': ev.stopPropagation(); descargar(`/api/export.xlsx?lote=${el.dataset.id}`, `factorum-lote-${el.dataset.id}.xlsx`); break;
+    case 'exportar': leerFiltro(); descargar(`/api/export.${el.dataset.formato}?` + qsFiltro({ limite: '', offset: '' }), `factorum.${el.dataset.formato}`); break;
+    case 'pagina': filtro.offset = Math.max(0, filtro.offset + Number(el.dataset.dir) * filtro.limite); cargarCbtes(); break;
+    case 'revisar': abrirRevision(Number(el.dataset.idx)); break;
+    case 'revAnterior': if (rev) abrirRevision(rev.idx - 1); break;
+    case 'revSiguiente': if (rev) abrirRevision(rev.idx + 1); break;
+    case 'revCerrar': cerrarRevision(); break;
+    case 'abrirOriginal':
+      api(`/api/documentos/${el.dataset.doc}/archivo`, { binario: true }).then((b) => {
+        const u = URL.createObjectURL(b); window.open(u, '_blank', 'noopener'); setTimeout(() => URL.revokeObjectURL(u), 60000);
+      }).catch((e) => toast(e.message, true));
+      break;
+    case 'revGuardar': guardarRevision(false); break;
+    case 'revAprobar': guardarRevision(true); break;
+    case 'revConstatar': constatarRevision(); break;
+    case 'desvincularWa':
+      if (confirm('¿Desvincular WhatsApp? Vas a tener que escanear el código otra vez.')) api('/api/canales/whatsapp/desvincular', { method: 'POST' }).then(cargarCanales).catch((e) => toast(e.message, true));
+      break;
+    default: break;
+  }
+});
+
+document.addEventListener('submit', (ev) => {
+  const f = ev.target;
+  if (f.id === 'loginForm') { ev.preventDefault(); entrar($('#clave').value.trim(), $('#recordar').checked); }
+  else if (f.id === 'fVerificar') verificar(ev);
+  else if (f.id === 'fSubir') subir(ev);
+  else if (f.id === 'fFiltro') { ev.preventDefault(); leerFiltro(); filtro.offset = 0; cargarCbtes(); }
+  else if (f.id === 'revForm') { ev.preventDefault(); guardarRevision(false); }
+  else if (f.id === 'fVincular') {
+    ev.preventDefault();
+    api('/api/canales/whatsapp/vincular', { method: 'POST', json: { telefono: soloDig($('#telVincular').value) } })
+      .then((r) => toast(`Código: ${r.codigo}. Ingresalo en WhatsApp, Dispositivos vinculados, Vincular con número de teléfono.`))
+      .catch((e) => toast(e.message, true));
+  }
+});
+
+document.addEventListener('input', (ev) => {
+  if (ev.target.closest('#revForm')) ev.target.classList.toggle('cambiado', ev.target.value !== ev.target.dataset.orig);
+});
+
+document.addEventListener('keydown', (ev) => {
+  if (!rev || $('#revision').classList.contains('hidden')) return;
+  if (ev.key === 'Escape') cerrarRevision();
+  if (ev.altKey && ev.key === 'ArrowRight') abrirRevision(rev.idx + 1);
+  if (ev.altKey && ev.key === 'ArrowLeft') abrirRevision(rev.idx - 1);
+  if ((ev.ctrlKey || ev.metaKey) && ev.key === 'Enter') guardarRevision(true);
+});
+
+// Arrastrar y soltar.
+for (const [zona, input] of [['#zonaVerificar', '#archVerificar'], ['#zonaSubir', '#archSubir']]) {
+  const z = $(zona);
+  z.addEventListener('dragover', (e) => { e.preventDefault(); z.classList.add('sobre'); });
+  z.addEventListener('dragleave', () => z.classList.remove('sobre'));
+  z.addEventListener('drop', (e) => {
+    e.preventDefault(); z.classList.remove('sobre');
+    $(input).files = e.dataTransfer.files;
+    z.querySelector('span').textContent = `${e.dataTransfer.files.length} archivo(s) listos`;
+  });
+  $(input).addEventListener('change', () => { z.querySelector('span').textContent = `${$(input).files.length} archivo(s) listos`; });
+}
+
+// ---------- Arranque ----------
+$('.pass-toggle').innerHTML = I.ojo;
+pintarNav();
+const guardada = leerClave();
+if (guardada) entrar(guardada, !!(() => { try { return localStorage.getItem('factorum.clave'); } catch { return ''; } })());
+else mostrarLogin();

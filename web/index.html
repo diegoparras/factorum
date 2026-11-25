@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="es-AR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Factorum</title>
+<meta name="color-scheme" content="light dark">
+<link rel="stylesheet" href="escriba-ui.css">
+<link rel="stylesheet" href="estilo.css">
+<script src="tema.js"></script>
+</head>
+<body>
+
+<div id="login" class="login-overlay hidden">
+  <form class="login-card" id="loginForm" autocomplete="off">
+    <div class="logo">F</div>
+    <h2>Factorum</h2>
+    <p class="login-sub">Ingresá la clave de API de Factorum.</p>
+    <div class="pass-wrap">
+      <input id="clave" type="password" placeholder="Clave de API" required aria-label="Clave de API">
+      <button type="button" class="pass-toggle" data-accion="ojo" data-para="clave" aria-label="Mostrar u ocultar la clave"></button>
+    </div>
+    <label class="chk"><input type="checkbox" id="recordar"> Recordar en este navegador</label>
+    <button type="submit">Entrar</button>
+    <div class="login-err hidden" id="loginErr"></div>
+  </form>
+</div>
+
+<header class="esc-topbar">
+  <button class="icon-btn plano" id="navBtn" type="button" data-accion="nav" aria-label="Mostrar u ocultar el menú de secciones" aria-controls="sidenav">
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+  </button>
+  <a class="logo-link" data-accion="ir" data-vista="verificar"><span class="logo">F</span><h1>Factorum</h1></a>
+  <span class="sp"></span>
+  <span class="estado-chip" id="saludChip"></span>
+  <div class="menu-wrap">
+    <button class="icon-btn plano" type="button" data-accion="menu" aria-label="Menú" aria-haspopup="true">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="19" r="1.7"/></svg>
+    </button>
+    <div class="menu menu-right hidden" id="menu"></div>
+  </div>
+</header>
+
+<div class="esc-shell">
+  <aside class="sidenav" id="sidenav"><nav id="nav" aria-label="Secciones"></nav></aside>
+  <div class="scrim" data-accion="cerrarNav"></div>
+  <main id="main">
+
+    <!-- Verificar -->
+    <section class="vista" id="v-verificar">
+      <h2>Verificar una factura</h2>
+      <p class="sub">Subí el PDF o la foto y Factorum te dice si es legal: lee el QR y el texto, controla las sumas y, con Arcanum, la constata con ARCA (WSCDC) y busca al emisor en la base de apócrifos. No se guarda nada.</p>
+      <form id="fVerificar" class="card">
+        <label class="zona" id="zonaVerificar">
+          <input type="file" id="archVerificar" accept=".pdf,image/*" required>
+          <span>Arrastrá el archivo o hacé clic para elegirlo</span>
+        </label>
+        <div class="fila">
+          <label>CUIT consultante (opcional)<input id="cuitConsultante" placeholder="El cliente con certificado en Arcanum" inputmode="numeric"></label>
+          <label class="chk"><input type="checkbox" id="iaVerificar" checked> Usar IA si hace falta</label>
+        </div>
+        <button type="submit">Verificar</button>
+      </form>
+      <div id="resVerificar"></div>
+    </section>
+
+    <!-- Subir -->
+    <section class="vista hidden" id="v-subir">
+      <h2>Cargar facturas</h2>
+      <p class="sub">PDFs, fotos o un ZIP con cientos de facturas. Se procesan en segundo plano: podés seguir trabajando.</p>
+      <form id="fSubir" class="card">
+        <label class="zona" id="zonaSubir">
+          <input type="file" id="archSubir" accept=".pdf,.zip,image/*" multiple required>
+          <span>Arrastrá los archivos o hacé clic para elegirlos</span>
+        </label>
+        <div class="fila">
+          <label>Nombre del lote<input id="loteNombre" placeholder="Ej.: Compras noviembre"></label>
+          <label>CUIT del cliente<input id="loteCliente" placeholder="Opcional" inputmode="numeric"></label>
+        </div>
+        <div class="fila">
+          <label class="chk"><input type="checkbox" id="loteIA" checked> Usar IA si hace falta</label>
+          <label class="chk"><input type="checkbox" id="loteConstatar" checked> Constatar con ARCA al terminar</label>
+        </div>
+        <button type="submit">Cargar</button>
+        <div class="prog hidden" id="progSubir"><div></div></div>
+      </form>
+    </section>
+
+    <!-- Lotes -->
+    <section class="vista hidden" id="v-lotes">
+      <h2>Lotes</h2>
+      <div id="tablaLotes"></div>
+    </section>
+
+    <!-- Comprobantes -->
+    <section class="vista hidden" id="v-comprobantes">
+      <h2>Comprobantes</h2>
+      <form id="fFiltro" class="filtros">
+        <select id="fEstado"><option value="">Todos los estados</option><option value="error">Con errores</option><option value="revisar">Para revisar</option><option value="ok">Bien</option><option value="aprobado">Aprobados</option></select>
+        <input id="fQ" placeholder="Buscar razón social, CUIT o número">
+        <input id="fCliente" placeholder="CUIT cliente" inputmode="numeric">
+        <input id="fDesde" type="date" aria-label="Desde">
+        <input id="fHasta" type="date" aria-label="Hasta">
+        <input id="fLote" placeholder="Lote" inputmode="numeric">
+        <button type="submit" class="ghost">Filtrar</button>
+        <button type="button" class="ghost" data-accion="exportar" data-formato="xlsx">Excel</button>
+        <button type="button" class="ghost" data-accion="exportar" data-formato="csv">CSV</button>
+      </form>
+      <div id="tablaCbtes"></div>
+      <div class="pager" id="pager"></div>
+    </section>
+
+    <!-- Resumen -->
+    <section class="vista hidden" id="v-resumen">
+      <h2>Resumen por alícuota</h2>
+      <p class="sub">Con los filtros de Comprobantes. Las notas de crédito restan; lo que está en moneda extranjera no se suma.</p>
+      <div id="resumen"></div>
+    </section>
+
+    <!-- Canales -->
+    <section class="vista hidden" id="v-canales">
+      <h2>Canales</h2>
+      <p class="sub">Las facturas también llegan por mensajería. Solo responden a los números y usuarios habilitados en la configuración.</p>
+      <div id="canales"></div>
+    </section>
+  </main>
+</div>
+
+<!-- Revisión de un comprobante -->
+<div class="revision hidden" id="revision" role="dialog" aria-modal="true" aria-labelledby="revTitulo">
+  <div class="rev-head">
+    <strong id="revTitulo">Comprobante</strong>
+    <span class="sp"></span>
+    <span id="revPos" class="muted"></span>
+    <button class="ghost mini" data-accion="revAnterior">Anterior</button>
+    <button class="ghost mini" data-accion="revSiguiente">Siguiente</button>
+    <button class="ghost mini" data-accion="revCerrar">Cerrar</button>
+  </div>
+  <div class="rev-cuerpo">
+    <div class="rev-doc" id="revDoc"></div>
+    <div class="rev-datos">
+      <div id="revHallazgos"></div>
+      <form id="revForm"></form>
+      <div class="rev-acciones">
+        <button class="ghost" data-accion="revGuardar">Guardar</button>
+        <button class="ghost" data-accion="revConstatar" id="btnConstatar">Constatar con ARCA</button>
+        <button data-accion="revAprobar">Está bien, siguiente</button>
+      </div>
+      <div id="revConstatacion"></div>
+      <details id="revCorrecciones"><summary>Correcciones</summary><div></div></details>
+    </div>
+  </div>
+</div>
+
+<div class="toast hidden" id="toast" role="status"></div>
+<script src="app.js"></script>
+</body>
+</html>

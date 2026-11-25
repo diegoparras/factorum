@@ -1,0 +1,44 @@
+# Factorum solo (sin Arcanum). Para sumarlo a Arcanum como módulo, usá el
+# docker-compose.factorum.yml del repo de Arcanum.
+#
+#   cp .env.example .env    # completá las claves
+#   docker compose up -d                       # Factorum + Postgres
+#   docker compose --profile ia up -d          # + Ollama con un modelo de visión local
+services:
+  factorum-db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: factorum
+      POSTGRES_PASSWORD: ${FACTORUM_DB_PASSWORD:?definí FACTORUM_DB_PASSWORD}
+      POSTGRES_DB: factorum
+    volumes: [factorum-db:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U factorum"]
+      interval: 5s
+      retries: 20
+
+  factorum:
+    image: ghcr.io/diegoparras/factorum:latest
+    build: .
+    restart: unless-stopped
+    depends_on:
+      factorum-db: { condition: service_healthy }
+    ports: ["8095:8095"]
+    env_file: .env
+    environment:
+      FACTORUM_DATABASE_URL: postgres://factorum:${FACTORUM_DB_PASSWORD}@factorum-db:5432/factorum?sslmode=disable
+    volumes: [factorum-datos:/data]
+
+  ollama:
+    image: ollama/ollama:latest
+    profiles: [ia]
+    restart: unless-stopped
+    volumes: [ollama:/root/.ollama]
+    # Con GPU NVIDIA, descomentá:
+    # deploy: { resources: { reservations: { devices: [ { driver: nvidia, count: all, capabilities: [gpu] } ] } } }
+
+volumes:
+  factorum-db:
+  factorum-datos:
+  ollama:

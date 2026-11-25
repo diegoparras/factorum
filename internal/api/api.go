@@ -111,6 +111,7 @@ func (s *Server) Handler() http.Handler {
 	m.HandleFunc("PATCH /api/comprobantes/{id}", s.auth(RolOperador, s.corregir))
 	m.HandleFunc("POST /api/comprobantes/{id}/constatar", s.auth(RolOperador, s.constatar))
 	m.HandleFunc("GET /api/documentos/{id}/archivo", s.auth(RolLectura, s.archivo))
+	m.HandleFunc("GET /api/documentos/{id}/pagina/{n}", s.auth(RolLectura, s.pagina))
 	m.HandleFunc("GET /api/export.xlsx", s.auth(RolLectura, s.exportar("xlsx")))
 	m.HandleFunc("GET /api/export.csv", s.auth(RolLectura, s.exportar("csv")))
 	m.HandleFunc("GET /api/resumen", s.auth(RolLectura, s.resumen))
@@ -123,7 +124,14 @@ func (s *Server) Handler() http.Handler {
 		m.Handle("/mcp", s.MCP)
 	}
 	if s.Web != nil {
-		m.Handle("GET /", http.FileServerFS(s.Web))
+		est := http.FileServerFS(s.Web)
+		m.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodGet && r.Method != http.MethodHead {
+				jsonErr(w, http.StatusMethodNotAllowed, "Método no permitido")
+				return
+			}
+			est.ServeHTTP(w, r)
+		})
 	}
 	return s.envolver(m)
 }
@@ -477,6 +485,47 @@ func (s *Server) archivo(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=%q", strings.ReplaceAll(d.Nombre, `"`, "")))
 	w.Header().Set("Cache-Control", "private, max-age=300")
 	_, _ = w.Write(b)
+}
+
+// pagina devuelve una página del documento como PNG: se ve igual en cualquier navegador (los
+// visores de PDF embebidos fallan en celulares) y no expone el PDF entero.
+func (s *Server) pagina(w http.ResponseWriter, r *http.Request) {
+	id, err := idDe(r)
+	n, err2 := strconv.Atoi(strings.TrimSuffix(r.PathValue("n"), ".png"))
+	if err != nil || err2 != nil || n < 1 {
+		jsonErr(w, http.StatusBadRequest, "id o página inválidos")
+		return
+	}
+	d, b, err := s.App.Original(r.Context(), id)
+	if err != nil {
+		s.fallo(w, err)
+		return
+	}
+	if !bytes.HasPrefix(b, []byte("%PDF")) {
+		w.Header().Set("Content-Type", http.DetectContentType(b))
+		w.Header().Set("Cache-Control", "private, max-age=300")
+		_, _ = w.Write(b)
+		return
+	}
+	doc, err := s.App.Pipeline.Motor.Abrir(r.Context(), b)
+	if err != nil {
+		jsonErr(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+	defer doc.Cerrar()
+	if n > doc.Paginas() {
+		jsonErr(w, http.StatusNotFound, fmt.Sprintf("%s tiene %d páginas", d.Nombre, doc.Paginas()))
+		return
+	}
+	_, png, err := doc.Rasterizar(r.Context(), n, 110, false)
+	if err != nil {
+		s.fallo(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Cache-Control", "private, max-age=300")
+	w.Header().Set("X-Paginas", strconv.Itoa(doc.Paginas()))
+	_, _ = w.Write(png)
 }
 
 func (s *Server) exportar(formato string) http.HandlerFunc {

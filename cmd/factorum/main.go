@@ -50,6 +50,8 @@ func main() {
 		err = servir()
 	case "procesar":
 		err = procesar(os.Args[2:])
+	case "salud":
+		err = salud()
 	case "version", "-v", "--version":
 		fmt.Println("factorum", config.Version)
 	default:
@@ -60,6 +62,28 @@ func main() {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
+}
+
+// salud consulta /healthz del servidor local (para el HEALTHCHECK de Docker, sin curl ni wget).
+func salud() error {
+	puerto := os.Getenv("FACTORUM_PUERTO")
+	if puerto == "" {
+		puerto = "8095"
+	}
+	cli := &http.Client{Timeout: 4 * time.Second}
+	r, err := cli.Get("http://127.0.0.1:" + puerto + "/healthz")
+	if err != nil {
+		return err
+	}
+	defer r.Body.Close()
+	var b struct {
+		OK   bool `json:"ok"`
+		Base bool `json:"base"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&b); err != nil || !b.OK || !b.Base {
+		return errors.New("Factorum no está sano (sin base de datos)")
+	}
+	return nil
 }
 
 func uso() {

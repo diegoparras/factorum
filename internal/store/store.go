@@ -1,0 +1,593 @@
+// Package store es la persistencia en Postgres: lotes, documentos, comprobantes y el registro de
+// correcciones (el "papel de trabajo"). El comprobante completo va en JSON; las columnas que se
+// filtran o se suman van aparte e indexadas.
+package store
+
+import (
+	"context"
+	"embed"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/diegoparras/contadorfacturas/internal/modelo"
+)
+
+//go:embed migraciones/*.sql
+var migraciones embed.FS
+
+type Store struct{ Pool *pgxpool.Pool }
+
+var ErrNoEncontrado = errors.New("no encontrado")
+
+// Abrir conecta y corre las migraciones.
+func Abrir(ctx context.Context, url string, maxConns int) (*Store, error) {
+	cfg, err := pgxpool.ParseConfig(url)
+	if err != nil {
+		return nil, fmt.Errorf("FACTORUM_DATABASE_URL inválida: %w", err)
+	}
+	if maxConns > 0 {
+		cfg.MaxConns = int32(maxConns)
+	}
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+	var ultimo error
+	for i := 0; i < 30; i++ { // la base puede tardar en levantar (docker compose)
+		if ultimo = pool.Ping(ctx); ultimo == nil {
+			break
+		}
+		time.Sleep(time.Second)
+	}
+	if ultimo != nil {
+		return nil, fmt.Errorf("no se pudo conectar a Postgres: %w", ultimo)
+	}
+	s := &Store{Pool: pool}
+	return s, s.migrar(ctx)
+}
+
+func (s *Store) Cerrar() { s.Pool.Close() }
+
+func (s *Store) migrar(ctx context.Context) error {
+	if _, err := s.Pool.Exec(ctx, `CREATE TABLE IF NOT EXISTS factorum_migraciones (nombre text PRIMARY KEY, aplicada timestamptz NOT NULL DEFAULT now())`); err != nil {
+		return err
+	}
+	ents, err := migraciones.ReadDir("migraciones")
+	if err != nil {
+		return err
+	}
+	for _, e := range ents {
+		var ya bool
+		if err := s.Pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM factorum_migraciones WHERE nombre=$1)`, e.Name()).Scan(&ya); err != nil {
+			return err
+		}
+		if ya {
+			continue
+		}
+		sqlb, _ := migraciones.ReadFile("migraciones/" + e.Name())
+		err := pgx.BeginFunc(ctx, s.Pool, func(tx pgx.Tx) error {
+			// Un candado para que dos réplicas no migren a la vez.
+			if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(84112)`); err != nil {
+				return err
+			}
+			if _, err := tx.Exec(ctx, string(sqlb)); err != nil {
+				return err
+			}
+			_, err := tx.Exec(ctx, `INSERT INTO factorum_migraciones (nombre) VALUES ($1) ON CONFLICT DO NOTHING`, e.Name())
+			return err
+		})
+		if err != nil {
+			return fmt.Errorf("migración %s: %w", e.Name(), err)
+		}
+	}
+	return nil
+}
+
+// ---------- Tipos ----------
+
+type Lote struct {
+	ID           int64          `json:"id"`
+	Nombre       string         `json:"nombre"`
+	ClienteCUIT  string         `json:"cliente_cuit"`
+	Origen       string         `json:"origen"`
+	Canal        string         `json:"canal,omitempty"`
+	Chat         string         `json:"-"`
+	IA           bool           `json:"ia"`
+	Constatar    bool           `json:"constatar"`
+	Creado       time.Time      `json:"creado"`
+	Actualizado  time.Time      `json:"actualizado"`
+	Terminado    *time.Time     `json:"terminado"`
+	Estado       string         `json:"estado"`
+	Documentos   int            `json:"documentos"`
+	Procesados   int            `json:"procesados"`
+	ConError     int            `json:"con_error"`
+	Comprobantes map[string]int `json:"comprobantes"`
+}
+
+type Documento struct {
+	ID         int64     `json:"id"`
+	LoteID     int64     `json:"lote_id"`
+	Nombre     string    `json:"nombre"`
+	Mime       string    `json:"mime"`
+	Tamano     int64     `json:"tamano"`
+	SHA256     string    `json:"sha256"`
+	Estado     string    `json:"estado"`
+	Error      string    `json:"error,omitempty"`
+	RepetidoDe *int64    `json:"repetido_de,omitempty"`
+	Creado     time.Time `json:"creado"`
+}
+
+// Cbte es un comprobante guardado: los datos leídos más su estado en Factorum.
+type Cbte struct {
+	ID           int64              `json:"id"`
+	LoteID       int64              `json:"lote_id"`
+	DocumentoID  int64              `json:"documento_id"`
+	ClienteCUIT  string             `json:"cliente_cuit"`
+	Archivo      string             `json:"archivo"`
+	Datos        modelo.Comprobante `json:"-"`
+	Hallazgos    []modelo.Hallazgo  `json:"hallazgos"`
+	Estado       modelo.Estado      `json:"estado"`
+	Confianza    float64            `json:"confianza"`
+	Constatacion json.RawMessage    `json:"constatacion"`
+	DuplicadoDe  *int64             `json:"duplicado_de"`
+	Creado       time.Time          `json:"creado"`
+	RevisadoPor  *string            `json:"revisado_por"`
+	RevisadoEn   *time.Time         `json:"revisado_en"`
+}
+
+// MarshalJSON aplana los datos del comprobante junto con los de Factorum.
+func (c Cbte) MarshalJSON() ([]byte, error) {
+	type alias Cbte
+	a, err := json.Marshal(alias(c))
+	if err != nil {
+		return nil, err
+	}
+	d, err := json.Marshal(c.Datos)
+	if err != nil {
+		return nil, err
+	}
+	// {datos..., propios...}: los propios pisan (no hay choque de nombres salvo "origenes", que es de datos).
+	return append(append(d[:len(d)-1], ','), a[1:]...), nil
+}
+
+type Correccion struct {
+	Campo   string    `json:"campo"`
+	Antes   string    `json:"antes"`
+	Despues string    `json:"despues"`
+	Usuario string    `json:"usuario"`
+	Creado  time.Time `json:"creado"`
+}
+
+// Filtro de comprobantes (lo usan la API, MCP y la exportación).
+type Filtro struct {
+	Lote    int64
+	Estado  string
+	Cliente string
+	Emisor  string
+	Desde   string
+	Hasta   string
+	Q       string
+	Limite  int
+	Offset  int
+}
+
+// ---------- Lotes ----------
+
+type LoteNuevo struct {
+	Nombre, ClienteCUIT, Origen, Canal, Chat string
+	IA, Constatar                            bool
+}
+
+func (s *Store) CrearLote(ctx context.Context, tx pgx.Tx, n LoteNuevo) (int64, error) {
+	var id int64
+	err := tx.QueryRow(ctx, `INSERT INTO lotes (nombre, cliente_cuit, origen, canal, chat, ia, constatar)
+		VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`, n.Nombre, n.ClienteCUIT, n.Origen, n.Canal, n.Chat, n.IA, n.Constatar).Scan(&id)
+	return id, err
+}
+
+// LoteAbiertoDeChat devuelve el lote de un chat con actividad en los últimos minutos (para juntar
+// los archivos que llegan de a uno por WhatsApp) y lo reabre.
+func (s *Store) LoteAbiertoDeChat(ctx context.Context, tx pgx.Tx, canal, chat string, ventana time.Duration) (int64, error) {
+	var id int64
+	err := tx.QueryRow(ctx, `UPDATE lotes SET terminado=NULL, notificado=false, actualizado=now()
+		WHERE id = (SELECT id FROM lotes WHERE canal=$1 AND chat=$2 AND actualizado > now() - $3::interval ORDER BY id DESC LIMIT 1)
+		RETURNING id`, canal, chat, fmt.Sprintf("%d seconds", int(ventana.Seconds()))).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, nil
+	}
+	return id, err
+}
+
+const selLote = `SELECT l.id, l.nombre, l.cliente_cuit, l.origen, coalesce(l.canal,''), coalesce(l.chat,''), l.ia, l.constatar, l.creado, l.actualizado, l.terminado,
+	(SELECT count(*) FROM documentos d WHERE d.lote_id=l.id),
+	(SELECT count(*) FROM documentos d WHERE d.lote_id=l.id AND d.estado NOT IN ('pendiente','procesando')),
+	(SELECT count(*) FROM documentos d WHERE d.lote_id=l.id AND d.estado='error'),
+	(SELECT coalesce(json_object_agg(estado, n), '{}') FROM (SELECT estado, count(*) n FROM comprobantes c WHERE c.lote_id=l.id GROUP BY estado) x)
+	FROM lotes l`
+
+func scanLote(r pgx.Row) (*Lote, error) {
+	var l Lote
+	var cb []byte
+	if err := r.Scan(&l.ID, &l.Nombre, &l.ClienteCUIT, &l.Origen, &l.Canal, &l.Chat, &l.IA, &l.Constatar, &l.Creado, &l.Actualizado, &l.Terminado,
+		&l.Documentos, &l.Procesados, &l.ConError, &cb); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNoEncontrado
+		}
+		return nil, err
+	}
+	l.Comprobantes = map[string]int{"ok": 0, "revisar": 0, "error": 0, "aprobado": 0}
+	_ = json.Unmarshal(cb, &l.Comprobantes)
+	l.Estado = "procesando"
+	if l.Terminado != nil {
+		l.Estado = "terminado"
+	}
+	return &l, nil
+}
+
+func (s *Store) Lote(ctx context.Context, id int64) (*Lote, error) {
+	return scanLote(s.Pool.QueryRow(ctx, selLote+` WHERE l.id=$1`, id))
+}
+
+func (s *Store) Lotes(ctx context.Context, limite, offset int) ([]Lote, int, error) {
+	if limite <= 0 || limite > 500 {
+		limite = 50
+	}
+	rows, err := s.Pool.Query(ctx, selLote+` ORDER BY l.id DESC LIMIT $1 OFFSET $2`, limite, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	res := []Lote{}
+	for rows.Next() {
+		l, err := scanLote(rows)
+		if err != nil {
+			return nil, 0, err
+		}
+		res = append(res, *l)
+	}
+	var total int
+	_ = s.Pool.QueryRow(ctx, `SELECT count(*) FROM lotes`).Scan(&total)
+	return res, total, rows.Err()
+}
+
+// UltimoLoteDeChat para el comando "estado" de los canales.
+func (s *Store) UltimoLoteDeChat(ctx context.Context, canal, chat string) (*Lote, error) {
+	return scanLote(s.Pool.QueryRow(ctx, selLote+` WHERE l.canal=$1 AND l.chat=$2 ORDER BY l.id DESC LIMIT 1`, canal, chat))
+}
+
+// CerrarLoteSiTermino marca el lote como terminado si no le quedan documentos pendientes.
+// Devuelve true solo a quien lo cerró (si dos workers terminan a la vez, uno solo gana).
+func (s *Store) CerrarLoteSiTermino(ctx context.Context, id int64) (bool, error) {
+	ct, err := s.Pool.Exec(ctx, `UPDATE lotes SET terminado=now() WHERE id=$1 AND terminado IS NULL
+		AND NOT EXISTS (SELECT 1 FROM documentos WHERE lote_id=$1 AND estado IN ('pendiente','procesando'))`, id)
+	if err != nil {
+		return false, err
+	}
+	return ct.RowsAffected() == 1, nil
+}
+
+// MarcarNotificado devuelve true si este llamado fue el que lo marcó.
+func (s *Store) MarcarNotificado(ctx context.Context, id int64) (bool, error) {
+	ct, err := s.Pool.Exec(ctx, `UPDATE lotes SET notificado=true WHERE id=$1 AND NOT notificado AND terminado IS NOT NULL
+		AND actualizado < now() - interval '10 seconds'`, id)
+	if err != nil {
+		return false, err
+	}
+	return ct.RowsAffected() == 1, nil
+}
+
+// ---------- Documentos ----------
+
+// CrearDocumento registra un archivo. Si el mismo contenido ya se procesó bien, queda como repetido.
+func (s *Store) CrearDocumento(ctx context.Context, tx pgx.Tx, lote int64, nombre, mime string, tamano int64, sha string) (id int64, repetido bool, err error) {
+	var previo *int64
+	_ = tx.QueryRow(ctx, `SELECT id FROM documentos WHERE sha256=$1 AND estado='listo' ORDER BY id LIMIT 1`, sha).Scan(&previo)
+	estado := "pendiente"
+	if previo != nil {
+		estado = "repetido"
+	}
+	err = tx.QueryRow(ctx, `INSERT INTO documentos (lote_id, nombre, mime, tamano, sha256, estado, repetido_de) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
+		lote, nombre, mime, tamano, sha, estado, previo).Scan(&id)
+	return id, previo != nil, err
+}
+
+func (s *Store) Documento(ctx context.Context, id int64) (*Documento, error) {
+	var d Documento
+	var e *string
+	err := s.Pool.QueryRow(ctx, `SELECT id, lote_id, nombre, mime, tamano, sha256, estado, error, repetido_de, creado FROM documentos WHERE id=$1`, id).
+		Scan(&d.ID, &d.LoteID, &d.Nombre, &d.Mime, &d.Tamano, &d.SHA256, &d.Estado, &e, &d.RepetidoDe, &d.Creado)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNoEncontrado
+	}
+	if e != nil {
+		d.Error = *e
+	}
+	return &d, err
+}
+
+// TomarDocumento lo pasa a "procesando". Devuelve false si ya no estaba pendiente (reintento de un
+// trabajo que ya había terminado).
+func (s *Store) TomarDocumento(ctx context.Context, id int64) (bool, error) {
+	ct, err := s.Pool.Exec(ctx, `UPDATE documentos SET estado='procesando' WHERE id=$1 AND estado IN ('pendiente','procesando')`, id)
+	return ct.RowsAffected() == 1, err
+}
+
+func (s *Store) ErrorDocumento(ctx context.Context, id int64, msg string) error {
+	_, err := s.Pool.Exec(ctx, `UPDATE documentos SET estado='error', error=$2, procesado=now() WHERE id=$1`, id, msg)
+	return err
+}
+
+// GuardarResultado reemplaza los comprobantes del documento (es idempotente ante reintentos) y
+// detecta duplicados: mismo emisor, tipo, punto de venta y número para el mismo cliente.
+func (s *Store) GuardarResultado(ctx context.Context, doc *Documento, cliente string, r *modelo.Resultado) ([]int64, error) {
+	var ids []int64
+	err := pgx.BeginFunc(ctx, s.Pool, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `DELETE FROM comprobantes WHERE documento_id=$1`, doc.ID); err != nil {
+			return err
+		}
+		det, _ := json.Marshal(r.Detalle)
+		estado, msg := "listo", (*string)(nil)
+		if r.Error != "" {
+			estado, msg = "error", &r.Error
+		}
+		if _, err := tx.Exec(ctx, `UPDATE documentos SET estado=$2, error=$3, paginas=$4, extractores=$5, duracion_ms=$6, detalle=$7, procesado=now() WHERE id=$1`,
+			doc.ID, estado, msg, r.Paginas, r.Extractores, r.DuracionMS, det); err != nil {
+			return err
+		}
+		for i := range r.Comprobantes {
+			rc := &r.Comprobantes[i]
+			c := &rc.Comprobante
+			var dup *int64
+			if c.Clave() != "" {
+				_ = tx.QueryRow(ctx, `SELECT id FROM comprobantes WHERE cliente_cuit=$1 AND cuit_emisor=$2 AND tipo=$3 AND punto_venta=$4 AND numero=$5 AND documento_id<>$6 ORDER BY id LIMIT 1`,
+					cliente, c.CUITEmisor, c.Tipo, c.PuntoVenta, c.Numero, doc.ID).Scan(&dup)
+			}
+			if dup != nil {
+				rc.Hallazgos = append(rc.Hallazgos, modelo.Hallazgo{Codigo: "duplicado", Nivel: modelo.NivelAviso,
+					Mensaje: fmt.Sprintf("Este comprobante ya se cargó antes (comprobante %d).", *dup)})
+				if rc.Estado == modelo.EstadoOK {
+					rc.Estado = modelo.EstadoRevisar
+				}
+			}
+			id, err := insertarCbte(ctx, tx, doc.LoteID, doc.ID, cliente, i, rc, dup)
+			if err != nil {
+				return err
+			}
+			ids = append(ids, id)
+		}
+		_, err := tx.Exec(ctx, `UPDATE lotes SET actualizado=now() WHERE id=$1`, doc.LoteID)
+		return err
+	})
+	return ids, err
+}
+
+func fechaONull(s string) any {
+	if _, err := time.Parse("2006-01-02", s); err != nil {
+		return nil
+	}
+	return s
+}
+
+func insertarCbte(ctx context.Context, tx pgx.Tx, lote, doc int64, cliente string, orden int, rc *modelo.ResultadoCbte, dup *int64) (int64, error) {
+	c := &rc.Comprobante
+	datos, _ := json.Marshal(c)
+	hall, _ := json.Marshal(rc.Hallazgos)
+	var id int64
+	err := tx.QueryRow(ctx, `INSERT INTO comprobantes (documento_id, lote_id, cliente_cuit, orden, tipo, punto_venta, numero, fecha, cuit_emisor,
+		razon_social_emisor, total, datos, hallazgos, estado, confianza, duplicado_de)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING id`,
+		doc, lote, cliente, orden, c.Tipo, c.PuntoVenta, c.Numero, fechaONull(c.Fecha), c.CUITEmisor, c.RazonSocialEmisor,
+		int64(c.Total), datos, hall, string(rc.Estado), rc.Confianza, dup).Scan(&id)
+	return id, err
+}
+
+// ---------- Comprobantes ----------
+
+const selCbte = `SELECT c.id, c.lote_id, c.documento_id, c.cliente_cuit, d.nombre, c.datos, c.hallazgos, c.estado, c.confianza,
+	c.constatacion, c.duplicado_de, c.creado, c.revisado_por, c.revisado_en
+	FROM comprobantes c JOIN documentos d ON d.id=c.documento_id`
+
+func scanCbte(r pgx.Row) (*Cbte, error) {
+	var c Cbte
+	var datos, hall []byte
+	var est string
+	if err := r.Scan(&c.ID, &c.LoteID, &c.DocumentoID, &c.ClienteCUIT, &c.Archivo, &datos, &hall, &est, &c.Confianza,
+		&c.Constatacion, &c.DuplicadoDe, &c.Creado, &c.RevisadoPor, &c.RevisadoEn); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNoEncontrado
+		}
+		return nil, err
+	}
+	c.Estado = modelo.Estado(est)
+	if err := json.Unmarshal(datos, &c.Datos); err != nil {
+		return nil, err
+	}
+	_ = json.Unmarshal(hall, &c.Hallazgos)
+	if c.Hallazgos == nil {
+		c.Hallazgos = []modelo.Hallazgo{}
+	}
+	if len(c.Constatacion) == 0 {
+		c.Constatacion = json.RawMessage("null")
+	}
+	return &c, nil
+}
+
+func (f Filtro) where() (string, []any) {
+	var w []string
+	var a []any
+	add := func(cond string, v any) {
+		a = append(a, v)
+		w = append(w, strings.ReplaceAll(cond, "?", "$"+strconv.Itoa(len(a))))
+	}
+	if f.Lote > 0 {
+		add("c.lote_id = ?", f.Lote)
+	}
+	if f.Estado != "" {
+		add("c.estado = ?", f.Estado)
+	}
+	if f.Cliente != "" {
+		add("c.cliente_cuit = ?", f.Cliente)
+	}
+	if f.Emisor != "" {
+		add("c.cuit_emisor = ?", f.Emisor)
+	}
+	if f.Desde != "" {
+		add("c.fecha >= ?::date", f.Desde)
+	}
+	if f.Hasta != "" {
+		add("c.fecha <= ?::date", f.Hasta)
+	}
+	if q := strings.TrimSpace(f.Q); q != "" {
+		a = append(a, q)
+		n := "$" + strconv.Itoa(len(a))
+		w = append(w, "(c.razon_social_emisor ILIKE '%' || "+n+" || '%' OR c.cuit_emisor LIKE '%' || "+n+" || '%' OR c.numero::text = "+n+" OR d.nombre ILIKE '%' || "+n+" || '%')")
+	}
+	if len(w) == 0 {
+		return "", a
+	}
+	return " WHERE " + strings.Join(w, " AND "), a
+}
+
+func (s *Store) Comprobantes(ctx context.Context, f Filtro) ([]Cbte, int, error) {
+	if f.Limite <= 0 {
+		f.Limite = 100
+	}
+	if f.Limite > 5000 {
+		f.Limite = 5000
+	}
+	w, a := f.where()
+	var total int
+	if err := s.Pool.QueryRow(ctx, `SELECT count(*) FROM comprobantes c JOIN documentos d ON d.id=c.documento_id`+w, a...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	a = append(a, f.Limite, f.Offset)
+	rows, err := s.Pool.Query(ctx, selCbte+w+fmt.Sprintf(` ORDER BY c.fecha DESC NULLS LAST, c.id DESC LIMIT $%d OFFSET $%d`, len(a)-1, len(a)), a...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	res := []Cbte{}
+	for rows.Next() {
+		c, err := scanCbte(rows)
+		if err != nil {
+			return nil, 0, err
+		}
+		res = append(res, *c)
+	}
+	return res, total, rows.Err()
+}
+
+func (s *Store) Comprobante(ctx context.Context, id int64) (*Cbte, error) {
+	return scanCbte(s.Pool.QueryRow(ctx, selCbte+` WHERE c.id=$1`, id))
+}
+
+func (s *Store) ComprobantesDeDocumento(ctx context.Context, doc int64) ([]Cbte, error) {
+	rows, err := s.Pool.Query(ctx, selCbte+` WHERE c.documento_id=$1 ORDER BY c.orden`, doc)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var res []Cbte
+	for rows.Next() {
+		c, err := scanCbte(rows)
+		if err != nil {
+			return nil, err
+		}
+		res = append(res, *c)
+	}
+	return res, rows.Err()
+}
+
+// SinConstatar devuelve los comprobantes de un lote que todavía no se constataron.
+func (s *Store) SinConstatar(ctx context.Context, lote int64, limite int) ([]Cbte, error) {
+	rows, err := s.Pool.Query(ctx, selCbte+` WHERE c.lote_id=$1 AND c.constatacion IS NULL ORDER BY c.id LIMIT $2`, lote, limite)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var res []Cbte
+	for rows.Next() {
+		c, err := scanCbte(rows)
+		if err != nil {
+			return nil, err
+		}
+		res = append(res, *c)
+	}
+	return res, rows.Err()
+}
+
+// ActualizarCbte guarda datos, hallazgos, estado y (opcional) constatación, y registra las correcciones.
+func (s *Store) ActualizarCbte(ctx context.Context, c *Cbte, correcciones []Correccion, aprobadoPor string) error {
+	return pgx.BeginFunc(ctx, s.Pool, func(tx pgx.Tx) error {
+		datos, _ := json.Marshal(c.Datos)
+		hall, _ := json.Marshal(c.Hallazgos)
+		var cons any
+		if len(c.Constatacion) > 0 && string(c.Constatacion) != "null" {
+			cons = []byte(c.Constatacion)
+		}
+		var revPor any
+		if aprobadoPor != "" {
+			revPor = aprobadoPor
+		}
+		_, err := tx.Exec(ctx, `UPDATE comprobantes SET datos=$2, hallazgos=$3, estado=$4, confianza=$5, constatacion=$6,
+			tipo=$7, punto_venta=$8, numero=$9, fecha=$10, cuit_emisor=$11, razon_social_emisor=$12, total=$13, actualizado=now(),
+			revisado_por=coalesce($14, revisado_por), revisado_en=CASE WHEN $14::text IS NULL THEN revisado_en ELSE now() END
+			WHERE id=$1`,
+			c.ID, datos, hall, string(c.Estado), c.Confianza, cons, c.Datos.Tipo, c.Datos.PuntoVenta, c.Datos.Numero, fechaONull(c.Datos.Fecha),
+			c.Datos.CUITEmisor, c.Datos.RazonSocialEmisor, int64(c.Datos.Total), revPor)
+		if err != nil {
+			return err
+		}
+		for _, k := range correcciones {
+			if _, err := tx.Exec(ctx, `INSERT INTO correcciones (comprobante_id, campo, antes, despues, usuario) VALUES ($1,$2,$3,$4,$5)`,
+				c.ID, k.Campo, k.Antes, k.Despues, k.Usuario); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func (s *Store) Correcciones(ctx context.Context, id int64) ([]Correccion, error) {
+	rows, err := s.Pool.Query(ctx, `SELECT campo, antes, despues, usuario, creado FROM correcciones WHERE comprobante_id=$1 ORDER BY id`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	res := []Correccion{}
+	for rows.Next() {
+		var k Correccion
+		if err := rows.Scan(&k.Campo, &k.Antes, &k.Despues, &k.Usuario, &k.Creado); err != nil {
+			return nil, err
+		}
+		res = append(res, k)
+	}
+	return res, rows.Err()
+}
+
+// Estadisticas para /metrics.
+func (s *Store) Estadisticas(ctx context.Context) (map[string]int64, error) {
+	m := map[string]int64{}
+	rows, err := s.Pool.Query(ctx, `SELECT 'documentos_'||estado, count(*) FROM documentos GROUP BY estado
+		UNION ALL SELECT 'comprobantes_'||estado, count(*) FROM comprobantes GROUP BY estado`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var k string
+		var v int64
+		if err := rows.Scan(&k, &v); err != nil {
+			return nil, err
+		}
+		m[k] = v
+	}
+	return m, rows.Err()
+}

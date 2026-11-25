@@ -17,8 +17,8 @@ import (
 	"strings"
 	"time"
 
-	_ "golang.org/x/image/webp"
 	xdraw "golang.org/x/image/draw"
+	_ "golang.org/x/image/webp"
 
 	"github.com/diegoparras/contadorfacturas/internal/arca"
 	"github.com/diegoparras/contadorfacturas/internal/extractor"

@@ -6,13 +6,13 @@ import (
 
 	"github.com/jackc/pgx/v5/stdlib"
 
-	"github.com/diegoparras/contadorfacturas/internal/api"
-	"github.com/diegoparras/contadorfacturas/internal/app"
-	"github.com/diegoparras/contadorfacturas/internal/canal"
-	"github.com/diegoparras/contadorfacturas/internal/canal/telegram"
-	"github.com/diegoparras/contadorfacturas/internal/canal/webhook"
-	"github.com/diegoparras/contadorfacturas/internal/canal/whatsapp"
-	"github.com/diegoparras/contadorfacturas/internal/store"
+	"github.com/diegoparras/factorum/internal/api"
+	"github.com/diegoparras/factorum/internal/app"
+	"github.com/diegoparras/factorum/internal/canal"
+	"github.com/diegoparras/factorum/internal/canal/telegram"
+	"github.com/diegoparras/factorum/internal/canal/webhook"
+	"github.com/diegoparras/factorum/internal/canal/whatsapp"
+	"github.com/diegoparras/factorum/internal/store"
 )
 
 // entrada adapta el canal webhook a lo que necesita la API.

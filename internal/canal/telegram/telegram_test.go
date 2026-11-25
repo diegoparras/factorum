@@ -14,7 +14,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/diegoparras/contadorfacturas/internal/canal"
+	"github.com/diegoparras/factorum/internal/canal"
 )
 
 const tokenPrueba = "123:ABC"

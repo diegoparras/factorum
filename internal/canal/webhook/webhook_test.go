@@ -17,7 +17,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/diegoparras/contadorfacturas/internal/canal"
+	"github.com/diegoparras/factorum/internal/canal"
 )
 
 func TestDecodificar(t *testing.T) {

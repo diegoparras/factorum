@@ -5,8 +5,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/diegoparras/contadorfacturas/internal/arca"
-	"github.com/diegoparras/contadorfacturas/internal/modelo"
+	"github.com/diegoparras/factorum/internal/arca"
+	"github.com/diegoparras/factorum/internal/modelo"
 )
 
 // ParsearTexto saca los campos de la capa de texto de un comprobante (o del texto que devolvió el

@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/diegoparras/contadorfacturas/internal/arca"
-	"github.com/diegoparras/contadorfacturas/internal/modelo"
+	"github.com/diegoparras/factorum/internal/arca"
+	"github.com/diegoparras/factorum/internal/modelo"
 )
 
 // Tolerancia de redondeo para comparar sumas: un centavo por componente, como mínimo dos.

@@ -1,4 +1,4 @@
-module github.com/diegoparras/contadorfacturas
+module github.com/diegoparras/factorum
 
 go 1.26.0
 

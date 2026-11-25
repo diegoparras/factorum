@@ -24,15 +24,15 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/diegoparras/contadorfacturas/internal/almacen"
-	"github.com/diegoparras/contadorfacturas/internal/api"
-	"github.com/diegoparras/contadorfacturas/internal/app"
-	"github.com/diegoparras/contadorfacturas/internal/arcanum"
-	"github.com/diegoparras/contadorfacturas/internal/config"
-	"github.com/diegoparras/contadorfacturas/internal/mcpserver"
-	"github.com/diegoparras/contadorfacturas/internal/pdfx"
-	"github.com/diegoparras/contadorfacturas/internal/pipeline"
-	"github.com/diegoparras/contadorfacturas/internal/store"
+	"github.com/diegoparras/factorum/internal/almacen"
+	"github.com/diegoparras/factorum/internal/api"
+	"github.com/diegoparras/factorum/internal/app"
+	"github.com/diegoparras/factorum/internal/arcanum"
+	"github.com/diegoparras/factorum/internal/config"
+	"github.com/diegoparras/factorum/internal/mcpserver"
+	"github.com/diegoparras/factorum/internal/pdfx"
+	"github.com/diegoparras/factorum/internal/pipeline"
+	"github.com/diegoparras/factorum/internal/store"
 )
 
 const (

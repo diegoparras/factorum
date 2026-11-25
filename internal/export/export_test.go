@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/diegoparras/contadorfacturas/internal/modelo"
+	"github.com/diegoparras/factorum/internal/modelo"
 )
 
 func filasPrueba() []Fila {

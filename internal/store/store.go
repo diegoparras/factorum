@@ -16,7 +16,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/diegoparras/contadorfacturas/internal/modelo"
+	"github.com/diegoparras/factorum/internal/modelo"
 )
 
 //go:embed migraciones/*.sql

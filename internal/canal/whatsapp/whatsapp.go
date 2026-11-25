@@ -23,7 +23,7 @@ import (
 	waLog "go.mau.fi/whatsmeow/util/log"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/diegoparras/contadorfacturas/internal/canal"
+	"github.com/diegoparras/factorum/internal/canal"
 )
 
 const (

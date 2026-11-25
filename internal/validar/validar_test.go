@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/diegoparras/contadorfacturas/internal/modelo"
+	"github.com/diegoparras/factorum/internal/modelo"
 )
 
 var hoy = time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC)

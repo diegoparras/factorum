@@ -24,15 +24,15 @@ import (
 	"github.com/riverqueue/river/riverdriver/riverpgxv5"
 	"github.com/riverqueue/river/rivermigrate"
 
-	"github.com/diegoparras/contadorfacturas/internal/almacen"
-	"github.com/diegoparras/contadorfacturas/internal/arca"
-	"github.com/diegoparras/contadorfacturas/internal/arcanum"
-	"github.com/diegoparras/contadorfacturas/internal/canal"
-	"github.com/diegoparras/contadorfacturas/internal/config"
-	"github.com/diegoparras/contadorfacturas/internal/modelo"
-	"github.com/diegoparras/contadorfacturas/internal/pipeline"
-	"github.com/diegoparras/contadorfacturas/internal/store"
-	"github.com/diegoparras/contadorfacturas/internal/validar"
+	"github.com/diegoparras/factorum/internal/almacen"
+	"github.com/diegoparras/factorum/internal/arca"
+	"github.com/diegoparras/factorum/internal/arcanum"
+	"github.com/diegoparras/factorum/internal/canal"
+	"github.com/diegoparras/factorum/internal/config"
+	"github.com/diegoparras/factorum/internal/modelo"
+	"github.com/diegoparras/factorum/internal/pipeline"
+	"github.com/diegoparras/factorum/internal/store"
+	"github.com/diegoparras/factorum/internal/validar"
 )
 
 type App struct {

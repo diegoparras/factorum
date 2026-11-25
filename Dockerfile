@@ -6,7 +6,7 @@ RUN go mod download
 COPY . .
 # La versión sale del CHANGELOG (primera sección "## [X.Y.Z]"): sin novedades no hay versión.
 RUN V="$(sed -n 's/^## \[\([0-9][0-9.]*\)\].*/\1/p' CHANGELOG.md | head -1)" && test -n "$V" && \
-    CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X github.com/diegoparras/contadorfacturas/internal/config.Version=$V" \
+    CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X github.com/diegoparras/factorum/internal/config.Version=$V" \
       -o /out/factorum ./cmd/factorum
 
 FROM debian:bookworm-slim

@@ -7,10 +7,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/diegoparras/contadorfacturas/internal/canal"
-	"github.com/diegoparras/contadorfacturas/internal/config"
-	"github.com/diegoparras/contadorfacturas/internal/modelo"
-	"github.com/diegoparras/contadorfacturas/internal/store"
+	"github.com/diegoparras/factorum/internal/canal"
+	"github.com/diegoparras/factorum/internal/config"
+	"github.com/diegoparras/factorum/internal/modelo"
+	"github.com/diegoparras/factorum/internal/store"
 )
 
 func TestPermisosYComandosPorCanal(t *testing.T) {

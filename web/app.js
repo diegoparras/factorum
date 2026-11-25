@@ -138,7 +138,7 @@ function pintarMenu() {
     </dl></div>
     <div class="menu-sep"></div>
     <button class="menu-item" data-accion="tema">${dark ? I.sol : I.luna}<span>${dark ? 'Tema claro' : 'Tema oscuro'}</span></button>
-    <a class="menu-item" href="https://github.com/diegoparras/contadorfacturas" target="_blank" rel="noopener">${I.info}<span>Acerca de Factorum</span></a>
+    <a class="menu-item" href="https://github.com/diegoparras/factorum" target="_blank" rel="noopener">${I.info}<span>Acerca de Factorum</span></a>
     <div class="menu-sep"></div>
     <button class="menu-item" data-accion="salir">${I.salir}<span>Cerrar sesión</span></button>`;
 }

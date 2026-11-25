@@ -20,7 +20,7 @@ Pasárselos a un chat con IA tiene tres problemas:
 - El mismo pedido no da siempre lo mismo.
 - Si un inspector pregunta de dónde salió un importe, no hay respuesta.
 
-Esto ya lo explica la presentación de este repo (`index.html`).
+Esto ya lo explica la presentación [Facturas e IA](https://github.com/diegoparras/contadorfacturas) (tres caminos: Claude, IA local y código).
 
 ## La solución
 

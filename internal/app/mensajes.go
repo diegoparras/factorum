@@ -9,12 +9,12 @@ import (
 
 	"github.com/riverqueue/river"
 
-	"github.com/diegoparras/contadorfacturas/internal/arca"
-	"github.com/diegoparras/contadorfacturas/internal/arcanum"
-	"github.com/diegoparras/contadorfacturas/internal/canal"
-	"github.com/diegoparras/contadorfacturas/internal/export"
-	"github.com/diegoparras/contadorfacturas/internal/modelo"
-	"github.com/diegoparras/contadorfacturas/internal/store"
+	"github.com/diegoparras/factorum/internal/arca"
+	"github.com/diegoparras/factorum/internal/arcanum"
+	"github.com/diegoparras/factorum/internal/canal"
+	"github.com/diegoparras/factorum/internal/export"
+	"github.com/diegoparras/factorum/internal/modelo"
+	"github.com/diegoparras/factorum/internal/store"
 )
 
 const ayuda = `Factorum lee facturas de ARCA.

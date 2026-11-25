@@ -13,7 +13,7 @@ import (
 	"go.mau.fi/whatsmeow/types/events"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/diegoparras/contadorfacturas/internal/canal"
+	"github.com/diegoparras/factorum/internal/canal"
 )
 
 var (

@@ -9,7 +9,7 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/diegoparras/contadorfacturas/internal/config"
+	"github.com/diegoparras/factorum/internal/config"
 )
 
 // El ruteo completo (UI + MCP + API) se arma sin conflictos y la UI sale con CSP.

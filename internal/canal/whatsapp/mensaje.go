@@ -11,7 +11,7 @@ import (
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 
-	"github.com/diegoparras/contadorfacturas/internal/canal"
+	"github.com/diegoparras/factorum/internal/canal"
 )
 
 // Funciones puras que pasan un evento de whatsmeow a canal.Mensaje. No necesitan un cliente

@@ -20,12 +20,12 @@ import (
 	xdraw "golang.org/x/image/draw"
 	_ "golang.org/x/image/webp"
 
-	"github.com/diegoparras/contadorfacturas/internal/arca"
-	"github.com/diegoparras/contadorfacturas/internal/extractor"
-	"github.com/diegoparras/contadorfacturas/internal/modelo"
-	"github.com/diegoparras/contadorfacturas/internal/pdfx"
-	"github.com/diegoparras/contadorfacturas/internal/qrscan"
-	"github.com/diegoparras/contadorfacturas/internal/validar"
+	"github.com/diegoparras/factorum/internal/arca"
+	"github.com/diegoparras/factorum/internal/extractor"
+	"github.com/diegoparras/factorum/internal/modelo"
+	"github.com/diegoparras/factorum/internal/pdfx"
+	"github.com/diegoparras/factorum/internal/qrscan"
+	"github.com/diegoparras/factorum/internal/validar"
 )
 
 // Opciones por documento.

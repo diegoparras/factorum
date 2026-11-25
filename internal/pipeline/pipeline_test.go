@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/diegoparras/contadorfacturas/internal/extractor"
-	"github.com/diegoparras/contadorfacturas/internal/modelo"
-	"github.com/diegoparras/contadorfacturas/internal/pdfx"
+	"github.com/diegoparras/factorum/internal/extractor"
+	"github.com/diegoparras/factorum/internal/modelo"
+	"github.com/diegoparras/factorum/internal/pdfx"
 )
 
 func nuevo(t testing.TB) *Pipeline {

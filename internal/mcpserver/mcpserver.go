@@ -13,12 +13,12 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/diegoparras/contadorfacturas/internal/app"
-	"github.com/diegoparras/contadorfacturas/internal/arca"
-	"github.com/diegoparras/contadorfacturas/internal/config"
-	"github.com/diegoparras/contadorfacturas/internal/export"
-	"github.com/diegoparras/contadorfacturas/internal/modelo"
-	"github.com/diegoparras/contadorfacturas/internal/store"
+	"github.com/diegoparras/factorum/internal/app"
+	"github.com/diegoparras/factorum/internal/arca"
+	"github.com/diegoparras/factorum/internal/config"
+	"github.com/diegoparras/factorum/internal/export"
+	"github.com/diegoparras/factorum/internal/modelo"
+	"github.com/diegoparras/factorum/internal/store"
 )
 
 const maxRespuesta = 20000

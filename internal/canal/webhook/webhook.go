@@ -27,7 +27,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/diegoparras/contadorfacturas/internal/canal"
+	"github.com/diegoparras/factorum/internal/canal"
 )
 
 const (

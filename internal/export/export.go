@@ -11,8 +11,8 @@ import (
 
 	"github.com/xuri/excelize/v2"
 
-	"github.com/diegoparras/contadorfacturas/internal/arca"
-	"github.com/diegoparras/contadorfacturas/internal/modelo"
+	"github.com/diegoparras/factorum/internal/arca"
+	"github.com/diegoparras/factorum/internal/modelo"
 )
 
 // Fila es lo mínimo que se exporta de un comprobante guardado.

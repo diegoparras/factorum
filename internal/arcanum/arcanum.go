@@ -14,8 +14,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/diegoparras/contadorfacturas/internal/arca"
-	"github.com/diegoparras/contadorfacturas/internal/modelo"
+	"github.com/diegoparras/factorum/internal/arca"
+	"github.com/diegoparras/factorum/internal/modelo"
 )
 
 type Cliente struct {

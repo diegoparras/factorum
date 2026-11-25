@@ -66,6 +66,20 @@ func (a *App) responder(ctx context.Context, m canal.Mensaje) string {
 		return fmt.Sprintf("Este número o usuario no está habilitado para usar Factorum. Tu identificador es %s: pasáselo al estudio para que te habilite.", m.Remitente)
 	}
 	texto := strings.ToLower(strings.TrimSpace(m.Texto))
+	// WhatsApp va vinculado a un número de uso diario: solo se atienden archivos y comandos
+	// explícitos ("factorum estado", "/estado"), para no meterse en conversaciones normales.
+	if m.Canal == "whatsapp" && len(m.Archivos) == 0 {
+		switch {
+		case strings.HasPrefix(texto, "factorum"):
+			texto = strings.TrimSpace(strings.TrimPrefix(texto, "factorum"))
+			if texto == "" {
+				texto = "ayuda"
+			}
+		case strings.HasPrefix(texto, "/"):
+		default:
+			return ""
+		}
+	}
 	if len(m.Archivos) == 0 {
 		switch {
 		case strings.HasPrefix(texto, "/start"), strings.Contains(texto, "ayuda"), texto == "/help", texto == "hola":
@@ -106,9 +120,18 @@ func (a *App) responder(ctx context.Context, m canal.Mensaje) string {
 	if err != nil {
 		return "No pude cargar los archivos: " + err.Error()
 	}
-	msg := fmt.Sprintf("Recibí %d archivo(s). Te aviso cuando termine.", rl.Recibidos)
-	if rl.Repetidos > 0 {
-		msg += fmt.Sprintf(" %d ya los tenía cargados.", rl.Repetidos)
+	nuevos := rl.Recibidos - rl.Repetidos
+	var msg string
+	switch {
+	case nuevos == 0 && rl.Repetidos == 1:
+		msg = "Ese archivo ya lo tenía cargado."
+	case nuevos == 0:
+		msg = fmt.Sprintf("Esos %d archivos ya los tenía cargados.", rl.Repetidos)
+	default:
+		msg = fmt.Sprintf("Recibí %d archivo(s). Te aviso cuando termine.", nuevos)
+		if rl.Repetidos > 0 {
+			msg += fmt.Sprintf(" Otros %d ya los tenía cargados.", rl.Repetidos)
+		}
 	}
 	if len(rl.Descartados) > 0 {
 		msg += " No son facturas que pueda leer: " + strings.Join(rl.Descartados, ", ") + "."
@@ -209,7 +232,7 @@ func TextoVerificacion(nombre string, v *Verificacion) string {
 	fmt.Fprintf(&b, "%s: %s. %s", nombre, etiquetaVeredicto[v.Veredicto], v.Mensaje)
 	for i, rc := range v.Resultado.Comprobantes {
 		c := &rc.Comprobante
-		fmt.Fprintf(&b, "\n- %s, CUIT %s, %s, $ %s", nombreCbte(c), arca.FormatearCUIT(c.CUITEmisor), c.Fecha, c.Total.AR())
+		fmt.Fprintf(&b, "\n- %s, CUIT %s, %s, $ %s", nombreCbte(c), arca.FormatearCUIT(c.CUITEmisor), fechaAR(c.Fecha), c.Total.AR())
 		if c.CAE != "" {
 			fmt.Fprintf(&b, ", CAE %s", c.CAE)
 		}
@@ -266,4 +289,12 @@ func estadoConstatacion(raw json.RawMessage) string {
 		return "error"
 	}
 	return ""
+}
+
+// fechaAR pasa AAAA-MM-DD a DD/MM/AAAA.
+func fechaAR(f string) string {
+	if len(f) == 10 && f[4] == '-' {
+		return f[8:] + "/" + f[5:7] + "/" + f[:4]
+	}
+	return f
 }

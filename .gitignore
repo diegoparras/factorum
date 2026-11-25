@@ -1,0 +1,6 @@
+/factorum
+/dist/
+/data/
+*.db
+.env
+node_modules/

@@ -76,8 +76,10 @@
       <form id="fVerificar" class="card">
         <label class="zona" id="zonaVerificar">
           <span class="zona-ico" aria-hidden="true"></span>
-          <input type="file" id="archVerificar" accept=".pdf,image/*" required>
-          <span class="zona-txt">Arrastrá el archivo o hacé clic para elegirlo</span>
+          <input type="file" id="archVerificar" class="zona-input" accept=".pdf,image/*" required>
+          <span class="zona-txt" data-vacio="Arrastrá el archivo acá">Arrastrá el archivo acá</span>
+          <span class="zona-btn">Elegir archivo</span>
+          <span class="zona-ayuda">PDF o foto (JPG, PNG)</span>
         </label>
         <div class="fila">
           <label>CUIT consultante (opcional)<input id="cuitConsultante" placeholder="El cliente con certificado en Arcanum" inputmode="numeric"></label>
@@ -95,8 +97,10 @@
       <form id="fSubir" class="card">
         <label class="zona" id="zonaSubir">
           <span class="zona-ico" aria-hidden="true"></span>
-          <input type="file" id="archSubir" accept=".pdf,.zip,image/*" multiple required>
-          <span class="zona-txt">Arrastrá los archivos o hacé clic para elegirlos</span>
+          <input type="file" id="archSubir" class="zona-input" accept=".pdf,.zip,image/*" multiple required>
+          <span class="zona-txt" data-vacio="Arrastrá los archivos acá">Arrastrá los archivos acá</span>
+          <span class="zona-btn">Elegir archivos</span>
+          <span class="zona-ayuda">PDFs, fotos o un ZIP. Pueden ser cientos.</span>
         </label>
         <div class="fila">
           <label>Nombre del lote<input id="loteNombre" placeholder="Ej.: Compras noviembre"></label>

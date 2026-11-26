@@ -12,6 +12,7 @@ Cada versión publicada tiene su sección. La imagen Docker toma la versión de 
 - Menú agrupado (Trabajo, Datos, Configuración) y la sección actual arriba, al lado del logo.
 - Novedades: al entrar después de una actualización, Factorum muestra qué cambió. También desde el menú, con Acerca de (versión y estado de cada componente).
 - Pantallas vacías que explican qué hacer, veredicto con sello e ícono y estados con punto de color.
+- Carga de archivos con botón propio (sin el «Choose File» del navegador): muestra los elegidos con su tamaño y el total.
 
 ## [0.1.0] - 2026-11-25
 

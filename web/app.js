@@ -736,17 +736,55 @@ document.addEventListener('keydown', (ev) => {
   if ((ev.ctrlKey || ev.metaKey) && ev.key === 'Enter') guardarRevision(true);
 });
 
-// Arrastrar y soltar.
-for (const [zona, input] of [['#zonaVerificar', '#archVerificar'], ['#zonaSubir', '#archSubir']]) {
+// Arrastrar y soltar, y lo elegido a la vista.
+function tamanio(b) {
+  if (b < 1024) return `${b} B`;
+  if (b < 1048576) return `${Math.round(b / 1024)} KB`;
+  return `${(b / 1048576).toLocaleString('es-AR', { maximumFractionDigits: 1 })} MB`;
+}
+function mostrarArchivos(z, input) {
+  const files = [...input.files];
+  const txt = z.querySelector('.zona-txt');
+  const btn = z.querySelector('.zona-btn');
+  z.querySelector('.zona-lista')?.remove();
+  z.classList.toggle('con-archivos', files.length > 0);
+  if (!files.length) {
+    txt.textContent = txt.dataset.vacio;
+    btn.textContent = input.multiple ? 'Elegir archivos' : 'Elegir archivo';
+    return;
+  }
+  const total = files.reduce((a, f) => a + f.size, 0);
+  txt.textContent = files.length === 1 ? '1 archivo listo' : `${files.length} archivos listos (${tamanio(total)})`;
+  btn.textContent = input.multiple ? 'Cambiar archivos' : 'Cambiar archivo';
+  const ul = document.createElement('ul');
+  ul.className = 'zona-lista';
+  const MAX = 5;
+  for (const f of files.slice(0, MAX)) {
+    const li = document.createElement('li');
+    li.innerHTML = `<span class="nom">${esc(f.name)}</span><span class="tam">${tamanio(f.size)}</span>`;
+    ul.append(li);
+  }
+  if (files.length > MAX) {
+    const li = document.createElement('li');
+    li.className = 'mas';
+    li.textContent = `y ${files.length - MAX} más`;
+    ul.append(li);
+  }
+  txt.after(ul);
+}
+for (const [zona, sel] of [['#zonaVerificar', '#archVerificar'], ['#zonaSubir', '#archSubir']]) {
   const z = $(zona);
+  const input = $(sel);
   z.addEventListener('dragover', (e) => { e.preventDefault(); z.classList.add('sobre'); });
   z.addEventListener('dragleave', () => z.classList.remove('sobre'));
   z.addEventListener('drop', (e) => {
     e.preventDefault(); z.classList.remove('sobre');
-    $(input).files = e.dataTransfer.files;
-    z.querySelector('.zona-txt').textContent = `${e.dataTransfer.files.length} archivo(s) listos`;
+    input.files = e.dataTransfer.files;
+    mostrarArchivos(z, input);
   });
-  $(input).addEventListener('change', () => { z.querySelector('.zona-txt').textContent = `${$(input).files.length} archivo(s) listos`; });
+  input.addEventListener('change', () => mostrarArchivos(z, input));
+  // Después de un reset el input queda vacío, pero el change no se dispara.
+  input.form.addEventListener('reset', () => setTimeout(() => mostrarArchivos(z, input)));
 }
 
 // ---------- Arranque ----------

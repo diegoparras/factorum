@@ -44,7 +44,23 @@ kbd { font-family:var(--mono); font-size:11.5px; padding:1px 6px; border-radius:
 .zona { border:1.5px dashed var(--hairline); border-radius:var(--radius-lg); padding:28px 20px; text-align:center; cursor:pointer;
   color:var(--muted); display:flex; flex-direction:column; align-items:center; gap:10px; transition:border-color .15s, background .15s; }
 .zona:hover, .zona.sobre { border-color:var(--accent); background:var(--accent-suave); }
-.zona input { max-width:100%; }
+.zona { position:relative; }
+/* El input nativo queda invisible pero sigue ahí: el clic en la zona lo abre (es un label),
+   el teclado lo enfoca y "required" sigue validando. */
+.zona-input { position:absolute; left:50%; bottom:12px; width:1px; height:1px; opacity:0; pointer-events:none; }
+.zona:focus-within { border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-suave); }
+.zona-txt { color:var(--text); font-weight:500; font-size:15px; }
+.zona-btn { display:inline-flex; align-items:center; gap:6px; padding:8px 16px; border-radius:999px; border:1px solid var(--accent);
+  color:var(--accent); background:var(--card); font-weight:600; font-size:13.5px; transition:background .15s, color .15s; }
+.zona:hover .zona-btn { background:var(--accent); color:var(--on-accent); }
+.zona-ayuda { font-size:12.5px; color:var(--muted); }
+.zona.con-archivos { border-style:solid; border-color:var(--accent); background:var(--accent-suave); }
+.zona-lista { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:4px; width:min(100%, 520px); text-align:left; }
+.zona-lista li { display:flex; gap:10px; align-items:center; padding:7px 12px; border-radius:var(--radius); background:var(--card);
+  border:1px solid var(--hairline); font-size:13px; color:var(--text); }
+.zona-lista li .nom { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.zona-lista li .tam { color:var(--muted); font-family:var(--mono); font-size:12px; }
+.zona-lista li.mas { justify-content:center; color:var(--muted); background:transparent; border-style:dashed; }
 .zona-ico { width:44px; height:44px; border-radius:12px; background:var(--accent-suave); display:grid; place-items:center; }
 .zona-ico::before { content:""; width:22px; height:22px; background:var(--accent);
   -webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 16V4M7 9l5-5 5 5'/%3E%3Cpath d='M4 20h16'/%3E%3C/svg%3E") center/contain no-repeat;
@@ -222,3 +238,4 @@ img.qr { width:220px; height:220px; border:1px solid var(--border); border-radiu
   #revForm { grid-template-columns:1fr; }
   main { padding:16px; }
 }
+.zona.con-archivos .zona-ico { background:var(--card); }

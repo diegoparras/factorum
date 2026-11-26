@@ -16,7 +16,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/diegoparras/factorum/internal/arca"
 	"github.com/diegoparras/factorum/internal/modelo"
+	"github.com/diegoparras/factorum/internal/rubro"
 )
 
 //go:embed migraciones/*.sql
@@ -25,6 +27,9 @@ var migraciones embed.FS
 type Store struct{ Pool *pgxpool.Pool }
 
 var ErrNoEncontrado = errors.New("no encontrado")
+
+// ErrFiltro: un filtro con un valor que no se entiende (la API contesta 400).
+var ErrFiltro = errors.New("filtro inválido")
 
 // Abrir conecta y corre las migraciones.
 func Abrir(ctx context.Context, url string, maxConns int) (*Store, error) {
@@ -174,8 +179,27 @@ type Filtro struct {
 	Desde   string
 	Hasta   string
 	Q       string
+	Clase   string // "", "facturas" (todo lo que no es tique) o "tickets" (tiques de controlador fiscal)
+	Rubro   string // supermercado, combustible...; "sin_rubro" trae los que no tienen
 	Limite  int
 	Offset  int
+}
+
+// Clases válidas del filtro.
+const (
+	ClaseFacturas = "facturas"
+	ClaseTickets  = "tickets"
+)
+
+// ClaseValida dice si el valor del filtro clase se entiende.
+func ClaseValida(c string) bool { return c == "" || c == ClaseFacturas || c == ClaseTickets }
+
+func codigosTique() []int32 {
+	var res []int32
+	for _, c := range arca.CodigosTique() {
+		res = append(res, int32(c))
+	}
+	return res
 }
 
 // ---------- Lotes ----------
@@ -444,6 +468,19 @@ func (f Filtro) where() (string, []any) {
 	if f.Hasta != "" {
 		add("c.fecha <= ?::date", f.Hasta)
 	}
+	switch f.Clase {
+	case ClaseTickets:
+		add("c.tipo = ANY(?::int[])", codigosTique())
+	case ClaseFacturas:
+		add("(c.tipo IS NULL OR NOT c.tipo = ANY(?::int[]))", codigosTique())
+	}
+	switch f.Rubro {
+	case "":
+	case "sin_rubro":
+		w = append(w, "coalesce(c.datos->>'rubro', '') = ''")
+	default:
+		add("c.datos->>'rubro' = ?", f.Rubro)
+	}
 	if q := strings.TrimSpace(f.Q); q != "" {
 		a = append(a, q)
 		n := "$" + strconv.Itoa(len(a))
@@ -461,6 +498,12 @@ func (s *Store) Comprobantes(ctx context.Context, f Filtro) ([]Cbte, int, error)
 	}
 	if f.Limite > 5000 {
 		f.Limite = 5000
+	}
+	if !ClaseValida(f.Clase) {
+		return nil, 0, fmt.Errorf("%w: clase %q (puede ser facturas o tickets)", ErrFiltro, f.Clase)
+	}
+	if f.Rubro != "" && f.Rubro != "sin_rubro" && !rubro.Valido(f.Rubro) {
+		return nil, 0, fmt.Errorf("%w: rubro %q (puede ser %s o sin_rubro)", ErrFiltro, f.Rubro, strings.Join(rubro.Todos, ", "))
 	}
 	w, a := f.where()
 	var total int
@@ -568,6 +611,75 @@ func (s *Store) Correcciones(ctx context.Context, id int64) ([]Correccion, error
 			return nil, err
 		}
 		res = append(res, k)
+	}
+	return res, rows.Err()
+}
+
+// ---------- Rubros por CUIT (capa 3) ----------
+
+// RubroCUIT es el rubro que una persona eligió para un emisor.
+type RubroCUIT struct {
+	CUITEmisor  string    `json:"cuit_emisor"`
+	Rubro       string    `json:"rubro"`
+	Usuario     string    `json:"usuario"`
+	Actualizado time.Time `json:"actualizado"`
+}
+
+// RubrosDeCUITs devuelve los rubros guardados para esos emisores (cuit -> rubro).
+func (s *Store) RubrosDeCUITs(ctx context.Context, cuits []string) (map[string]string, error) {
+	res := map[string]string{}
+	if len(cuits) == 0 {
+		return res, nil
+	}
+	rows, err := s.Pool.Query(ctx, `SELECT cuit_emisor, rubro FROM rubros_cuit WHERE cuit_emisor = ANY($1)`, cuits)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var c, r string
+		if err := rows.Scan(&c, &r); err != nil {
+			return nil, err
+		}
+		res[c] = r
+	}
+	return res, rows.Err()
+}
+
+// GuardarRubroCUIT recuerda el rubro de un emisor y lo pasa a sus comprobantes ya cargados cuyo
+// rubro no eligió una persona (origen distinto de manual). Devuelve cuántos actualizó.
+func (s *Store) GuardarRubroCUIT(ctx context.Context, cuit, rubro, usuario string) (int64, error) {
+	var n int64
+	err := pgx.BeginFunc(ctx, s.Pool, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `INSERT INTO rubros_cuit (cuit_emisor, rubro, usuario, actualizado) VALUES ($1, $2, $3, now())
+			ON CONFLICT (cuit_emisor) DO UPDATE SET rubro=EXCLUDED.rubro, usuario=EXCLUDED.usuario, actualizado=now()`, cuit, rubro, usuario); err != nil {
+			return err
+		}
+		ct, err := tx.Exec(ctx, `UPDATE comprobantes SET
+				datos = jsonb_set(datos || jsonb_build_object('rubro', $2::text), '{origenes}',
+					coalesce(nullif(datos->'origenes', 'null'::jsonb), '{}'::jsonb) || '{"rubro":"manual"}'::jsonb),
+				actualizado = now()
+			WHERE cuit_emisor = $1 AND coalesce(datos->'origenes'->>'rubro', '') <> 'manual'`, cuit, rubro)
+		n = ct.RowsAffected()
+		return err
+	})
+	return n, err
+}
+
+// Rubros lista los rubros guardados por CUIT, del más reciente al más viejo.
+func (s *Store) Rubros(ctx context.Context) ([]RubroCUIT, error) {
+	rows, err := s.Pool.Query(ctx, `SELECT cuit_emisor, rubro, usuario, actualizado FROM rubros_cuit ORDER BY actualizado DESC LIMIT 5000`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	res := []RubroCUIT{}
+	for rows.Next() {
+		var r RubroCUIT
+		if err := rows.Scan(&r.CUITEmisor, &r.Rubro, &r.Usuario, &r.Actualizado); err != nil {
+			return nil, err
+		}
+		res = append(res, r)
 	}
 	return res, rows.Err()
 }

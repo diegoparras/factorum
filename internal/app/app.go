@@ -15,6 +15,7 @@ import (
 	"log/slog"
 	"net/http"
 	"path"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -31,6 +32,7 @@ import (
 	"github.com/diegoparras/factorum/internal/config"
 	"github.com/diegoparras/factorum/internal/modelo"
 	"github.com/diegoparras/factorum/internal/pipeline"
+	"github.com/diegoparras/factorum/internal/rubro"
 	"github.com/diegoparras/factorum/internal/store"
 	"github.com/diegoparras/factorum/internal/validar"
 )
@@ -349,6 +351,7 @@ func (a *App) procesar(ctx context.Context, docID int64, ultimoIntento bool) err
 	}
 	r := a.Pipeline.Procesar(ctx, doc.Nombre, datos, a.opciones(lote))
 	a.enriquecerConPadron(ctx, &r)
+	a.aplicarRubrosGuardados(ctx, &r)
 	if j, err := json.Marshal(r); err == nil {
 		if _, err := a.Almacen.Guardar(ctx, "resultados/"+doc.SHA256+".json", j); err != nil {
 			a.Log.Warn("no se pudo guardar el resultado en el almacén", "documento", docID, "error", err)
@@ -391,7 +394,10 @@ func (a *App) encolarAviso(ctx context.Context, l *store.Lote) {
 	}
 }
 
-// enriquecerConPadron completa la razón social del emisor con el padrón de ARCA (vía Arcanum).
+// enriquecerConPadron completa con el padrón A5 de ARCA (vía Arcanum) la razón social y la condición
+// frente al IVA del emisor, si faltan, y el rubro desde su actividad principal (capa 2 del rubro:
+// le gana a las palabras clave, pero no a lo que eligió una persona). El padrón se guarda en
+// memoria por CUIT.
 func (a *App) enriquecerConPadron(ctx context.Context, r *modelo.Resultado) {
 	if a.Arcanum == nil || a.Arcanum.Consultante == "" {
 		return
@@ -399,31 +405,37 @@ func (a *App) enriquecerConPadron(ctx context.Context, r *modelo.Resultado) {
 	for i := range r.Comprobantes {
 		rc := &r.Comprobantes[i]
 		c := &rc.Comprobante
-		if c.RazonSocialEmisor != "" || !arca.CUITValido(c.CUITEmisor) {
+		if !arca.CUITValido(c.CUITEmisor) {
 			continue
 		}
-		razon := ""
+		var p arcanum.DatosPadron
 		if v, ok := a.padron.Load(c.CUITEmisor); ok {
-			razon = v.(string)
+			p = v.(arcanum.DatosPadron)
 		} else {
 			cctx, cancel := context.WithTimeout(ctx, 20*time.Second)
-			rz, cond, err := a.Arcanum.Padron(cctx, "", c.CUITEmisor)
+			var err error
+			p, err = a.Arcanum.Padron(cctx, "", c.CUITEmisor)
 			cancel()
 			if err != nil {
 				a.Log.Info("padrón no disponible", "error", err)
 				return // si Arcanum no responde, no insistimos con el resto
 			}
-			razon = rz
-			a.padron.Store(c.CUITEmisor, rz)
-			if c.CondicionIVAEmisor == "" && cond != "" {
-				c.CondicionIVAEmisor = cond
-				c.Marcar("condicion_iva_emisor", modelo.OrigenArcanum)
+			a.padron.Store(c.CUITEmisor, p)
+		}
+		if c.CondicionIVAEmisor == "" && p.Condicion != "" {
+			c.CondicionIVAEmisor = p.Condicion
+			c.Marcar("condicion_iva_emisor", modelo.OrigenArcanum)
+		}
+		if p.Actividad != nil && c.Origen("rubro") != modelo.OrigenManual {
+			if rb := rubro.DesdeActividad(p.Actividad.Codigo, p.Actividad.Descripcion); rb != "" {
+				c.Rubro = rb
+				c.Marcar("rubro", modelo.OrigenArcanum)
 			}
 		}
-		if razon == "" {
+		if c.RazonSocialEmisor != "" || p.Razon == "" {
 			continue
 		}
-		c.RazonSocialEmisor = razon
+		c.RazonSocialEmisor = p.Razon
 		c.Marcar("razon_social_emisor", modelo.OrigenArcanum)
 		var h []modelo.Hallazgo
 		for _, x := range rc.Hallazgos {
@@ -434,6 +446,32 @@ func (a *App) enriquecerConPadron(ctx context.Context, r *modelo.Resultado) {
 		rc.Hallazgos = h
 		rc.Estado = validar.Estado(c, h)
 		rc.Confianza = validar.Confianza(c, h)
+	}
+}
+
+// aplicarRubrosGuardados es la capa 3 del rubro: si una persona ya eligió el rubro de un emisor, ese
+// gana (con origen manual).
+func (a *App) aplicarRubrosGuardados(ctx context.Context, r *modelo.Resultado) {
+	if a.Store == nil {
+		return
+	}
+	var cuits []string
+	for i := range r.Comprobantes {
+		if c := &r.Comprobantes[i].Comprobante; c.CUITEmisor != "" {
+			cuits = append(cuits, c.CUITEmisor)
+		}
+	}
+	guardados, err := a.Store.RubrosDeCUITs(ctx, cuits)
+	if err != nil {
+		a.Log.Warn("no se pudieron leer los rubros guardados", "error", err)
+		return
+	}
+	for i := range r.Comprobantes {
+		c := &r.Comprobantes[i].Comprobante
+		if rb, ok := guardados[c.CUITEmisor]; ok && rubro.Valido(rb) {
+			c.Rubro = rb
+			c.Marcar("rubro", modelo.OrigenManual)
+		}
 	}
 }
 
@@ -457,13 +495,18 @@ func hallazgosConstatacion(k *arcanum.Constatacion) []modelo.Hallazgo {
 	if k.Valido != nil && *k.Valido {
 		return []modelo.Hallazgo{{Codigo: "constatado", Nivel: modelo.NivelInfo, Mensaje: "ARCA confirma el comprobante (WSCDC)."}}
 	}
+	if k.Apoc != nil && k.Apoc.Consultado && k.Apoc.EsApocrifo != nil {
+		// Un tique: WSCDC no lo cubre, pero el emisor no está en la base de apócrifos.
+		return []modelo.Hallazgo{{Codigo: "apoc_controlado", Nivel: modelo.NivelInfo, Campo: "cuit_emisor",
+			Mensaje: "El emisor no figura en la base de apócrifos de ARCA."}}
+	}
 	if k.Error != "" {
 		return []modelo.Hallazgo{{Codigo: "constatacion_fallo", Nivel: modelo.NivelInfo, Mensaje: "No se pudo constatar: " + k.Error}}
 	}
 	return nil
 }
 
-var codigosConstatacion = map[string]bool{"emisor_apocrifo": true, "constatacion_rechazada": true, "constatado": true, "constatacion_fallo": true}
+var codigosConstatacion = map[string]bool{"emisor_apocrifo": true, "apoc_controlado": true, "constatacion_rechazada": true, "constatado": true, "constatacion_fallo": true}
 
 // aplicarConstatacion guarda el resultado en el comprobante y recalcula el estado.
 func (a *App) aplicarConstatacion(ctx context.Context, c *store.Cbte, k *arcanum.Constatacion) error {
@@ -508,7 +551,7 @@ func (a *App) constatarLote(ctx context.Context, loteID int64) error {
 		if arca.CUITValido(l.ClienteCUIT) {
 			consultante = l.ClienteCUIT
 		}
-		ks, err := a.Arcanum.Constatar(ctx, consultante, ptrs)
+		ks, err := a.Arcanum.ConstatarTodo(ctx, consultante, ptrs)
 		if err != nil {
 			return err // la cola reintenta con espera creciente
 		}
@@ -535,7 +578,7 @@ func (a *App) ConstatarUno(ctx context.Context, id int64) (*store.Cbte, error) {
 	if arca.CUITValido(c.ClienteCUIT) {
 		consultante = c.ClienteCUIT
 	}
-	ks, err := a.Arcanum.Constatar(ctx, consultante, []*modelo.Comprobante{&c.Datos})
+	ks, err := a.Arcanum.ConstatarTodo(ctx, consultante, []*modelo.Comprobante{&c.Datos})
 	if err != nil {
 		return nil, err
 	}
@@ -562,7 +605,7 @@ type VeredictoComprobante struct {
 }
 
 // orden de gravedad para resumir varios comprobantes en un veredicto.
-var gravedad = map[string]int{"valida": 0, "no_verificable": 1, "con_errores": 2, "invalida": 3, "apocrifa": 4}
+var gravedad = map[string]int{"valida": 0, "tique_controlado": 1, "no_verificable": 2, "con_errores": 3, "invalida": 4, "apocrifa": 5}
 
 // Verificar lee un archivo y lo constata, sin guardarlo (salvo que se pida).
 func (a *App) Verificar(ctx context.Context, nombre string, datos []byte, consultante string, ia, guardar bool) (*Verificacion, error) {
@@ -580,6 +623,7 @@ func (a *App) Verificar(ctx context.Context, nombre string, datos []byte, consul
 		return v, nil
 	}
 	a.enriquecerConPadron(ctx, &r)
+	a.aplicarRubrosGuardados(ctx, &r)
 	v.Resultado = r
 	ks := make([]arcanum.Constatacion, len(r.Comprobantes))
 	if a.Arcanum != nil {
@@ -587,7 +631,7 @@ func (a *App) Verificar(ctx context.Context, nombre string, datos []byte, consul
 		for i := range r.Comprobantes {
 			ptrs[i] = &r.Comprobantes[i].Comprobante
 		}
-		res, err := a.Arcanum.Constatar(ctx, consultante, ptrs)
+		res, err := a.Arcanum.ConstatarTodo(ctx, consultante, ptrs)
 		if err != nil {
 			for i := range ks {
 				ks[i] = arcanum.Constatacion{Error: err.Error()}
@@ -633,7 +677,10 @@ var CamposEditables = map[string]string{
 	"neto_gravado": "m", "no_gravado": "m", "exento": "m", "iva_27": "m", "iva_21": "m", "iva_10_5": "m",
 	"iva_5": "m", "iva_2_5": "m", "otros_tributos": "m", "subtotal": "m", "iva_contenido": "m", "total": "m",
 	"cae": "c", "vto_cae": "d",
+	"hora": "s", "rubro": "s",
 }
+
+var reHora = regexp.MustCompile(`^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$`)
 
 var codigosPersistentes = map[string]bool{"qr_distinto_texto": true, "duplicado": true, "ia_contradice_qr": true, "ia_fallo": true, "ocr_fallo": true}
 
@@ -659,8 +706,19 @@ func (a *App) Corregir(ctx context.Context, id int64, campos map[string]string, 
 		switch tipo {
 		case "s":
 			nuevo = v
-			if k == "letra" || k == "moneda" {
+			switch k {
+			case "letra", "moneda":
 				nuevo = strings.ToUpper(v)
+			case "rubro":
+				v = strings.ToLower(v)
+				if !rubro.Valido(v) {
+					return nil, fmt.Errorf("rubro: %q no es válido (puede ser %s)", v, strings.Join(rubro.Todos, ", "))
+				}
+				nuevo = v
+			case "hora":
+				if v != "" && !reHora.MatchString(v) {
+					return nil, fmt.Errorf("hora: %q no es una hora válida (HH:MM o HH:MM:SS)", v)
+				}
 			}
 		case "c":
 			nuevo = arca.SoloDigitos(v)
@@ -692,7 +750,10 @@ func (a *App) Corregir(ctx context.Context, id int64, campos map[string]string, 
 			}
 			nuevo = imp.Float()
 		}
-		antes := fmt.Sprint(m[k])
+		antes := ""
+		if m[k] != nil {
+			antes = fmt.Sprint(m[k])
+		}
 		if antes == fmt.Sprint(nuevo) {
 			continue
 		}
@@ -706,6 +767,9 @@ func (a *App) Corregir(ctx context.Context, id int64, campos map[string]string, 
 	}
 	for _, k := range cambios {
 		d.Marcar(k.Campo, modelo.OrigenManual)
+	}
+	if d.Tipo != 0 {
+		d.EsTique = arca.EsTique(d.Tipo)
 	}
 	c.Datos = d
 	var h []modelo.Hallazgo
@@ -732,6 +796,17 @@ func (a *App) Corregir(ctx context.Context, id int64, campos map[string]string, 
 	}
 	if err := a.Store.ActualizarCbte(ctx, c, cambios, aprobadoPor); err != nil {
 		return nil, err
+	}
+	// Capa 3 del rubro: lo que corrige una persona se recuerda para ese emisor y pasa a sus otros
+	// comprobantes (salvo a los que ya tienen un rubro elegido a mano).
+	for _, k := range cambios {
+		if k.Campo == "rubro" && d.CUITEmisor != "" {
+			n, err := a.Store.GuardarRubroCUIT(ctx, d.CUITEmisor, d.Rubro, usuario)
+			if err != nil {
+				return nil, fmt.Errorf("el comprobante se guardó, pero no se pudo recordar el rubro del emisor: %w", err)
+			}
+			a.Log.Info("rubro recordado para el emisor", "cuit", d.CUITEmisor, "rubro", d.Rubro, "comprobantes", n)
+		}
 	}
 	return a.Store.Comprobante(ctx, id)
 }

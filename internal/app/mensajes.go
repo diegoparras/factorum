@@ -211,7 +211,11 @@ func TextoResumen(l *store.Lote, cbs []store.Cbte) string {
 		if razon == "" {
 			razon = arca.FormatearCUIT(d.CUITEmisor)
 		}
-		fmt.Fprintf(&b, "\n- %s, %s, $ %s: %s", nombreCbte(d), razon, d.Total.AR(), etiquetaEstado[c.Estado])
+		fmt.Fprintf(&b, "\n- %s, %s, $ %s", nombreCbte(d), razon, d.Total.AR())
+		if d.EsTique && d.Rubro != "" {
+			fmt.Fprintf(&b, " (%s)", d.Rubro)
+		}
+		fmt.Fprintf(&b, ": %s", etiquetaEstado[c.Estado])
 		for _, h := range c.Hallazgos {
 			if h.Nivel == modelo.NivelError || (c.Estado == modelo.EstadoRevisar && h.Nivel == modelo.NivelAviso) {
 				fmt.Fprintf(&b, " (%s)", h.Mensaje)
@@ -224,6 +228,7 @@ func TextoResumen(l *store.Lote, cbs []store.Cbte) string {
 
 var etiquetaVeredicto = map[string]string{
 	"valida": "VÁLIDA", "invalida": "NO VÁLIDA", "apocrifa": "EMISOR APÓCRIFO", "con_errores": "CON ERRORES", "no_verificable": "NO SE PUDO VERIFICAR",
+	"tique_controlado": "TICKET CONTROLADO",
 }
 
 // TextoVerificacion es la respuesta a "verificar" en un chat.
@@ -232,7 +237,14 @@ func TextoVerificacion(nombre string, v *Verificacion) string {
 	fmt.Fprintf(&b, "%s: %s. %s", nombre, etiquetaVeredicto[v.Veredicto], v.Mensaje)
 	for i, rc := range v.Resultado.Comprobantes {
 		c := &rc.Comprobante
-		fmt.Fprintf(&b, "\n- %s, CUIT %s, %s, $ %s", nombreCbte(c), arca.FormatearCUIT(c.CUITEmisor), fechaAR(c.Fecha), c.Total.AR())
+		fmt.Fprintf(&b, "\n- %s, CUIT %s, %s", nombreCbte(c), arca.FormatearCUIT(c.CUITEmisor), fechaAR(c.Fecha))
+		if c.Hora != "" {
+			fmt.Fprintf(&b, " %s", c.Hora)
+		}
+		fmt.Fprintf(&b, ", $ %s", c.Total.AR())
+		if c.EsTique && c.Rubro != "" {
+			fmt.Fprintf(&b, ", %s", c.Rubro)
+		}
 		if c.CAE != "" {
 			fmt.Fprintf(&b, ", CAE %s", c.CAE)
 		}
@@ -285,6 +297,8 @@ func estadoConstatacion(raw json.RawMessage) string {
 		return "valido"
 	case k.Valido != nil:
 		return "invalido"
+	case k.Apoc != nil && k.Apoc.Consultado && k.Apoc.EsApocrifo != nil:
+		return "controlado" // tique: no está en la base de apócrifos (no se constata en ARCA)
 	case k.Error != "":
 		return "error"
 	}

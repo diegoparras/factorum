@@ -24,6 +24,7 @@ import (
 	"github.com/diegoparras/factorum/internal/canal"
 	"github.com/diegoparras/factorum/internal/config"
 	"github.com/diegoparras/factorum/internal/export"
+	"github.com/diegoparras/factorum/internal/rubro"
 	"github.com/diegoparras/factorum/internal/store"
 )
 
@@ -115,6 +116,7 @@ func (s *Server) Handler() http.Handler {
 	m.HandleFunc("GET /api/export.xlsx", s.auth(RolLectura, s.exportar("xlsx")))
 	m.HandleFunc("GET /api/export.csv", s.auth(RolLectura, s.exportar("csv")))
 	m.HandleFunc("GET /api/resumen", s.auth(RolLectura, s.resumen))
+	m.HandleFunc("GET /api/rubros", s.auth(RolLectura, s.rubros))
 	m.HandleFunc("GET /api/canales", s.auth(RolLectura, s.canales))
 	m.HandleFunc("GET /api/canales/whatsapp/qr.png", s.auth(RolOperador, s.qrWhatsApp))
 	m.HandleFunc("POST /api/canales/whatsapp/vincular", s.auth(RolOperador, s.vincularWhatsApp))
@@ -189,6 +191,8 @@ func jsonErr(w http.ResponseWriter, status int, msg string) {
 
 func (s *Server) fallo(w http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, store.ErrFiltro):
+		jsonErr(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, store.ErrNoEncontrado):
 		jsonErr(w, http.StatusNotFound, "No encontrado")
 	default:
@@ -207,6 +211,7 @@ func filtroDe(r *http.Request) store.Filtro {
 	return store.Filtro{
 		Lote: int64(n("lote")), Estado: q.Get("estado"), Cliente: arca.SoloDigitos(q.Get("cliente")),
 		Emisor: arca.SoloDigitos(q.Get("emisor")), Desde: q.Get("desde"), Hasta: q.Get("hasta"), Q: q.Get("q"),
+		Clase: strings.ToLower(strings.TrimSpace(q.Get("clase"))), Rubro: strings.ToLower(strings.TrimSpace(q.Get("rubro"))),
 		Limite: min(max(n("limite"), 0), 500), Offset: max(n("offset"), 0),
 	}
 }
@@ -446,6 +451,17 @@ func (s *Server) corregir(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonOK(w, http.StatusOK, map[string]any{"comprobante": c})
+}
+
+// rubros devuelve los rubros que se recuerdan por CUIT del emisor (lo que corrigió una persona) y la
+// lista de rubros válidos.
+func (s *Server) rubros(w http.ResponseWriter, r *http.Request) {
+	rs, err := s.App.Store.Rubros(r.Context())
+	if err != nil {
+		s.fallo(w, err)
+		return
+	}
+	jsonOK(w, http.StatusOK, map[string]any{"rubros": rubro.Todos, "por_cuit": rs})
 }
 
 func (s *Server) constatar(w http.ResponseWriter, r *http.Request) {

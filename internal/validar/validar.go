@@ -59,8 +59,15 @@ func Comprobante(c *modelo.Comprobante, hoy time.Time) []modelo.Hallazgo {
 	if c.Total == 0 {
 		faltan = append(faltan, struct{ campo, nombre string }{"total", "importe total"})
 	}
+	tique := c.EsTique || arca.EsTique(c.Tipo)
 	for _, f := range faltan {
-		add("falta_"+f.campo, modelo.NivelError, f.campo, "No se encontró el %s.", f.nombre)
+		n := modelo.NivelError
+		// En un ticket fotografiado el punto de venta y el número suelen ser lo primero que se borra;
+		// sin ellos el gasto igual se puede usar, pero conviene mirarlo.
+		if tique && (f.campo == "punto_venta" || f.campo == "numero") {
+			n = modelo.NivelAviso
+		}
+		add("falta_"+f.campo, n, f.campo, "No se encontró el %s.", f.nombre)
 	}
 
 	if c.RazonSocialEmisor == "" && c.CUITEmisor != "" {
@@ -101,13 +108,15 @@ func Comprobante(c *modelo.Comprobante, hoy time.Time) []modelo.Hallazgo {
 		}
 	}
 
-	// --- CAE ---
-	if c.CAE == "" {
+	// --- CAE (un tique de controlador fiscal no lleva) ---
+	if tique {
+		add("tique_sin_constatacion", modelo.NivelInfo, "", "Los tiques de controlador fiscal no se constatan en ARCA; se controló el CUIT y la base de apócrifos.")
+	} else if c.CAE == "" {
 		add("sin_cae", modelo.NivelAviso, "cae", "No se encontró el CAE: sin él no se puede constatar el comprobante.")
 	} else if len(arca.SoloDigitos(c.CAE)) != 14 {
 		add("cae_invalido", modelo.NivelError, "cae", "El CAE %q no tiene 14 dígitos.", c.CAE)
 	}
-	if c.VtoCAE != "" && !fecha.IsZero() {
+	if !tique && c.VtoCAE != "" && !fecha.IsZero() {
 		if v, err := time.Parse("2006-01-02", c.VtoCAE); err == nil && v.Before(fecha) {
 			add("cae_vencido_a_la_emision", modelo.NivelError, "vto_cae", "El CAE vence (%s) antes de la fecha de emisión (%s).", c.VtoCAE, c.Fecha)
 		}
@@ -117,6 +126,8 @@ func Comprobante(c *modelo.Comprobante, hoy time.Time) []modelo.Hallazgo {
 	if c.Total != 0 {
 		tol := tolerancia(c)
 		switch {
+		case tique:
+			validarSumasTique(c, tol, add)
 		case c.Letra == "B" || c.Letra == "C":
 			if c.Subtotal != 0 {
 				if d := abs(c.Subtotal + c.OtrosTributos - c.Total); d > tol {
@@ -133,26 +144,7 @@ func Comprobante(c *modelo.Comprobante, hoy time.Time) []modelo.Hallazgo {
 			} else if d := abs(suma - c.Total); d > tol {
 				add("suma_no_cierra", modelo.NivelError, "total", "Neto + IVA + otros (%s) no da el total (%s). Diferencia: %s.", suma.AR(), c.Total.AR(), (c.Total - suma).AR())
 			}
-			// Con una sola alícuota se puede controlar el IVA contra el neto.
-			if c.NetoGravado != 0 {
-				type alic struct {
-					v    modelo.Importe
-					tasa float64
-					txt  string
-				}
-				var con []alic
-				for _, a := range []alic{{c.IVA27, 0.27, "27%"}, {c.IVA21, 0.21, "21%"}, {c.IVA105, 0.105, "10,5%"}, {c.IVA5, 0.05, "5%"}, {c.IVA25, 0.025, "2,5%"}} {
-					if a.v != 0 {
-						con = append(con, a)
-					}
-				}
-				if len(con) == 1 {
-					esperado := modelo.DesdeFloat(c.NetoGravado.Float() * con[0].tasa)
-					if d := abs(esperado - con[0].v); d > 2 {
-						add("iva_no_corresponde", modelo.NivelAviso, "neto_gravado", "El IVA %s (%s) no es el %s del neto gravado (%s daría %s).", con[0].txt, con[0].v.AR(), con[0].txt, c.NetoGravado.AR(), esperado.AR())
-					}
-				}
-			}
+			controlIVANeto(c, add)
 		}
 	}
 	for _, v := range []struct {
@@ -169,6 +161,54 @@ func Comprobante(c *modelo.Comprobante, hoy time.Time) []modelo.Hallazgo {
 		add("moneda_extranjera", modelo.NivelAviso, "moneda", "Comprobante en moneda extranjera (%s, cotización %.4f): los importes no están en pesos.", c.Moneda, c.Cotizacion)
 	}
 	return h
+}
+
+type agregar func(cod string, n modelo.Nivel, campo, f string, a ...any)
+
+// controlIVANeto: con una sola alícuota se puede controlar el IVA contra el neto.
+func controlIVANeto(c *modelo.Comprobante, add agregar) {
+	if c.NetoGravado == 0 {
+		return
+	}
+	type alic struct {
+		v    modelo.Importe
+		tasa float64
+		txt  string
+	}
+	var con []alic
+	for _, a := range []alic{{c.IVA27, 0.27, "27%"}, {c.IVA21, 0.21, "21%"}, {c.IVA105, 0.105, "10,5%"}, {c.IVA5, 0.05, "5%"}, {c.IVA25, 0.025, "2,5%"}} {
+		if a.v != 0 {
+			con = append(con, a)
+		}
+	}
+	if len(con) == 1 {
+		esperado := modelo.DesdeFloat(c.NetoGravado.Float() * con[0].tasa)
+		if d := abs(esperado - con[0].v); d > 2 {
+			add("iva_no_corresponde", modelo.NivelAviso, "neto_gravado", "El IVA %s (%s) no es el %s del neto gravado (%s daría %s).", con[0].txt, con[0].v.AR(), con[0].txt, c.NetoGravado.AR(), esperado.AR())
+		}
+	}
+}
+
+// validarSumasTique: si el ticket trae el detalle (neto, no gravado o exento), neto + IVA + otros
+// tiene que dar el total. Si no lo trae, alcanza con el total: un tique a consumidor final no
+// discrimina IVA (es normal, va como info); un tique factura A o M sí debería (aviso).
+func validarSumasTique(c *modelo.Comprobante, tol modelo.Importe, add agregar) {
+	if c.NetoGravado != 0 || c.NoGravado != 0 || c.Exento != 0 {
+		suma := c.SumaComponentes()
+		if d := abs(suma - c.Total); d > tol {
+			add("suma_no_cierra", modelo.NivelError, "total", "Neto + IVA + otros (%s) no da el total (%s). Diferencia: %s.", suma.AR(), c.Total.AR(), (c.Total - suma).AR())
+		}
+		controlIVANeto(c, add)
+		return
+	}
+	if c.IVATotal() != 0 {
+		return // IVA sin neto: no hay con qué sumar, pero el dato está
+	}
+	if c.Letra == "A" || c.Letra == "M" {
+		add("sin_detalle_importes", modelo.NivelAviso, "neto_gravado", "El tique factura %s no trae el detalle de neto e IVA: solo el total.", c.Letra)
+		return
+	}
+	add("tique_sin_detalle_iva", modelo.NivelInfo, "neto_gravado", "El tique no discrimina IVA (es lo normal a consumidor final): se tomó el total.")
 }
 
 // Estado resume los hallazgos y el origen de los datos clave.
@@ -199,6 +239,9 @@ func Confianza(c *modelo.Comprobante, h []modelo.Hallazgo) float64 {
 		modelo.OrigenCalculo: 0.9, modelo.OrigenOCR: 0.7, modelo.OrigenVision: 0.6,
 	}
 	claves := []string{"tipo", "punto_venta", "numero", "fecha", "cuit_emisor", "total", "cae"}
+	if c.EsTique || arca.EsTique(c.Tipo) {
+		claves = claves[:len(claves)-1] // un tique no lleva CAE
+	}
 	suma := 0.0
 	for _, k := range claves {
 		suma += peso[c.Origen(k)]

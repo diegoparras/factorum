@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -34,9 +35,15 @@ func NuevoTesseract(idiomas string, timeout time.Duration) *Tesseract {
 // Texto reconoce el texto de una imagen PNG. Usa el modo 6 (bloque uniforme), que conserva mejor
 // las filas "etiqueta: valor" de un comprobante.
 func (t *Tesseract) Texto(ctx context.Context, png []byte) (string, error) {
+	return t.TextoPSM(ctx, png, 6)
+}
+
+// TextoPSM reconoce el texto con un modo de segmentación de página dado: 6 (un bloque uniforme) o
+// 4 (una columna de texto de tamaño variable, que suele andar mejor con los tickets).
+func (t *Tesseract) TextoPSM(ctx context.Context, png []byte, psm int) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, t.Timeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "tesseract", "stdin", "stdout", "-l", t.Idiomas, "--psm", "6",
+	cmd := exec.CommandContext(ctx, "tesseract", "stdin", "stdout", "-l", t.Idiomas, "--psm", strconv.Itoa(psm),
 		"-c", "preserve_interword_spaces=1")
 	cmd.Stdin = bytes.NewReader(png)
 	var out, errb bytes.Buffer

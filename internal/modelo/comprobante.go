@@ -54,6 +54,14 @@ type Comprobante struct {
 	VtoCAE     string `json:"vto_cae"`
 	TipoCodAut string `json:"tipo_cod_aut"` // E = CAE, A = CAEA
 
+	// Tickets de compra (tique y tique factura de controlador fiscal). EsTique sale del tipo; la hora
+	// solo la imprimen los tiques. Rubro es el tipo de gasto (supermercado, combustible...): ver el
+	// paquete rubro. Sus orígenes dicen de dónde salió: texto/ocr (palabras clave), arcanum
+	// (actividad del padrón) o manual (corrección de una persona, que se recuerda por CUIT).
+	EsTique bool   `json:"es_tique"`
+	Hora    string `json:"hora,omitempty"` // HH:MM o HH:MM:SS
+	Rubro   string `json:"rubro,omitempty"`
+
 	// Origenes: campo (nombre JSON) -> de dónde salió.
 	Origenes map[string]Origen `json:"origenes"`
 	// Paginas del documento que corresponden a este comprobante (desde 1).

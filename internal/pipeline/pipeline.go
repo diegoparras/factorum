@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"image"
 	"image/jpeg"
-	"image/png"
 	"net/http"
 	"strings"
 	"time"
@@ -25,6 +24,7 @@ import (
 	"github.com/diegoparras/factorum/internal/modelo"
 	"github.com/diegoparras/factorum/internal/pdfx"
 	"github.com/diegoparras/factorum/internal/qrscan"
+	"github.com/diegoparras/factorum/internal/rubro"
 	"github.com/diegoparras/factorum/internal/validar"
 )
 
@@ -212,7 +212,7 @@ func (p *Pipeline) leerPDF(ctx context.Context, datos []byte, op Opciones, res *
 	var salida []grupo
 	for _, g := range grupos {
 		txt := g.texto.String()
-		g.cbte = extractor.ParsearTexto(txt, modelo.OrigenTexto)
+		g.cbte = parsear(txt, modelo.OrigenTexto, g.qr != nil)
 		if !pocoTexto(txt) {
 			usar("texto")
 		}
@@ -222,7 +222,7 @@ func (p *Pipeline) leerPDF(ctx context.Context, datos []byte, op Opciones, res *
 			if _, pngb, err := doc.Rasterizar(ctx, g.imgPag, 300, true); err == nil {
 				if o, err := p.ocr(ctx, pngb); err == nil && !pocoTexto(o) {
 					txt = o
-					g.cbte = extractor.ParsearTexto(o, modelo.OrigenOCR)
+					g.cbte = parsear(o, modelo.OrigenOCR, g.qr != nil)
 					usar("ocr")
 				} else if err != nil {
 					g.hallazgos = append(g.hallazgos, modelo.Hallazgo{Codigo: "ocr_fallo", Nivel: modelo.NivelInfo, Mensaje: "El OCR no pudo leer la página: " + err.Error()})
@@ -276,12 +276,11 @@ func (p *Pipeline) leerImagen(ctx context.Context, datos []byte, op Opciones, re
 	p.cronometrar(res, "qr", t)
 	if p.OCR != nil && !op.SinOCR {
 		t := time.Now()
-		var buf bytes.Buffer
-		if err := png.Encode(&buf, img); err == nil {
-			if o, err := p.ocr(ctx, buf.Bytes()); err == nil {
-				g.cbte = extractor.ParsearTexto(o, modelo.OrigenOCR)
-				usar("ocr")
-			}
+		if c, err := p.ocrFoto(ctx, img, g.qr != nil); err == nil {
+			g.cbte = c
+			usar("ocr")
+		} else {
+			g.hallazgos = append(g.hallazgos, modelo.Hallazgo{Codigo: "ocr_fallo", Nivel: modelo.NivelInfo, Mensaje: "El OCR no pudo leer la imagen: " + err.Error()})
 		}
 		p.cronometrar(res, "ocr", t)
 	}
@@ -305,13 +304,61 @@ func (p *Pipeline) leerImagen(ctx context.Context, datos []byte, op Opciones, re
 }
 
 func (p *Pipeline) ocr(ctx context.Context, png []byte) (string, error) {
+	return p.ocrPSM(ctx, png, 6)
+}
+
+// ocrPSM corre Tesseract respetando el semáforo de OCR (cada llamada ocupa un lugar).
+func (p *Pipeline) ocrPSM(ctx context.Context, png []byte, psm int) (string, error) {
 	select {
 	case p.semOCR <- struct{}{}:
 	case <-ctx.Done():
 		return "", ctx.Err()
 	}
 	defer func() { <-p.semOCR }()
-	return p.OCR.Texto(ctx, png)
+	return p.OCR.TextoPSM(ctx, png, psm)
+}
+
+// ocrFoto lee una foto: la prepara (grises, tamaño, fondo parejo y contraste), la pasa por
+// Tesseract en los modos 4 (una columna de texto) y 6 (un bloque) y se queda con la lectura que
+// encuentra más datos. Si todavía falta un dato clave (CUIT válido, fecha o total), prueba también
+// la versión binarizada con Otsu.
+func (p *Pipeline) ocrFoto(ctx context.Context, img image.Image, hayQR bool) (modelo.Comprobante, error) {
+	gris, binaria, err := extractor.PNGsParaOCR(img)
+	if err != nil {
+		return modelo.Comprobante{}, err
+	}
+	var mejor modelo.Comprobante
+	puntos, ultimoErr := -1, error(nil)
+	probar := func(pngb []byte, psm int) {
+		o, err := p.ocrPSM(ctx, pngb, psm)
+		if err != nil {
+			ultimoErr = err
+			return
+		}
+		c := parsear(o, modelo.OrigenOCR, hayQR)
+		if n := extractor.CamposHallados(&c); n > puntos {
+			mejor, puntos = c, n
+		}
+	}
+	probar(gris, 4)
+	probar(gris, 6)
+	if puntos < 0 || !arca.CUITValido(mejor.CUITEmisor) || mejor.Fecha == "" || mejor.Total == 0 {
+		probar(binaria, 6)
+		probar(binaria, 4)
+	}
+	if puntos < 0 {
+		return modelo.Comprobante{}, ultimoErr
+	}
+	return mejor, nil
+}
+
+// parsear elige el parser: si el texto es de un ticket de controlador fiscal y no hay QR de ARCA,
+// el de tickets; si no, el de facturas. Con QR manda la factura (el QR después pisa los datos).
+func parsear(txt string, origen modelo.Origen, hayQR bool) modelo.Comprobante {
+	if !hayQR && extractor.PareceTicket(txt) {
+		return extractor.ParsearTicket(txt, origen)
+	}
+	return extractor.ParsearTexto(txt, origen)
 }
 
 func (p *Pipeline) vision(ctx context.Context, img []byte, mime, texto string) (modelo.Comprobante, error) {
@@ -462,6 +509,10 @@ func necesitaMas(c *modelo.Comprobante) bool {
 	if c.RazonSocialEmisor == "" {
 		return true
 	}
+	// Un tique de consumidor final no discrimina IVA: con los datos clave alcanza.
+	if c.EsTique && c.NetoGravado == 0 {
+		return false
+	}
 	switch c.Letra {
 	case "B", "C":
 		return false
@@ -485,6 +536,17 @@ func completarDerivados(c *modelo.Comprobante) {
 	}
 	if c.TipoCodAut == "" && c.CAE != "" {
 		c.TipoCodAut = "E"
+	}
+	if c.Tipo != 0 {
+		c.EsTique = arca.EsTique(c.Tipo)
+	}
+	// Un tique sin rubro (por ejemplo, si el tipo lo dio el modelo de visión): las palabras clave de
+	// la razón social, con el origen de la razón social.
+	if c.EsTique && c.Rubro == "" && c.RazonSocialEmisor != "" {
+		if r := rubro.DesdeTexto(c.RazonSocialEmisor, ""); r != "" {
+			c.Rubro = r
+			c.Marcar("rubro", c.Origen("razon_social_emisor"))
+		}
 	}
 }
 

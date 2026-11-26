@@ -2,6 +2,17 @@
 
 Cada versión publicada tiene su sección. La imagen Docker toma la versión de la primera.
 
+## [0.2.0] - 2026-11-26
+
+### Diseño nuevo
+
+- Identidad propia dentro de la suite Escriba: logo (una hoja con el cuadrado petróleo y la F blanca), color petróleo y las mismas fuentes que Arcanum (Inter y JetBrains Mono, servidas por Factorum).
+- Inicio: lo de hoy y del mes, apócrifos, posibles adulteraciones, cuánto se leyó con IA, los últimos 14 días en barras y los últimos lotes. Si todavía no hay nada, los pasos para empezar.
+- Revisar: una bandeja con lo que tiene errores y lo que hay que mirar, con contador en el menú. Con el teclado: A aprueba y pasa al siguiente, J siguiente, K anterior, Esc cierra.
+- Menú agrupado (Trabajo, Datos, Configuración) y la sección actual arriba, al lado del logo.
+- Novedades: al entrar después de una actualización, Factorum muestra qué cambió. También desde el menú, con Acerca de (versión y estado de cada componente).
+- Pantallas vacías que explican qué hacer, veredicto con sello e ícono y estados con punto de color.
+
 ## [0.1.0] - 2026-11-25
 
 Primera versión de Factorum.

@@ -5,6 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Factorum</title>
 <meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#0b5d6b">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="preload" href="vendor/fonts/inter-var-latin.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="escriba-ui.css">
 <link rel="stylesheet" href="estilo.css">
 <script src="tema.js"></script>
@@ -13,9 +17,9 @@
 
 <div id="login" class="login-overlay hidden">
   <form class="login-card" id="loginForm" autocomplete="off">
-    <div class="logo">F</div>
+    <img class="login-logo" src="logo.svg" alt="" width="64" height="64">
     <h2>Factorum</h2>
-    <p class="login-sub">Ingresá la clave de API de Factorum.</p>
+    <p class="login-sub">Lector de facturas de ARCA</p>
     <div class="pass-wrap">
       <input id="clave" type="password" placeholder="Clave de API" required aria-label="Clave de API">
       <button type="button" class="pass-toggle" data-accion="ojo" data-para="clave" aria-label="Mostrar u ocultar la clave"></button>
@@ -23,6 +27,7 @@
     <label class="chk"><input type="checkbox" id="recordar"> Recordar en este navegador</label>
     <button type="submit">Entrar</button>
     <div class="login-err hidden" id="loginErr"></div>
+    <p class="login-foot">Parte de la suite Escriba</p>
   </form>
 </div>
 
@@ -30,7 +35,8 @@
   <button class="icon-btn plano" id="navBtn" type="button" data-accion="nav" aria-label="Mostrar u ocultar el menú de secciones" aria-controls="sidenav">
     <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
   </button>
-  <a class="logo-link" data-accion="ir" data-vista="verificar"><span class="logo">F</span><h1>Factorum</h1></a>
+  <a class="logo-link" data-accion="ir" data-vista="inicio"><img class="logo-img" src="logo.svg" alt="" width="30" height="30"><h1>Factorum</h1></a>
+  <span class="crumb" id="crumb"></span>
   <span class="sp"></span>
   <span class="estado-chip" id="saludChip"></span>
   <div class="menu-wrap">
@@ -46,14 +52,32 @@
   <div class="scrim" data-accion="cerrarNav"></div>
   <main id="main">
 
+    <!-- Inicio -->
+    <section class="vista" id="v-inicio">
+      <div class="cabecera"><div><h2>Inicio</h2><p class="sub" id="inicioSub">Cómo viene todo, de un vistazo.</p></div>
+        <div class="acciones"><button type="button" class="ghost" data-accion="ir" data-vista="verificar">Verificar una factura</button><button type="button" data-accion="ir" data-vista="subir">Cargar facturas</button></div></div>
+      <div id="inicio"></div>
+    </section>
+
+    <!-- Revisar -->
+    <section class="vista hidden" id="v-revisar">
+      <div class="cabecera"><div><h2>Revisar</h2><p class="sub">Lo que Factorum no pudo dar por bueno solo. Abrí uno y usá el teclado: <kbd>A</kbd> aprobar y seguir, <kbd>J</kbd> siguiente, <kbd>K</kbd> anterior, <kbd>Esc</kbd> cerrar.</p></div></div>
+      <div class="tabs" role="tablist" id="bandejaTabs">
+        <button type="button" role="tab" data-accion="bandeja" data-estado="error" class="on">Con errores <span class="cnt" id="cntError">0</span></button>
+        <button type="button" role="tab" data-accion="bandeja" data-estado="revisar">Para revisar <span class="cnt" id="cntRevisar">0</span></button>
+      </div>
+      <div id="bandeja"></div>
+    </section>
+
     <!-- Verificar -->
-    <section class="vista" id="v-verificar">
+    <section class="vista hidden" id="v-verificar">
       <h2>Verificar una factura</h2>
       <p class="sub">Subí el PDF o la foto y Factorum te dice si es legal: lee el QR y el texto, controla las sumas y, con Arcanum, la constata con ARCA (WSCDC) y busca al emisor en la base de apócrifos. No se guarda nada.</p>
       <form id="fVerificar" class="card">
         <label class="zona" id="zonaVerificar">
+          <span class="zona-ico" aria-hidden="true"></span>
           <input type="file" id="archVerificar" accept=".pdf,image/*" required>
-          <span>Arrastrá el archivo o hacé clic para elegirlo</span>
+          <span class="zona-txt">Arrastrá el archivo o hacé clic para elegirlo</span>
         </label>
         <div class="fila">
           <label>CUIT consultante (opcional)<input id="cuitConsultante" placeholder="El cliente con certificado en Arcanum" inputmode="numeric"></label>
@@ -70,8 +94,9 @@
       <p class="sub">PDFs, fotos o un ZIP con cientos de facturas. Se procesan en segundo plano: podés seguir trabajando.</p>
       <form id="fSubir" class="card">
         <label class="zona" id="zonaSubir">
+          <span class="zona-ico" aria-hidden="true"></span>
           <input type="file" id="archSubir" accept=".pdf,.zip,image/*" multiple required>
-          <span>Arrastrá los archivos o hacé clic para elegirlos</span>
+          <span class="zona-txt">Arrastrá los archivos o hacé clic para elegirlos</span>
         </label>
         <div class="fila">
           <label>Nombre del lote<input id="loteNombre" placeholder="Ej.: Compras noviembre"></label>
@@ -89,6 +114,7 @@
     <!-- Lotes -->
     <section class="vista hidden" id="v-lotes">
       <h2>Lotes</h2>
+      <p class="sub">Cada carga (web, chat, MCP o Arcanum) es un lote. Tocá uno para ver sus comprobantes.</p>
       <div id="tablaLotes"></div>
     </section>
 
@@ -96,7 +122,7 @@
     <section class="vista hidden" id="v-comprobantes">
       <h2>Comprobantes</h2>
       <form id="fFiltro" class="filtros">
-        <select id="fEstado"><option value="">Todos los estados</option><option value="error">Con errores</option><option value="revisar">Para revisar</option><option value="ok">Bien</option><option value="aprobado">Aprobados</option></select>
+        <select id="fEstado" aria-label="Estado"><option value="">Todos los estados</option><option value="error">Con errores</option><option value="revisar">Para revisar</option><option value="ok">Bien</option><option value="aprobado">Aprobados</option></select>
         <input id="fQ" placeholder="Buscar razón social, CUIT o número">
         <input id="fCliente" placeholder="CUIT cliente" inputmode="numeric">
         <input id="fDesde" type="date" aria-label="Desde">
@@ -132,9 +158,9 @@
     <strong id="revTitulo">Comprobante</strong>
     <span class="sp"></span>
     <span id="revPos" class="muted"></span>
-    <button class="ghost mini" data-accion="revAnterior">Anterior</button>
-    <button class="ghost mini" data-accion="revSiguiente">Siguiente</button>
-    <button class="ghost mini" data-accion="revCerrar">Cerrar</button>
+    <button class="ghost mini" data-accion="revAnterior" title="Anterior (K)">Anterior</button>
+    <button class="ghost mini" data-accion="revSiguiente" title="Siguiente (J)">Siguiente</button>
+    <button class="ghost mini" data-accion="revCerrar" title="Cerrar (Esc)">Cerrar</button>
   </div>
   <div class="rev-cuerpo">
     <div class="rev-doc" id="revDoc"></div>
@@ -144,11 +170,21 @@
       <div class="rev-acciones">
         <button class="ghost" data-accion="revGuardar">Guardar</button>
         <button class="ghost" data-accion="revConstatar" id="btnConstatar">Constatar con ARCA</button>
-        <button data-accion="revAprobar">Está bien, siguiente</button>
+        <button data-accion="revAprobar" title="Aprobar y seguir (A)">Está bien, siguiente</button>
       </div>
       <div id="revConstatacion"></div>
       <details id="revCorrecciones"><summary>Correcciones</summary><div></div></details>
     </div>
+  </div>
+</div>
+
+<!-- Ventana (Novedades, Acerca de) -->
+<div class="modal-back hidden" id="modal" data-accion="modalFondo">
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modalTit">
+    <button type="button" class="modal-x" data-accion="modalCerrar" aria-label="Cerrar">&times;</button>
+    <h3 class="modal-tit" id="modalTit"></h3>
+    <div class="modal-cuerpo" id="modalCuerpo"></div>
+    <div class="modal-acciones"><button type="button" data-accion="modalCerrar">Entendido</button></div>
   </div>
 </div>
 

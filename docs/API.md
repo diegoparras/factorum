@@ -137,6 +137,10 @@ Cbte = { "id": 5, "lote_id": 12, "documento_id": 33, "cliente_cuit": "...", "arc
 
 Las notas de crédito restan.
 
+`GET /api/panel` (lectura) devuelve lo que muestra Inicio: documentos y comprobantes de hoy y del mes, cantidades por estado, apócrifos, posibles adulteraciones, cuántos se leyeron con IA, los últimos 14 días (hora de Buenos Aires) y los últimos 5 lotes.
+
+`GET /api/novedades` (sin clave) devuelve las versiones del CHANGELOG, de la más nueva a la más vieja: `{ "ok": true, "novedades": [{ "version", "fecha", "cuerpo" }] }`.
+
 ## Canales
 
 `GET /api/canales` devuelve `{ ok, canales: [ { canal, habilitado, conectado, detalle, qr } ] }`.

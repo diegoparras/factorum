@@ -115,6 +115,8 @@ func (s *Server) Handler() http.Handler {
 	m.HandleFunc("GET /api/export.xlsx", s.auth(RolLectura, s.exportar("xlsx")))
 	m.HandleFunc("GET /api/export.csv", s.auth(RolLectura, s.exportar("csv")))
 	m.HandleFunc("GET /api/resumen", s.auth(RolLectura, s.resumen))
+	m.HandleFunc("GET /api/panel", s.auth(RolLectura, s.panel))
+	m.HandleFunc("GET /api/novedades", s.novedades)
 	m.HandleFunc("GET /api/canales", s.auth(RolLectura, s.canales))
 	m.HandleFunc("GET /api/canales/whatsapp/qr.png", s.auth(RolOperador, s.qrWhatsApp))
 	m.HandleFunc("POST /api/canales/whatsapp/vincular", s.auth(RolOperador, s.vincularWhatsApp))

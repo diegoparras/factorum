@@ -21,17 +21,27 @@ const I = {
   luna: svg('<path d="M21 13A9 9 0 1 1 11 3a7 7 0 0 0 10 10z"/>'),
   salir: svg('<path d="M15 4h4v16h-4M10 8l-4 4 4 4M6 12h11"/>'),
   info: svg('<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/>'),
+  inicio: svg('<path d="M4 11l8-7 8 7"/><path d="M6 10v10h12V10"/><path d="M10 20v-6h4v6"/>'),
+  revisar: svg('<path d="M4 13l3-8h10l3 8"/><path d="M4 13v6h16v-6"/><path d="M4 13h5l1 2h4l1-2h5"/>'),
+  novedades: svg('<path d="M12 3l2.2 5.4L20 9l-4.4 3.8L17 19l-5-3-5 3 1.4-6.2L4 9l5.8-.6z"/>'),
+  check: svg('<path d="M5 12.5l4.5 4.5L19 7.5"/>'),
+  cruz: svg('<path d="M7 7l10 10M17 7L7 17"/>'),
+  alerta: svg('<path d="M12 4l9 16H3z"/><path d="M12 10v4M12 17h.01"/>'),
+  doc: svg('<path d="M7 3h7l4 4v14H7z"/><path d="M14 3v4h4"/><path d="M10 12h5M10 16h5"/>'),
 };
 
-const VISTAS = [
-  ['verificar', 'Verificar'], ['subir', 'Cargar facturas'], ['lotes', 'Lotes'],
-  ['comprobantes', 'Comprobantes'], ['resumen', 'Resumen'], ['canales', 'Canales'],
+const NAV = [
+  ['Trabajo', [['inicio', 'Inicio'], ['revisar', 'Revisar'], ['verificar', 'Verificar'], ['subir', 'Cargar facturas']]],
+  ['Datos', [['lotes', 'Lotes'], ['comprobantes', 'Comprobantes'], ['resumen', 'Resumen']]],
+  ['Configuración', [['canales', 'Canales']]],
 ];
+const VISTAS = NAV.flatMap((g) => g[1]);
+const PENDIENTES = { error: 0, revisar: 0 };
 
 // ---------- Estado ----------
 let CLAVE = '';
 let SALUD = null;
-let vista = 'verificar';
+let vista = 'inicio';
 const filtro = { estado: '', q: '', cliente: '', desde: '', hasta: '', lote: '', offset: 0, limite: 100 };
 let listado = []; // comprobantes de la tabla, para Anterior / Siguiente
 let rev = null; // { idx, cbte, original }
@@ -85,7 +95,9 @@ const TIPOS = { 1: 'Factura A', 2: 'Nota de Débito A', 3: 'Nota de Crédito A',
   11: 'Factura C', 12: 'Nota de Débito C', 13: 'Nota de Crédito C', 19: 'Factura E', 51: 'Factura M', 201: 'FCE MiPyME A', 206: 'FCE MiPyME B', 211: 'FCE MiPyME C' };
 const nombreCbte = (c) => `${TIPOS[c.tipo] || 'Comprobante ' + (c.tipo || '')} ${String(c.punto_venta || 0).padStart(5, '0')}-${String(c.numero || 0).padStart(8, '0')}`;
 const ETQ = { ok: 'Bien', revisar: 'Revisar', error: 'Con errores', aprobado: 'Aprobado',
-  valida: 'Válida', invalida: 'No válida', apocrifa: 'Emisor apócrifo', con_errores: 'Con errores', no_verificable: 'No verificable' };
+  valida: 'Válida', invalida: 'No válida', apocrifa: 'Emisor apócrifo', con_errores: 'Con errores', no_verificable: 'No verificable',
+  tique_controlado: 'Ticket controlado' };
+const SELLO = { valida: 'check', tique_controlado: 'check', invalida: 'cruz', apocrifa: 'cruz', con_errores: 'alerta', no_verificable: 'alerta' };
 const estado = (e) => `<span class="est ${esc(e)}">${esc(ETQ[e] || e)}</span>`;
 const ORIGEN = { qr: 'QR', texto: 'texto', ocr: 'OCR', vision: 'IA', manual: 'manual', arcanum: 'ARCA', calculo: 'cálculo' };
 
@@ -96,8 +108,21 @@ function hallazgosHTML(h) {
 
 // ---------- Navegación ----------
 function pintarNav() {
-  $('#nav').innerHTML = VISTAS.map(([id, t]) =>
-    `<button type="button" class="nav-it${id === vista ? ' active' : ''}" data-accion="ir" data-vista="${id}" title="${t}" aria-label="${t}"${id === vista ? ' aria-current="page"' : ''}>${I[id]}<span>${t}</span></button>`).join('');
+  const pend = PENDIENTES.error + PENDIENTES.revisar;
+  $('#nav').innerHTML = NAV.map(([grupo, items]) => `<div class="nav-g">${grupo}</div>` + items.map(([id, t]) => {
+    const badge = id === 'revisar' && pend ? `<span class="nav-badge${PENDIENTES.error ? ' err' : ''}" aria-label="${pend} pendientes">${pend > 999 ? '999+' : pend}</span>` : '';
+    return `<button type="button" class="nav-it${id === vista ? ' active' : ''}" data-accion="ir" data-vista="${id}" title="${t}" aria-label="${t}"${id === vista ? ' aria-current="page"' : ''}>${I[id]}<span>${t}</span>${badge}</button>`;
+  }).join('')).join('');
+}
+
+async function actualizarPendientes() {
+  try {
+    const [e, r] = await Promise.all([api('/api/comprobantes?estado=error&limite=1'), api('/api/comprobantes?estado=revisar&limite=1')]);
+    PENDIENTES.error = e.total; PENDIENTES.revisar = r.total;
+    pintarNav();
+    const ce = $('#cntError'); if (ce) ce.textContent = e.total;
+    const cr = $('#cntRevisar'); if (cr) cr.textContent = r.total;
+  } catch { /* sin conexión: se reintenta en la próxima acción */ }
 }
 
 function ir(v) {
@@ -110,6 +135,11 @@ function ir(v) {
   if (v === 'comprobantes') cargarCbtes();
   if (v === 'resumen') cargarResumen();
   if (v === 'canales') { cargarCanales(); timerCanales = setInterval(cargarCanales, 5000); }
+  if (v === 'inicio') cargarInicio();
+  if (v === 'revisar') cargarBandeja();
+  const nom = (VISTAS.find(([id]) => id === v) || [])[1] || '';
+  $('#crumb').textContent = v === 'inicio' ? '' : '/ ' + nom;
+  document.title = v === 'inicio' ? 'Factorum' : `${nom} · Factorum`;
   try { history.replaceState(null, '', '#' + v); } catch { /* nada */ }
 }
 
@@ -127,18 +157,12 @@ function toggleNav() {
 function pintarMenu() {
   const dark = document.documentElement.getAttribute('data-theme') === 'dark';
   const s = SALUD || {};
-  const ia = s.ia && s.ia.habilitada ? `${esc(s.ia.modelo)}${s.ia.local ? ' (local)' : ' (externo)'}` : 'apagada';
   $('#menu').innerHTML = `
     <div class="menu-user">Factorum ${esc(s.version || '')}</div>
-    <div class="menu-field"><dl class="kv">
-      <dt>OCR</dt><dd>${s.ocr ? 'Tesseract' : 'no instalado'}</dd>
-      <dt>IA</dt><dd>${ia}</dd>
-      <dt>Arcanum</dt><dd>${s.arcanum ? 'conectado' : 'sin configurar'}</dd>
-      <dt>Almacén</dt><dd>${esc(s.almacen || '')}${s.cifrado ? ', cifrado' : ', sin cifrar'}</dd>
-    </dl></div>
     <div class="menu-sep"></div>
     <button class="menu-item" data-accion="tema">${dark ? I.sol : I.luna}<span>${dark ? 'Tema claro' : 'Tema oscuro'}</span></button>
-    <a class="menu-item" href="https://github.com/diegoparras/factorum" target="_blank" rel="noopener">${I.info}<span>Acerca de Factorum</span></a>
+    <button class="menu-item" data-accion="novedades">${I.novedades}<span>Novedades</span></button>
+    <button class="menu-item" data-accion="acerca">${I.info}<span>Acerca de Factorum</span></button>
     <div class="menu-sep"></div>
     <button class="menu-item" data-accion="salir">${I.salir}<span>Cerrar sesión</span></button>`;
 }
@@ -172,7 +196,9 @@ async function entrar(c, recordar) {
     $('#login').classList.add('hidden');
     await cargarSalud();
     const pedida = location.hash.slice(1);
-    ir(VISTAS.some(([id]) => id === pedida) ? pedida : 'verificar');
+    ir(VISTAS.some(([id]) => id === pedida) ? pedida : 'inicio');
+    actualizarPendientes();
+    verNovedades(false);
   } catch (e) {
     CLAVE = '';
     mostrarLogin(e.message);
@@ -229,7 +255,7 @@ function pintarVerificacion(r) {
       ${hallazgosHTML(rc.hallazgos.filter((h) => h.nivel !== 'info' || h.codigo === 'constatado'))}
     </div>`;
   }).join('');
-  $('#resVerificar').innerHTML = `<div class="veredicto ${esc(r.veredicto)}"><div class="titulo">${esc(ETQ[r.veredicto] || r.veredicto)}</div><div>${esc(r.mensaje)}</div></div>${filas}`;
+  $('#resVerificar').innerHTML = `<div class="veredicto ${esc(r.veredicto)}"><div class="sello">${I[SELLO[r.veredicto] || 'alerta']}</div><div><div class="titulo">${esc(ETQ[r.veredicto] || r.veredicto)}</div><div>${esc(r.mensaje)}</div></div></div>${filas}`;
 }
 
 // ---------- Subir ----------
@@ -274,7 +300,7 @@ async function subir(ev) {
 async function cargarLotes() {
   try {
     const { lotes } = await api('/api/lotes?limite=50');
-    if (!lotes.length) { $('#tablaLotes').innerHTML = '<p class="muted">Todavía no hay lotes. Cargá facturas desde "Cargar facturas" o mandalas por chat.</p>'; return; }
+    if (!lotes.length) { $('#tablaLotes').innerHTML = vacio('doc', 'Todavía no hay lotes', 'Cada carga de facturas (desde acá, por chat, por MCP o desde Arcanum) aparece como un lote.', 'subir', 'Cargar facturas'); return; }
     $('#tablaLotes').innerHTML = `<div class="tabla-scroll"><table class="t"><thead><tr><th>Lote</th><th>Origen</th><th>Cliente</th><th>Creado</th><th>Progreso</th><th>Bien</th><th>Revisar</th><th>Errores</th><th></th></tr></thead><tbody>
       ${lotes.map((l) => {
         const pct = l.documentos ? Math.round((l.procesados / l.documentos) * 100) : 100;
@@ -315,7 +341,7 @@ async function cargarCbtes() {
   try {
     const { comprobantes, total } = await api('/api/comprobantes?' + qsFiltro());
     listado = comprobantes;
-    if (!comprobantes.length) { $('#tablaCbtes').innerHTML = '<p class="muted">No hay comprobantes con estos filtros.</p>'; $('#pager').innerHTML = ''; return; }
+    if (!comprobantes.length) { $('#tablaCbtes').innerHTML = vacio('doc', 'No hay comprobantes con estos filtros', 'Probá con otro estado, otras fechas o borrando la búsqueda.'); $('#pager').innerHTML = ''; return; }
     $('#tablaCbtes').innerHTML = `<div class="tabla-scroll"><table class="t"><thead><tr><th>Fecha</th><th>Comprobante</th><th>Emisor</th><th class="num">Neto</th><th class="num">IVA</th><th class="num">Total</th><th>Estado</th><th>Observaciones</th></tr></thead><tbody>
       ${comprobantes.map((c, i) => {
         const iva = ['iva_27', 'iva_21', 'iva_10_5', 'iva_5', 'iva_2_5'].reduce((s, k) => s + Number(c[k] || 0), 0);
@@ -413,6 +439,7 @@ async function guardarRevision(aprobar) {
   try {
     const { comprobante } = await api('/api/comprobantes/' + rev.cbte.id, { method: 'PATCH', json: { campos, aprobar, usuario: 'panel' } });
     listado[rev.idx] = comprobante;
+    actualizarPendientes();
     if (aprobar) {
       toast('Aprobado');
       if (rev.idx + 1 < listado.length) abrirRevision(rev.idx + 1); else cerrarRevision();
@@ -480,6 +507,142 @@ async function cargarCanales() {
   } catch (e) { toast(e.message, true); }
 }
 
+// ---------- Estado vacío ----------
+function vacio(ico, titulo, texto, vistaBoton, textoBoton) {
+  return `<div class="vacio"><div class="ico">${I[ico] || I.doc}</div><h3>${esc(titulo)}</h3><p>${esc(texto)}</p>${vistaBoton ? `<button type="button" data-accion="ir" data-vista="${vistaBoton}">${esc(textoBoton)}</button>` : ''}</div>`;
+}
+
+// ---------- Inicio ----------
+const mil = (n) => Number(n || 0).toLocaleString('es-AR');
+async function cargarInicio() {
+  try {
+    const { panel: p } = await api('/api/panel');
+    if (!p.total) {
+      $('#inicioSub').textContent = 'Todavía no cargaste facturas. Así se empieza:';
+      $('#inicio').innerHTML = `<div class="vacio"><div class="ico">${I.doc}</div><h3>Bienvenido a Factorum</h3>
+        <p>Lee facturas de ARCA por QR y texto, controla que todo cierre y, con Arcanum, te dice si son legales.</p>
+        <div class="pasos">
+          <div class="paso"><span class="n">1</span><strong>Verificá una factura</strong><span class="muted">Subí un PDF o una foto y mirá qué lee y qué controla. No se guarda.</span><button type="button" class="ghost" data-accion="ir" data-vista="verificar">Verificar</button></div>
+          <div class="paso"><span class="n">2</span><strong>Cargá un lote</strong><span class="muted">PDFs sueltos o un ZIP con cientos: se procesan en segundo plano.</span><button type="button" class="ghost" data-accion="ir" data-vista="subir">Cargar facturas</button></div>
+          <div class="paso"><span class="n">3</span><strong>Conectá el chat</strong><span class="muted">WhatsApp o Telegram: tus clientes mandan la foto y queda cargada.</span><button type="button" class="ghost" data-accion="ir" data-vista="canales">Canales</button></div>
+        </div></div>`;
+      return;
+    }
+    $('#inicioSub').textContent = 'Cómo viene todo, de un vistazo.';
+    const e = p.por_estado || {};
+    const pend = (e.revisar || 0) + (e.error || 0);
+    const sinIA = p.total ? Math.round((1 - p.con_ia / p.total) * 100) : 100;
+    const kpi = (et, val, pie, cls, estado) => estado
+      ? `<button type="button" class="kpi ${cls || ''}" data-accion="verEstado" data-estado="${estado}"><span class="et">${et}</span><span class="val">${val}</span><span class="kpi-pie">${pie}</span></button>`
+      : `<div class="kpi ${cls || ''}"><span class="et">${et}</span><span class="val">${val}</span><span class="kpi-pie">${pie}</span></div>`;
+    const max = Math.max(1, ...p.por_dia.map((d) => d.ok + d.revisar + d.error));
+    const alto = (n) => (n ? Math.max(2, Math.round((n / max) * 100)) : 0);
+    const barras = p.por_dia.map((d) => `<div class="b" title="${fecha(d.dia)}: ${d.ok} bien, ${d.revisar} para revisar, ${d.error} con errores">
+      <i class="ok" style="height:${alto(d.ok)}%"></i><i class="rv" style="height:${alto(d.revisar)}%"></i><i class="er" style="height:${alto(d.error)}%"></i></div>`).join('');
+    const ejes = p.por_dia.map((d, i) => `<span>${i % 2 ? '' : `${d.dia.slice(8, 10)}<small>/${d.dia.slice(5, 7)}</small>`}</span>`).join('');
+    const lotes = p.lotes.length ? p.lotes.map((l) => {
+      const c = l.comprobantes || {};
+      const pct = l.documentos ? Math.round((l.procesados / l.documentos) * 100) : 100;
+      return `<button type="button" class="it" data-accion="verLote" data-id="${l.id}"><span><span class="t1">${esc(l.nombre || 'Lote ' + l.id)}</span><br><span class="t2">${esc(l.origen)} · ${new Date(l.creado).toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' })}</span></span>
+        <span class="t2">${l.estado === 'terminado' ? `${(c.ok || 0) + (c.aprobado || 0)} bien · ${c.revisar || 0} revisar · ${c.error || 0} error` : `<span class="prog mini-prog"><div style="width:${pct}%"></div></span> ${l.procesados}/${l.documentos}`}</span></button>`;
+    }).join('') : '<p class="muted">Sin lotes todavía.</p>';
+    $('#inicio').innerHTML = `<div class="kpis">
+        ${kpi('Para revisar', mil(pend), pend ? 'tocá para verlos' : 'todo al día', e.error ? 'alerta' : pend ? 'aviso' : '', e.error ? 'error' : 'revisar')}
+        ${kpi('Hoy', mil(p.hoy.comprobantes), `${mil(p.hoy.documentos)} archivos`)}
+        ${kpi('Este mes', mil(p.mes.comprobantes), `${mil(p.mes.documentos)} archivos`)}
+        ${kpi('Emisores apócrifos', mil(p.apocrifos), 'detectados con ARCA', p.apocrifos ? 'alerta' : '')}
+        ${kpi('Posibles adulterados', mil(p.adulterados), 'texto distinto del QR', p.adulterados ? 'alerta' : '')}
+        ${kpi('Leído sin IA', sinIA + '%', `${Math.round(p.duracion_promedio_ms)} ms por archivo, en promedio`)}
+      </div>
+      <div class="dos">
+        <div class="card"><div class="card-cab"><h3>Últimos 14 días</h3><span class="leyenda"><span><i style="background:var(--accent)"></i>Bien</span><span><i style="background:var(--warn)"></i>Revisar</span><span><i style="background:var(--err)"></i>Errores</span></span></div>
+          <div><div class="barras">${barras}</div><div class="ejes">${ejes}</div></div></div>
+        <div class="card"><div class="card-cab"><h3>Últimos lotes</h3><button type="button" class="ghost mini" data-accion="ir" data-vista="lotes">Ver todos</button></div><div class="lista">${lotes}</div></div>
+      </div>`;
+  } catch (e) { toast(e.message, true); }
+}
+
+// ---------- Bandeja de revisión ----------
+let bandejaEstado = 'error';
+async function cargarBandeja() {
+  $$('#bandejaTabs button').forEach((b) => b.classList.toggle('on', b.dataset.estado === bandejaEstado));
+  try {
+    const { comprobantes, total } = await api(`/api/comprobantes?estado=${bandejaEstado}&limite=200`);
+    actualizarPendientes();
+    listado = comprobantes;
+    if (!comprobantes.length) {
+      $('#bandeja').innerHTML = vacio('check', bandejaEstado === 'error' ? 'No hay comprobantes con errores' : 'No hay nada para revisar',
+        'Todo lo cargado cerró solo o ya lo aprobaste.');
+      return;
+    }
+    $('#bandeja').innerHTML = `<div class="bandeja">${comprobantes.map((c, i) => {
+      const motivo = (c.hallazgos || []).find((h) => h.nivel === 'error') || (c.hallazgos || []).find((h) => h.nivel === 'aviso');
+      return `<button type="button" class="bitem ${esc(c.estado)}" data-accion="abrirBandeja" data-idx="${i}"><span class="marca-e"></span>
+        <span><span class="t1">${esc(c.razon_social_emisor || cuit(c.cuit_emisor))}</span> <span class="muted">· ${esc(nombreCbte(c))} · ${fecha(c.fecha)}</span><br>
+        <span class="t2">${esc(motivo ? motivo.mensaje : '')}</span></span>
+        <span class="monto">$ ${pesos(c.total)}</span></button>`;
+    }).join('')}</div>${total > comprobantes.length ? `<p class="muted">Se muestran ${comprobantes.length} de ${total}.</p>` : ''}`;
+  } catch (e) { toast(e.message, true); }
+}
+
+// ---------- Ventana: Novedades y Acerca de ----------
+function abrirModal(titulo, html) {
+  $('#modalTit').textContent = titulo;
+  $('#modalCuerpo').innerHTML = html;
+  $('#modal').classList.remove('hidden');
+}
+function cerrarModal() { $('#modal').classList.add('hidden'); }
+
+// Markdown mínimo del CHANGELOG: ### títulos, - viñetas (con continuación), **negrita** y `código`.
+function mdMini(md) {
+  const inl = (t) => esc(t).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/`(.+?)`/g, '<code>$1</code>');
+  const out = []; let enLista = false; let item = null;
+  const cerrarItem = () => { if (item !== null) { out.push(`<li>${inl(item)}</li>`); item = null; } };
+  for (const l of md.split('\n')) {
+    if (/^###\s/.test(l)) { cerrarItem(); if (enLista) { out.push('</ul>'); enLista = false; } out.push(`<h4>${inl(l.replace(/^###\s/, ''))}</h4>`); }
+    else if (/^- /.test(l)) { cerrarItem(); if (!enLista) { out.push('<ul>'); enLista = true; } item = l.slice(2); }
+    else if (/^\s+\S/.test(l) && item !== null) item += ' ' + l.trim();
+    else if (l.trim()) { cerrarItem(); if (enLista) { out.push('</ul>'); enLista = false; } out.push(`<p>${inl(l)}</p>`); }
+  }
+  cerrarItem(); if (enLista) out.push('</ul>');
+  return out.join('');
+}
+
+// Al entrar después de una actualización, muestra lo nuevo desde la última versión vista.
+async function verNovedades(todas) {
+  try {
+    const { novedades } = await fetch('/api/novedades').then((r) => r.json());
+    if (!novedades || !novedades.length) return;
+    let vista = '';
+    try { vista = localStorage.getItem('factorum.version_vista') || ''; } catch { /* nada */ }
+    const actual = novedades[0].version;
+    const cmp = (a, b) => { const x = a.split('.').map(Number), y = b.split('.').map(Number); for (let i = 0; i < 3; i++) { if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) - (y[i] || 0); } return 0; };
+    let lista = novedades;
+    if (!todas) {
+      if (vista && cmp(actual, vista) <= 0) return;
+      lista = vista ? novedades.filter((n) => cmp(n.version, vista) > 0) : novedades.slice(0, 1);
+    }
+    try { localStorage.setItem('factorum.version_vista', actual); } catch { /* nada */ }
+    abrirModal(todas ? 'Novedades' : `Factorum se actualizó a la ${actual}`,
+      lista.map((n) => `<p><span class="ver">v${esc(n.version)}</span> <span class="muted">${esc(n.fecha || '')}</span></p>${mdMini(n.cuerpo)}`).join('<hr style="border:0;border-top:1px solid var(--border);margin:14px 0">'));
+  } catch { /* sin novedades: no pasa nada */ }
+}
+
+function acercaDe() {
+  const s = SALUD || {};
+  const ia = s.ia && s.ia.habilitada ? `${esc(s.ia.modelo)}${s.ia.local ? ' (local)' : ' (externo: los comprobantes que la necesiten salen del servidor)'}` : 'apagada';
+  abrirModal('Acerca de Factorum', `<div class="acerca"><img src="logo.svg" alt="" width="56" height="56"><div><strong style="font-size:17px;color:var(--text)">Factorum ${esc(s.version || '')}</strong><br>Lector de facturas de ARCA. Parte de la suite Escriba.</div></div>
+    <p>Lee los comprobantes por su QR y su texto, sin depender de una IA; controla que todo cierre y, con Arcanum, los constata con ARCA.</p>
+    <dl class="kv" style="margin-top:12px">
+      <dt>OCR</dt><dd>${s.ocr ? 'Tesseract' : 'no instalado'}</dd>
+      <dt>IA</dt><dd>${ia}</dd>
+      <dt>Arcanum</dt><dd>${s.arcanum ? 'conectado' : 'sin configurar'}</dd>
+      <dt>Archivos</dt><dd>${esc(s.almacen || '')}${s.cifrado ? ', cifrados' : ', sin cifrar'}</dd>
+      <dt>Base</dt><dd>${s.base ? 'conectada' : 'sin conexión'}</dd>
+    </dl>
+    <p style="margin-top:12px"><a class="link" href="https://github.com/diegoparras/factorum" target="_blank" rel="noopener">Código y documentación</a></p>`);
+}
+
 // ---------- Eventos ----------
 document.addEventListener('click', (ev) => {
   const el = ev.target.closest('[data-accion]');
@@ -507,7 +670,7 @@ document.addEventListener('click', (ev) => {
       el.innerHTML = i.type === 'password' ? I.ojo : I.ojoNo;
       break;
     }
-    case 'verLote': if (!ev.target.closest('button')) { Object.assign(filtro, { lote: el.dataset.id, estado: '', q: '', offset: 0 }); ir('comprobantes'); } break;
+    case 'verLote': if (!ev.target.closest('[data-accion="exportarLote"]')) { Object.assign(filtro, { lote: el.dataset.id, estado: '', q: '', offset: 0 }); ir('comprobantes'); } break;
     case 'exportarLote': ev.stopPropagation(); descargar(`/api/export.xlsx?lote=${el.dataset.id}`, `factorum-lote-${el.dataset.id}.xlsx`); break;
     case 'exportar': leerFiltro(); descargar(`/api/export.${el.dataset.formato}?` + qsFiltro({ limite: '', offset: '' }), `factorum.${el.dataset.formato}`); break;
     case 'pagina': filtro.offset = Math.max(0, filtro.offset + Number(el.dataset.dir) * filtro.limite); cargarCbtes(); break;
@@ -515,6 +678,13 @@ document.addEventListener('click', (ev) => {
     case 'revAnterior': if (rev) abrirRevision(rev.idx - 1); break;
     case 'revSiguiente': if (rev) abrirRevision(rev.idx + 1); break;
     case 'revCerrar': cerrarRevision(); break;
+    case 'bandeja': bandejaEstado = el.dataset.estado; cargarBandeja(); break;
+    case 'abrirBandeja': abrirRevision(Number(el.dataset.idx)); break;
+    case 'verEstado': Object.assign(filtro, { estado: el.dataset.estado, lote: '', q: '', offset: 0 }); ir('comprobantes'); break;
+    case 'novedades': $('#menu').classList.add('hidden'); verNovedades(true); break;
+    case 'acerca': $('#menu').classList.add('hidden'); acercaDe(); break;
+    case 'modalCerrar': cerrarModal(); break;
+    case 'modalFondo': if (ev.target === el) cerrarModal(); break;
     case 'abrirOriginal':
       api(`/api/documentos/${el.dataset.doc}/archivo`, { binario: true }).then((b) => {
         const u = URL.createObjectURL(b); window.open(u, '_blank', 'noopener'); setTimeout(() => URL.revokeObjectURL(u), 60000);
@@ -550,8 +720,17 @@ document.addEventListener('input', (ev) => {
 });
 
 document.addEventListener('keydown', (ev) => {
+  if (ev.key === 'Escape' && !$('#modal').classList.contains('hidden')) { cerrarModal(); return; }
   if (!rev || $('#revision').classList.contains('hidden')) return;
   if (ev.key === 'Escape') cerrarRevision();
+  const escribiendo = ev.target.closest && ev.target.closest('input, textarea, select');
+  if (!escribiendo && !ev.ctrlKey && !ev.metaKey && !ev.altKey) {
+    const k = ev.key.toLowerCase();
+    if (k === 'j') { ev.preventDefault(); abrirRevision(rev.idx + 1); return; }
+    if (k === 'k') { ev.preventDefault(); abrirRevision(rev.idx - 1); return; }
+    if (k === 'a') { ev.preventDefault(); guardarRevision(true); return; }
+    if (k === 'e') { ev.preventDefault(); const i = $('#revForm input'); if (i) i.focus(); return; }
+  }
   if (ev.altKey && ev.key === 'ArrowRight') abrirRevision(rev.idx + 1);
   if (ev.altKey && ev.key === 'ArrowLeft') abrirRevision(rev.idx - 1);
   if ((ev.ctrlKey || ev.metaKey) && ev.key === 'Enter') guardarRevision(true);
@@ -565,9 +744,9 @@ for (const [zona, input] of [['#zonaVerificar', '#archVerificar'], ['#zonaSubir'
   z.addEventListener('drop', (e) => {
     e.preventDefault(); z.classList.remove('sobre');
     $(input).files = e.dataTransfer.files;
-    z.querySelector('span').textContent = `${e.dataTransfer.files.length} archivo(s) listos`;
+    z.querySelector('.zona-txt').textContent = `${e.dataTransfer.files.length} archivo(s) listos`;
   });
-  $(input).addEventListener('change', () => { z.querySelector('span').textContent = `${$(input).files.length} archivo(s) listos`; });
+  $(input).addEventListener('change', () => { z.querySelector('.zona-txt').textContent = `${$(input).files.length} archivo(s) listos`; });
 }
 
 // ---------- Arranque ----------

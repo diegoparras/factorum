@@ -359,7 +359,7 @@ func (c *Config) Validar() error {
 		return fmt.Errorf("el proveedor de IA %q no se conoce: tiene que ser %s", c.IAProveedor, strings.Join(ProveedoresIA, ", "))
 	}
 	if c.LLMBaseURL != "" && c.LLMModelo == "" {
-		return fmt.Errorf("con la URL del modelo de visión hace falta el modelo (por ejemplo qwen2.5vl:7b)")
+		return fmt.Errorf("con la URL del modelo de visión hace falta el modelo (por ejemplo qwen3-vl:4b-instruct)")
 	}
 	if err := c.validarOIDC(); err != nil {
 		return err

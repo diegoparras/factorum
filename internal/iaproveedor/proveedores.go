@@ -108,6 +108,14 @@ func Nombre(id string) string {
 	return "el proveedor"
 }
 
+// Del: «de OpenAI», «del proveedor».
+func Del(id string) string {
+	if n, ok := strings.CutPrefix(Nombre(id), "el "); ok {
+		return "del " + n
+	}
+	return "de " + Nombre(id)
+}
+
 // Deducir saca el proveedor de la URL, para las configuraciones de antes de elegirlo de una lista
 // (o las que vienen solo con LLM_API_BASE_URL). Sin URL, vacío.
 func Deducir(base string) string {

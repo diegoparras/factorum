@@ -11,7 +11,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/cookiejar"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -569,15 +568,8 @@ func TestConfiguracionDesdeLaPantalla(t *testing.T) {
 	}
 
 	// Probar: el modelo de visión con un endpoint compatible con OpenAI de mentira, sin guardar.
-	ia := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/models" || r.Header.Get("Authorization") != "Bearer secreta" {
-			w.WriteHeader(401)
-			return
-		}
-		_, _ = w.Write([]byte(`{"data":[{"id":"qwen2.5vl:7b"}]}`))
-	}))
-	defer ia.Close()
-	cambios := map[string]any{"ia.url": ia.URL + "/v1", "ia.modelo": "qwen2.5vl:7b", "ia.api_key": "secreta"}
+	ia := chatDePrueba(t, "qwen3-vl:4b-instruct", "secreta")
+	cambios := map[string]any{"ia.proveedor": "otro", "ia.url": ia.URL + "/v1", "ia.modelo": "qwen3-vl:4b-instruct", "ia.api_key": "secreta"}
 	_, m = sup.pedir("POST", "/api/configuracion/probar/ia", map[string]any{"cambios": cambios})
 	if m["exito"] != true {
 		t.Errorf("probar IA: %v", m)

@@ -25,6 +25,7 @@ import (
 	"github.com/diegoparras/factorum/internal/almacen"
 	"github.com/diegoparras/factorum/internal/arca"
 	"github.com/diegoparras/factorum/internal/config"
+	"github.com/diegoparras/factorum/internal/iaproveedor"
 	"github.com/diegoparras/factorum/internal/store"
 )
 
@@ -148,12 +149,14 @@ var Campos = func() []Campo {
 	g, s = texto(func(c *config.Config) *string { return &c.WebhookSalidaURL })
 	add(campo("webhook.salida_url", "webhook", "URL de salida", URL, "FACTORUM_WEBHOOK_SALIDA_URL", "A dónde se mandan los avisos de fin de lote. Vacía: solo se contesta en la respuesta del webhook.", "https://n8n.estudio.com.ar/webhook/factorum", g, s))
 
+	g, s = texto(func(c *config.Config) *string { return &c.IAProveedor })
+	add(opcion("ia.proveedor", "ia", "Proveedor", "FACTORUM_IA_PROVEEDOR", "Si no se eligió nunca, se deduce de la URL.", opcionesProveedorIA(), g, s))
 	g, s = texto(func(c *config.Config) *string { return &c.LLMBaseURL })
-	add(campo("ia.url", "ia", "Endpoint", URL, "LLM_API_BASE_URL", "Compatible con OpenAI: Ollama, LM Studio, vLLM o un proveedor externo (OpenAI, Anthropic, Google Gemini). Una IA externa no se usa hasta que aceptes el aviso de qué pasa con los datos.", "http://ollama:11434/v1", g, s))
+	add(campo("ia.url", "ia", "URL", URL, "LLM_API_BASE_URL", "Compatible con OpenAI: Ollama, LM Studio, vLLM o un proveedor externo (OpenAI, Anthropic, Google Gemini, OpenRouter). Una IA externa no se usa hasta que aceptes el aviso de qué pasa con los datos.", "http://ollama:11434/v1", g, s))
 	g, s = texto(func(c *config.Config) *string { return &c.LLMModelo })
-	add(campo("ia.modelo", "ia", "Modelo", Texto, "LLM_MODEL", "Un modelo que entienda imágenes.", "qwen2.5vl:7b", g, s))
+	add(campo("ia.modelo", "ia", "Modelo", Texto, "LLM_MODEL", "Un modelo que lea imágenes.", "qwen3-vl:4b-instruct", g, s))
 	g, s = texto(func(c *config.Config) *string { return &c.LLMAPIKey })
-	add(campo("ia.api_key", "ia", "Clave", Secreto, "LLM_API_KEY", "Solo si el endpoint la pide (Ollama no).", "", g, s))
+	add(campo("ia.api_key", "ia", "Clave de API", Secreto, "LLM_API_KEY", "Solo si el proveedor la pide (Ollama no).", "", g, s))
 	// La aceptación del aviso de una IA externa: la guarda Factorum cuando un superadmin la acepta.
 	// No tiene variable de entorno a propósito: aceptar es mirar el aviso en la pantalla.
 	for _, a := range []struct {
@@ -238,6 +241,15 @@ func camposLockatus(add func(Campo)) {
 	g2, s2 = booleano(func(c *config.Config) *bool { return &c.OIDCSolo })
 	add(campo("lockatus.solo", sec, "Solo se entra con Lockatus", Bool, "FACTORUM_OIDC_SOLO",
 		"El login con email y contraseña desaparece y el servidor lo rechaza. Las claves de API y el pase de la suite siguen andando. Si Lockatus se cae, la salida de emergencia es FACTORUM_LOGIN_LOCAL=1.", "", g2, s2))
+}
+
+// opcionesProveedorIA son los proveedores de la lista de Configuración, IA.
+func opcionesProveedorIA() []OpcionCampo {
+	var ops []OpcionCampo
+	for _, p := range iaproveedor.Lista {
+		ops = append(ops, OpcionCampo{Valor: p.ID, Etiqueta: p.Nombre})
+	}
+	return ops
 }
 
 // CampoPorClave busca un campo.

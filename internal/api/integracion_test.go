@@ -189,6 +189,8 @@ type opcEntorno struct {
 	// servidor (para usarla de URL pública); opciones ajusta la App antes de arrancarla.
 	ajustarURL func(*config.Config, string)
 	opciones   []func(*app.App)
+	// log: a dónde va el log del servidor (nil = a ningún lado).
+	log io.Writer
 }
 
 // armarConURL es como armarConCfg, pero ajustar recibe además la dirección en la que va a escuchar
@@ -254,7 +256,11 @@ func armarOpc(t *testing.T, o opcEntorno) *entorno {
 	if o.ajustarURL != nil {
 		o.ajustarURL(cfg, dir)
 	}
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	salidaLog := o.log
+	if salidaLog == nil {
+		salidaLog = io.Discard
+	}
+	log := slog.New(slog.NewTextHandler(salidaLog, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	_, tlsCorreo, err := correotest.Certificado()
 	if err != nil {
 		t.Fatal(err)
@@ -306,7 +312,7 @@ func armarOpc(t *testing.T, o opcEntorno) *entorno {
 		t.Fatal(err)
 	}
 	aj.Suscribir(func(_, nuevo *config.Config) { a.SetConfig(nuevo); a.Pipeline.SetVision(armarVisionPrueba(nuevo)) })
-	s := &api.Server{App: a, Cfg: cfg, Log: log, Ajustes: aj, Mudanza: mud, Copias: cop}
+	s := &api.Server{App: a, Cfg: cfg, Log: log, Ajustes: aj, Mudanza: mud, Copias: cop, HTTPIA: &http.Client{Transport: haciaIAFalsa{}}}
 	s.MCP = mcpserver.Handler(a, s.IdentificarClave)
 	if err := s.PrepararArranque(ctx); err != nil {
 		t.Fatal(err)
@@ -332,10 +338,13 @@ func armarVisionPrueba(c *config.Config) *extractor.Vision {
 }
 
 // haciaIAFalsa manda cada pedido (http o https, a cualquier host) al modelo de mentira, con el Host
-// original.
+// original. Lo que va a 127.0.0.1 (un servidor de mentira de la prueba) sigue derecho.
 type haciaIAFalsa struct{}
 
 func (haciaIAFalsa) RoundTrip(r *http.Request) (*http.Response, error) {
+	if r.URL.Hostname() == "127.0.0.1" {
+		return http.DefaultTransport.RoundTrip(r)
+	}
 	dir, _ := iaFalsa.Load().(string)
 	if dir == "" {
 		return nil, errors.New("sin modelo de mentira")

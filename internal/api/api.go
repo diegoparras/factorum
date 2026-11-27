@@ -51,6 +51,9 @@ type Server struct {
 	Ahora   func() time.Time  // para las pruebas
 	HTTP    *http.Client      // para hablar con las otras apps y las pruebas de la configuración
 	Probar  map[string]Prueba // pruebas de la configuración por sección (se pueden cambiar en las pruebas)
+	// HTTPIA es el cliente para los proveedores de IA (la lista de modelos y Probar); nil = el de
+	// siempre. Nunca sigue redirecciones y el tiempo lo pone cada pedido.
+	HTTPIA *http.Client
 	// EstadoCorreo dice cómo viene el correo entrante que se revisa (IMAP o Gmail); nil = sin datos.
 	EstadoCorreo func() EstadoCorreo
 	Mudanza      *mudanza.Servicio // pasar lo del disco a R2 (nil = no disponible)
@@ -189,6 +192,7 @@ func (s *Server) Handler() http.Handler {
 	// El aviso de la IA externa: qué pasa con los datos, y que cada persona lo vio.
 	m.HandleFunc("GET /api/ia/aviso", s.auth(lect, s.verAvisoIA))
 	m.HandleFunc("POST /api/ia/aviso/visto", s.soloSesion(lect, s.avisoIAVisto))
+	m.HandleFunc("POST /api/ia/modelos", s.soloSesion(sup, s.modelosIA))
 
 	m.HandleFunc("POST /api/verificar", s.auth(lect, s.verificar))
 	m.HandleFunc("POST /api/lotes", s.auth(usu, s.crearLote))

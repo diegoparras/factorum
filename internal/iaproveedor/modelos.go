@@ -72,7 +72,7 @@ func Listar(ctx context.Context, cli *http.Client, prov, base, clave string) ([]
 		return nil, &Error{MotivoRespuesta, "Escribí la URL del servidor (por ejemplo http://lmstudio:1234/v1)"}
 	}
 	if p.Clave == "si" && clave == "" && prov != OpenRouter {
-		return nil, &Error{MotivoSinClave, "Escribí la clave de " + p.Corto + " para ver sus modelos"}
+		return nil, &Error{MotivoSinClave, "Escribí la clave " + Del(p.ID) + " para ver sus modelos"}
 	}
 	l := lector{cli: cli, prov: p, clave: clave}
 	var ms []Modelo
@@ -153,7 +153,13 @@ func (l lector) pedir(ctx context.Context, metodo, u string, cab map[string]stri
 			return nil, &Error{MotivoClave, fmt.Sprintf("Ollama respondió %d: ¿está detrás de un proxy que pide clave?", res.StatusCode)}
 		}
 		if l.clave == "" {
-			return nil, &Error{MotivoSinClave, "Escribí la clave de " + l.prov.Corto + " para ver sus modelos"}
+			if l.prov.ID == Otro {
+				return nil, &Error{MotivoSinClave, "El servidor pide una clave: escribila para ver sus modelos"}
+			}
+			return nil, &Error{MotivoSinClave, "Escribí la clave " + Del(l.prov.ID) + " para ver sus modelos"}
+		}
+		if l.prov.ID == Otro {
+			return nil, &Error{MotivoClave, fmt.Sprintf("El servidor no acepta la clave (%d)", res.StatusCode)}
 		}
 		return nil, &Error{MotivoClave, "La clave no es válida para " + l.prov.Corto}
 	}

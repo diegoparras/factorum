@@ -59,6 +59,7 @@ func (s *Server) responderConfiguracion(w http.ResponseWriter, r *http.Request, 
 		res["lockatus"] = map[string]any{"redirect": cfg.OIDCRedirect(), "listo": cfg.OIDCListo(), "solo": cfg.SoloLockatus(),
 			"login_local": cfg.LoginLocal, "sesion_lockatus": id.Origen == OrigenLockatus}
 		res["ia_aviso"] = s.vistaAviso(r.Context(), cfg, id)
+		res["ia"] = catalogoIA(cfg)
 		res["correo"] = map[string]any{"urls": urlsCorreo(cfg), "estado": s.estadoCorreo(), "smtp": cfg.SMTPConfigurado(),
 			"google": map[string]any{"conectado": cfg.GoogleRefreshToken != "", "cuenta": cfg.GoogleCuenta, "fijado": s.bloqueado("google.refresh_token")}}
 	}
@@ -108,6 +109,9 @@ func (s *Server) guardarConfiguracion(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusConflict, "Para activar «Solo se entra con Lockatus», primero cerrá sesión y entrá con Lockatus: así queda probado que tu cuenta entra.")
 		return
 	}
+	if !s.prepararCambiosIA(w, b.Cambios) {
+		return
+	}
 	aceptado, seguir := s.aceptacionIA(w, r, b.Cambios, b.AceptarAvisoIA)
 	if !seguir {
 		return
@@ -142,19 +146,25 @@ func (s *Server) probarConfiguracion(w http.ResponseWriter, r *http.Request) {
 	}
 	sec := r.PathValue("seccion")
 	p, ok := s.Probar[sec]
-	if !ok {
+	if !ok && sec != "ia" {
 		jsonErr(w, http.StatusNotFound, "Esa sección no tiene prueba")
 		return
 	}
 	var b struct {
 		Cambios map[string]json.RawMessage `json:"cambios"`
 		Destino string                     `json:"destino"` // a quién mandar el mail de prueba
+		// AceptarAvisoIA: para probar una IA externa sin el aviso aceptado, quien prueba lo vio.
+		AceptarAvisoIA *avisoPedido `json:"aceptar_aviso_ia"`
 	}
 	_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&b)
 	for k := range b.Cambios {
 		if c, ok := ajustes.CampoPorClave(k); !ok || c.Seccion != sec || c.Interno {
 			delete(b.Cambios, k)
 		}
+	}
+	if sec == "ia" && !ok { // la IA tiene su propia prueba: manda un ticket y dice qué leyó
+		s.probarIA(w, r, b.Cambios, b.AceptarAvisoIA)
+		return
 	}
 	cfg, err := s.Ajustes.Aplicar(b.Cambios)
 	if err != nil {
@@ -180,7 +190,6 @@ func (s *Server) pruebasPorDefecto() map[string]Prueba {
 		"lockatus": s.probarLockatus,
 		"telegram": s.probarTelegram,
 		"webhook":  s.probarWebhook,
-		"ia":       s.probarIA,
 		"r2":       s.probarR2,
 
 		"correo_entrada": s.probarCorreoEntrada,
@@ -350,46 +359,6 @@ func (s *Server) probarWebhook(ctx context.Context, c *config.Config) (string, e
 		return "", fmt.Errorf("la URL de salida respondió %d", st)
 	}
 	return fmt.Sprintf("Se mandó un aviso de prueba firmado a la URL de salida y respondió %d.", st), nil
-}
-
-func (s *Server) probarIA(ctx context.Context, c *config.Config) (string, error) {
-	if c.LLMBaseURL == "" {
-		return "", errors.New("falta el endpoint")
-	}
-	cab := map[string]string{}
-	if c.LLMAPIKey != "" {
-		cab["Authorization"] = "Bearer " + c.LLMAPIKey
-	}
-	var b struct {
-		Data []struct {
-			ID string `json:"id"`
-		} `json:"data"`
-	}
-	st, err := s.pedirJSON(ctx, http.MethodGet, strings.TrimRight(c.LLMBaseURL, "/")+"/models", cab, nil, &b)
-	if err != nil {
-		return "", fmt.Errorf("el endpoint %v", err)
-	}
-	if st == 401 || st == 403 {
-		return "", fmt.Errorf("el endpoint no acepta la clave (%d)", st)
-	}
-	if st != 200 {
-		return "", fmt.Errorf("%s/models respondió %d: ¿es compatible con OpenAI? (Ollama termina en /v1)", c.LLMBaseURL, st)
-	}
-	var ids []string
-	for _, m := range b.Data {
-		ids = append(ids, m.ID)
-	}
-	if c.LLMModelo != "" && !slices.Contains(ids, c.LLMModelo) {
-		return "", fmt.Errorf("el endpoint responde, pero no tiene el modelo %q (tiene: %s). En Ollama: ollama pull %s", c.LLMModelo, strings.Join(primeros(ids, 8), ", "), c.LLMModelo)
-	}
-	return fmt.Sprintf("El endpoint responde con %d modelo(s) y tiene %s.", len(ids), c.LLMModelo), nil
-}
-
-func primeros(l []string, n int) []string {
-	if len(l) > n {
-		return append(l[:n:n], "...")
-	}
-	return l
 }
 
 func (s *Server) probarR2(ctx context.Context, c *config.Config) (string, error) {

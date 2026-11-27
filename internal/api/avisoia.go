@@ -10,6 +10,7 @@ import (
 	"github.com/diegoparras/factorum/internal/auth"
 	"github.com/diegoparras/factorum/internal/avisoia"
 	"github.com/diegoparras/factorum/internal/config"
+	"github.com/diegoparras/factorum/internal/iaproveedor"
 )
 
 // CodigoAvisoIA es el código de error de un pedido que va a usar una IA externa sin el aviso visto
@@ -19,7 +20,11 @@ const CodigoAvisoIA = "aviso_ia"
 // vistaAviso es lo que la pantalla necesita para el sello, el aviso y la aceptación.
 func (s *Server) vistaAviso(ctx context.Context, c *config.Config, id *auth.Identidad) map[string]any {
 	d := avisoia.Detectar(c.LLMBaseURL)
-	res := map[string]any{
+	eleccion := iaproveedor.Efectivo(c.IAProveedor, c.LLMBaseURL)
+	if d.Proveedor == avisoia.Desconocido && eleccion == iaproveedor.Ollama {
+		d.Nombre = "Ollama en " + d.Host // un Ollama en otra máquina, fuera de la red privada
+	}
+	res := map[string]any{"eleccion": eleccion, "eleccion_nombre": iaproveedor.Nombre(eleccion), "modelo": c.LLMModelo,
 		"configurada": c.IAConfigurada(), "proveedor": d.Proveedor, "nombre": d.Nombre, "host": d.Host,
 		"region": d.Region, "local": d.Local, "externa": d.Externa(), "version": avisoia.Version,
 		"aceptado": avisoia.Aceptado(c), "en_uso": avisoia.EnUso(c), "visto": false, "persona": false,
@@ -49,7 +54,9 @@ func (s *Server) vistaAviso(ctx context.Context, c *config.Config, id *auth.Iden
 
 // GET /api/ia/aviso: la IA configurada y qué pasa con los datos.
 func (s *Server) verAvisoIA(w http.ResponseWriter, r *http.Request) {
-	jsonOK(w, http.StatusOK, s.vistaAviso(r.Context(), s.App.Config(), IdentidadDe(r.Context())))
+	res := s.vistaAviso(r.Context(), s.App.Config(), IdentidadDe(r.Context()))
+	recomendadosAviso(res)
+	jsonOK(w, http.StatusOK, res)
 }
 
 type avisoPedido struct {

@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -142,9 +143,11 @@ func TestRecomendados(t *testing.T) {
 }
 
 func TestOllama(t *testing.T) {
-	var auth []string
+	var conClave atomic.Bool
 	srv := servidor(t, func(w http.ResponseWriter, r *http.Request) {
-		auth = append(auth, r.Header.Get("Authorization"))
+		if r.Header.Get("Authorization") != "" {
+			conClave.Store(true)
+		}
 		switch r.URL.Path {
 		case "/api/tags":
 			// Uno con capabilities (Ollama nuevo) y dos sin (hay que preguntar con /api/show).
@@ -177,10 +180,8 @@ func TestOllama(t *testing.T) {
 	if ms[1].Detalle != "4.0B · 3,3 GB" || ms[1].Recomendado == nil || ms[0].Recomendado == nil || ms[2].Recomendado != nil {
 		t.Errorf("detalle y recomendados: %+v", ms)
 	}
-	for _, a := range auth {
-		if a != "" {
-			t.Error("a Ollama no se le manda clave")
-		}
+	if conClave.Load() {
+		t.Error("a Ollama no se le manda clave")
 	}
 
 	// Vacío, apagado y algo que no es Ollama.

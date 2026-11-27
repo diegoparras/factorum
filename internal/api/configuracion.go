@@ -54,6 +54,10 @@ func (s *Server) responderConfiguracion(w http.ResponseWriter, r *http.Request, 
 	if cfg.URLPublica != "" {
 		res["webhook_entrada"] = cfg.URLPublica + "/api/canales/webhook"
 	}
+	if id.Rol >= auth.Superadmin {
+		res["correo"] = map[string]any{"urls": urlsCorreo(cfg), "estado": s.estadoCorreo(), "smtp": cfg.SMTPConfigurado(),
+			"google": map[string]any{"conectado": cfg.GoogleRefreshToken != "", "cuenta": cfg.GoogleCuenta, "fijado": s.bloqueado("google.refresh_token")}}
+	}
 	if cambiadas != nil {
 		res["cambiadas"] = cambiadas
 	}
@@ -83,6 +87,10 @@ func (s *Server) guardarConfiguracion(w http.ResponseWriter, r *http.Request) {
 		}
 		if !slices.Contains(secs, c.Seccion) {
 			jsonErr(w, http.StatusForbidden, "Solo un superadmin puede cambiar esta parte de la configuración")
+			return
+		}
+		if c.Interno {
+			jsonErr(w, http.StatusBadRequest, fmt.Sprintf("%q no se cambia desde acá", k))
 			return
 		}
 	}
@@ -119,10 +127,11 @@ func (s *Server) probarConfiguracion(w http.ResponseWriter, r *http.Request) {
 	}
 	var b struct {
 		Cambios map[string]json.RawMessage `json:"cambios"`
+		Destino string                     `json:"destino"` // a quién mandar el mail de prueba
 	}
 	_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&b)
 	for k := range b.Cambios {
-		if c, ok := ajustes.CampoPorClave(k); !ok || c.Seccion != sec {
+		if c, ok := ajustes.CampoPorClave(k); !ok || c.Seccion != sec || c.Interno {
 			delete(b.Cambios, k)
 		}
 	}
@@ -131,7 +140,7 @@ func (s *Server) probarConfiguracion(w http.ResponseWriter, r *http.Request) {
 		jsonOK(w, http.StatusOK, map[string]any{"exito": false, "mensaje": capital(strings.TrimPrefix(err.Error(), ajustes.ErrInvalido.Error()+": "))})
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(context.WithValue(r.Context(), ctxDestino{}, b.Destino), 25*time.Second)
 	defer cancel()
 	msg, err := p(ctx, cfg)
 	if err != nil {
@@ -151,6 +160,9 @@ func (s *Server) pruebasPorDefecto() map[string]Prueba {
 		"webhook":  s.probarWebhook,
 		"ia":       s.probarIA,
 		"r2":       s.probarR2,
+
+		"correo_entrada": s.probarCorreoEntrada,
+		"correo_salida":  s.probarCorreoSalida,
 	}
 }
 

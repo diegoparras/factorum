@@ -35,9 +35,24 @@ type TB interface {
 	Cleanup(func())
 }
 
-// Certificado arma un certificado autofirmado para 127.0.0.1 y localhost, con la configuración
-// del servidor y la del cliente (que confía en él).
+var (
+	certUna          sync.Once
+	certSrv, certCli *tls.Config
+	certErr          error
+)
+
+// Certificado es un certificado autofirmado para 127.0.0.1 y localhost, con la configuración del
+// servidor y la del cliente (que confía en él). Es el mismo para todos los servidores de prueba:
+// así un solo TLSClient sirve para el SMTP y el IMAP.
 func Certificado() (servidor, cliente *tls.Config, err error) {
+	certUna.Do(func() { certSrv, certCli, certErr = nuevoCertificado() })
+	if certErr != nil {
+		return nil, nil, certErr
+	}
+	return certSrv.Clone(), certCli.Clone(), nil
+}
+
+func nuevoCertificado() (servidor, cliente *tls.Config, err error) {
 	k, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return nil, nil, err

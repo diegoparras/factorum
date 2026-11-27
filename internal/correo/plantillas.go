@@ -155,7 +155,11 @@ func itemsTexto(items []ItemCbte, mas int) string {
 }
 
 func pieTexto(m Marca) string {
-	return "\n\n--\n" + m.nombre() + " · Factorum, lector de facturas de ARCA. Este mail se mandó automáticamente."
+	n := m.nombre()
+	if n != "Factorum" {
+		n += " · Factorum"
+	}
+	return "\n\n--\n" + n + ", lector de facturas de ARCA. Este mail se mandó automáticamente."
 }
 
 // RespuestaLote es la respuesta a quien mandó facturas por mail.

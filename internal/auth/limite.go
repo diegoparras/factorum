@@ -104,3 +104,50 @@ func (l *Limitador) barrer(ahora time.Time) {
 		}
 	}
 }
+
+// Cupo limita cuántos pedidos se aceptan por clave (una IP, un email) en una ventana corrediza:
+// hasta N por Ventana. Sirve para lo que no es un intento fallido (pedir un link por mail).
+type Cupo struct {
+	N       int
+	Ventana time.Duration
+	Ahora   func() time.Time
+
+	mu sync.Mutex
+	m  map[string][]time.Time
+}
+
+// Tomar anota un pedido para cada clave si todas tienen lugar. Devuelve false (y no anota nada) si
+// alguna ya llegó al tope.
+func (c *Cupo) Tomar(claves ...string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	ahora := time.Now()
+	if c.Ahora != nil {
+		ahora = c.Ahora()
+	}
+	if c.m == nil {
+		c.m = map[string][]time.Time{}
+	}
+	for k, ts := range c.m { // lo viejo se va
+		var quedan []time.Time
+		for _, t := range ts {
+			if ahora.Sub(t) < c.Ventana {
+				quedan = append(quedan, t)
+			}
+		}
+		if len(quedan) == 0 {
+			delete(c.m, k)
+		} else {
+			c.m[k] = quedan
+		}
+	}
+	for _, k := range claves {
+		if len(c.m[k]) >= c.N {
+			return false
+		}
+	}
+	for _, k := range claves {
+		c.m[k] = append(c.m[k], ahora)
+	}
+	return true
+}

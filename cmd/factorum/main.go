@@ -221,8 +221,10 @@ func servir() error {
 	}
 	canales := nuevoGestor(ctx, a, st, log)
 	canales.Aplicar(c)
+	buzon := nuevoGestorCorreo(ctx, a, log)
+	buzon.Aplicar(c)
 
-	srv := &api.Server{App: a, Cfg: base, Log: log, Webhook: canales.Webhook, Ajustes: aj}
+	srv := &api.Server{App: a, Cfg: base, Log: log, Webhook: canales.Webhook, Ajustes: aj, EstadoCorreo: buzon.Estado}
 	if sub, err := fs.Sub(web.Archivos, "."); err == nil {
 		srv.Web = sub
 	}
@@ -260,15 +262,21 @@ func servir() error {
 			log.Info("almacén reconfigurado", "almacen", alm.Backend())
 		}
 		canales.Aplicar(nuevo)
+		buzon.Aplicar(nuevo)
 	})
 
-	// Sesiones y pases vencidos.
+	// Sesiones y pases vencidos, el correo retenido de más de 30 días y los links vencidos.
 	go func() {
 		t := time.NewTicker(time.Hour)
 		defer t.Stop()
 		for {
 			if err := st.Limpiar(ctx); err != nil && ctx.Err() == nil {
 				log.Warn("no se pudieron limpiar las sesiones vencidas", "error", err)
+			}
+			if n, err := st.LimpiarCorreo(ctx); err != nil && ctx.Err() == nil {
+				log.Warn("no se pudo limpiar el correo retenido viejo", "error", err)
+			} else if n > 0 {
+				log.Info("correo retenido vencido borrado", "mails", n)
 			}
 			select {
 			case <-ctx.Done():

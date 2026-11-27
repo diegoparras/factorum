@@ -55,16 +55,23 @@ func controlarAlcance(actor *auth.Identidad, rol auth.Rol, cuits []string) error
 // POST /api/usuarios: alta con contraseña temporal (se muestra una vez).
 func (s *Server) crearUsuario(w http.ResponseWriter, r *http.Request) {
 	var b struct {
-		Email  string          `json:"email"`
-		Nombre string          `json:"nombre"`
-		Rol    string          `json:"rol"`
-		CUITs  json.RawMessage `json:"cuits"`
+		Email   string          `json:"email"`
+		Nombre  string          `json:"nombre"`
+		Rol     string          `json:"rol"`
+		CUITs   json.RawMessage `json:"cuits"`
+		Invitar bool            `json:"invitar"` // mandarle un link por mail en lugar de la contraseña temporal
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16384)).Decode(&b); err != nil {
 		jsonErr(w, http.StatusBadRequest, "JSON inválido")
 		return
 	}
 	actor := IdentidadDe(r.Context())
+	if b.Invitar {
+		if falta := s.faltaParaMail(); falta != "" {
+			jsonErr(w, http.StatusConflict, "No se puede invitar por mail: "+strings.ToLower(falta[:1])+falta[1:])
+			return
+		}
+	}
 	email, err := validarEmail(b.Email)
 	if err != nil {
 		jsonErr(w, http.StatusBadRequest, err.Error())
@@ -84,14 +91,16 @@ func (s *Server) crearUsuario(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusForbidden, err.Error())
 		return
 	}
-	temp := auth.ClaveTemporal()
-	hash, err := auth.HashClave(temp)
-	if err != nil {
-		s.fallo(w, err)
-		return
+	temp, hash := "", ""
+	if !b.Invitar {
+		temp = auth.ClaveTemporal()
+		if hash, err = auth.HashClave(temp); err != nil {
+			s.fallo(w, err)
+			return
+		}
 	}
 	u, err := s.App.Store.CrearUsuario(r.Context(), store.UsuarioNuevo{Email: email, Nombre: nombreLimpio(b.Nombre, email), Rol: rol, CUITs: cuits,
-		ClaveHash: hash, DebeCambiar: true})
+		ClaveHash: hash, DebeCambiar: !b.Invitar})
 	if errors.Is(err, store.ErrEmailUsado) {
 		jsonErr(w, http.StatusConflict, "Ya hay una persona con ese email")
 		return
@@ -100,7 +109,22 @@ func (s *Server) crearUsuario(w http.ResponseWriter, r *http.Request) {
 		s.fallo(w, err)
 		return
 	}
-	s.auditar(r, "usuario.crear", u.Email, map[string]any{"rol": u.Rol.String(), "cuits": u.CUITs})
+	s.auditar(r, "usuario.crear", u.Email, map[string]any{"rol": u.Rol.String(), "cuits": u.CUITs, "invitado": b.Invitar})
+	if b.Invitar {
+		quien := actor.Nombre
+		if quien == "" {
+			quien = actor.Email
+		}
+		res := map[string]any{"usuario": u, "invitado": true}
+		if err := s.mandarLink(r.Context(), u, store.TokenInvitacion, quien, ipDe(r)); err != nil {
+			res["invitado"] = false
+			res["aviso"] = "La persona quedó creada, pero no se pudo mandar la invitación: " + err.Error() + ". Probá con «Mandar link» cuando el correo ande."
+		} else {
+			s.auditar(r, "usuario.link_por_mail", u.Email, map[string]any{"tipo": store.TokenInvitacion})
+		}
+		jsonOK(w, http.StatusCreated, res)
+		return
+	}
 	jsonOK(w, http.StatusCreated, map[string]any{"usuario": u, "clave_temporal": temp})
 }
 

@@ -26,6 +26,7 @@ import (
 	"github.com/diegoparras/factorum/internal/auth"
 	"github.com/diegoparras/factorum/internal/canal"
 	"github.com/diegoparras/factorum/internal/config"
+	"github.com/diegoparras/factorum/internal/correo"
 	"github.com/diegoparras/factorum/internal/export"
 	"github.com/diegoparras/factorum/internal/rubro"
 	"github.com/diegoparras/factorum/internal/store"
@@ -48,8 +49,16 @@ type Server struct {
 	Ahora   func() time.Time  // para las pruebas
 	HTTP    *http.Client      // para hablar con las otras apps y las pruebas de la configuración
 	Probar  map[string]Prueba // pruebas de la configuración por sección (se pueden cambiar en las pruebas)
+	// EstadoCorreo dice cómo viene el correo entrante que se revisa (IMAP o Gmail); nil = sin datos.
+	EstadoCorreo func() EstadoCorreo
 
 	limite         *auth.Limitador
+	cupoEmail      *auth.Cupo // pedidos de «Olvidé mi contraseña» por email
+	cupoIP         *auth.Cupo // y por IP
+	repetidos      correo.Repetidos
+	stats          correoStats
+	oauthMu        sync.Mutex
+	oauth          map[string]estadoOAuth
 	arranqueMu     sync.Mutex
 	codigoArranque string
 	suiteMu        sync.Mutex
@@ -108,6 +117,10 @@ func (s *Server) Handler() http.Handler {
 	if s.limite == nil {
 		s.limite = auth.NuevoLimitador()
 	}
+	if s.cupoEmail == nil {
+		s.cupoEmail = &auth.Cupo{N: 3, Ventana: time.Hour}
+		s.cupoIP = &auth.Cupo{N: 10, Ventana: time.Hour}
+	}
 	if s.Probar == nil {
 		s.Probar = s.pruebasPorDefecto()
 	}
@@ -123,10 +136,14 @@ func (s *Server) Handler() http.Handler {
 	m.HandleFunc("GET /api/sesion", s.auth(lect, s.yo))
 	m.HandleFunc("DELETE /api/sesion", s.soloSesion(lect, s.salirSesion))
 	m.HandleFunc("POST /api/sesion/clave", s.soloSesion(lect, s.cambiarMiClave))
+	m.HandleFunc("POST /api/sesion/olvide", s.publicoCSRF(s.olvideClave))
+	m.HandleFunc("POST /api/sesion/link", s.publicoCSRF(s.verLinkCuenta))
+	m.HandleFunc("POST /api/sesion/restablecer", s.publicoCSRF(s.usarLinkCuenta))
 	m.HandleFunc("GET /api/usuarios", s.soloSesion(adm, s.usuarios))
 	m.HandleFunc("POST /api/usuarios", s.soloSesion(adm, s.crearUsuario))
 	m.HandleFunc("PATCH /api/usuarios/{id}", s.soloSesion(adm, s.editarUsuario))
 	m.HandleFunc("POST /api/usuarios/{id}/restablecer", s.soloSesion(adm, s.restablecerUsuario))
+	m.HandleFunc("POST /api/usuarios/{id}/link", s.soloSesion(adm, s.mandarLinkUsuario))
 	m.HandleFunc("GET /api/claves", s.soloSesion(adm, s.claves))
 	m.HandleFunc("POST /api/claves", s.soloSesion(adm, s.crearClave))
 	m.HandleFunc("DELETE /api/claves/{id}", s.soloSesion(adm, s.revocarClave))
@@ -134,6 +151,16 @@ func (s *Server) Handler() http.Handler {
 	m.HandleFunc("PUT /api/configuracion", s.soloSesion(adm, s.guardarConfiguracion))
 	m.HandleFunc("POST /api/configuracion/probar/{seccion}", s.soloSesion(sup, s.probarConfiguracion))
 	m.HandleFunc("GET /api/auditoria", s.soloSesion(adm, s.verAuditoria))
+
+	// Correo: lo que entra (cada forma con su firma), lo retenido y la conexión con Google.
+	m.HandleFunc("POST "+rutaCloudflare, s.entranteCloudflare)
+	m.HandleFunc("POST "+rutaProveedor+"{proveedor}", s.entranteProveedor)
+	m.HandleFunc("GET /api/correo/retenido", s.soloSesion(adm, s.retenidos))
+	m.HandleFunc("POST /api/correo/retenido/{id}/aceptar", s.soloSesion(adm, s.aceptarRetenido))
+	m.HandleFunc("POST /api/correo/retenido/{id}/descartar", s.soloSesion(adm, s.descartarRetenido))
+	m.HandleFunc("POST /api/correo/google/conectar", s.soloSesion(sup, s.conectarGoogle))
+	m.HandleFunc("GET "+rutaCallback, s.callbackGoogle)
+	m.HandleFunc("POST /api/correo/google/desconectar", s.soloSesion(sup, s.desconectarGoogle))
 
 	// Pase entre apps de la suite (docs/suite-pase.md).
 	m.HandleFunc("POST /api/suite/pase", s.auth(lect, s.emitirPase))
@@ -432,7 +459,7 @@ func (s *Server) crearLote(w http.ResponseWriter, r *http.Request) {
 	}
 	res, err := s.App.CrearLote(r.Context(), store.LoteNuevo{
 		Nombre: strings.TrimSpace(r.FormValue("nombre")), ClienteCUIT: cliente,
-		Origen: origen, IA: ia, Constatar: constatar,
+		Origen: origen, IA: ia, Constatar: constatar, CreadoPor: id.UsuarioID,
 	}, arch, 0)
 	if err != nil {
 		jsonErr(w, http.StatusBadRequest, err.Error())

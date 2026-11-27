@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -31,6 +32,7 @@ import (
 	"github.com/diegoparras/factorum/internal/arcanum"
 	"github.com/diegoparras/factorum/internal/canal"
 	"github.com/diegoparras/factorum/internal/config"
+	"github.com/diegoparras/factorum/internal/correo"
 	"github.com/diegoparras/factorum/internal/modelo"
 	"github.com/diegoparras/factorum/internal/pipeline"
 	"github.com/diegoparras/factorum/internal/rubro"
@@ -45,6 +47,14 @@ type App struct {
 	Pipeline *pipeline.Pipeline
 	River    *river.Client[pgx.Tx]
 	Log      *slog.Logger
+
+	Reloj     func() time.Time // para las pruebas (nil = la hora de verdad)
+	TLSCorreo *tls.Config      // para las pruebas: en qué certificados confiar al hablar con el correo
+	// GoogleURLs cambia las direcciones de Google (OAuth y la Gmail API) en las pruebas.
+	GoogleURLs correo.Google
+	// Calma es cuánto se espera sin archivos nuevos antes de mandar los avisos por mail de un lote
+	// (10 segundos; en las pruebas, menos).
+	Calma time.Duration
 
 	cfg atomic.Pointer[config.Config]   // la vigente, si se cambió desde la pantalla
 	arc atomic.Pointer[arcanum.Cliente] // nil = sin Arcanum
@@ -139,7 +149,11 @@ func (a *App) IniciarCola(ctx context.Context) error {
 	river.AddWorker(ws, &procesarWorker{a: a})
 	river.AddWorker(ws, &constatarWorker{a: a})
 	river.AddWorker(ws, &notificarWorker{a: a})
+	river.AddWorker(ws, &avisoCorreoWorker{a: a})
+	river.AddWorker(ws, &semanalWorker{a: a})
 	a.River, err = river.NewClient(drv, &river.Config{
+		PeriodicJobs: []*river.PeriodicJob{river.NewPeriodicJob(river.PeriodicInterval(15*time.Minute),
+			func() (river.JobArgs, *river.InsertOpts) { return SemanalArgs{}, nil }, &river.PeriodicJobOpts{ID: "resumen_semanal", RunOnStart: true})},
 		Queues: map[string]river.QueueConfig{
 			river.QueueDefault: {MaxWorkers: a.Config().Workers},
 			"arcanum":          {MaxWorkers: 1}, // WSCDC no es para ráfagas
@@ -413,7 +427,12 @@ func (a *App) alTerminarLote(ctx context.Context, loteID int64) {
 }
 
 func (a *App) encolarAviso(ctx context.Context, l *store.Lote) {
-	if l.Canal == "" || l.Chat == "" {
+	if a.hayAvisosDeLote(l) {
+		if _, err := a.River.Insert(ctx, AvisoCorreoArgs{LoteID: l.ID}, &river.InsertOpts{ScheduledAt: time.Now().Add(a.calma() + 2*time.Second)}); err != nil {
+			a.Log.Error("no se pudo encolar el aviso por mail", "lote", l.ID, "error", err)
+		}
+	}
+	if l.Canal == "" || l.Chat == "" || l.Canal == "correo" {
 		return
 	}
 	_, err := a.River.Insert(ctx, NotificarArgs{LoteID: l.ID}, &river.InsertOpts{ScheduledAt: time.Now().Add(12 * time.Second)})

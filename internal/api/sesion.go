@@ -61,7 +61,7 @@ func (s *Server) arranquePendiente() bool {
 
 // GET /api/arranque: si hay que crear el primer superadmin.
 func (s *Server) verArranque(w http.ResponseWriter, r *http.Request) {
-	jsonOK(w, http.StatusOK, map[string]any{"necesita": s.arranquePendiente(), "nombre": s.App.Config().Nombre})
+	jsonOK(w, http.StatusOK, map[string]any{"necesita": s.arranquePendiente(), "nombre": s.App.Config().Nombre, "olvide": s.cuentasPorMail()})
 }
 
 // POST /api/arranque: crea el primer superadmin con el código del log.
@@ -225,7 +225,7 @@ func motivoFallo(u *store.Usuario, ok bool) string {
 // GET /api/sesion: quién soy y qué puedo hacer.
 func (s *Server) yo(w http.ResponseWriter, r *http.Request) {
 	id := IdentidadDe(r.Context())
-	jsonOK(w, http.StatusOK, map[string]any{"identidad": id, "permisos": permisos(id), "instalacion": s.App.Config().Nombre})
+	jsonOK(w, http.StatusOK, map[string]any{"identidad": id, "permisos": permisos(id), "instalacion": s.App.Config().Nombre, "correo_saliente": s.cuentasPorMail()})
 }
 
 func permisos(id *auth.Identidad) map[string]bool {
@@ -236,6 +236,7 @@ func permisos(id *auth.Identidad) map[string]bool {
 		"claves":        id.Rol >= auth.Admin,
 		"auditoria":     id.Rol >= auth.Admin,
 		"clientes":      id.Rol >= auth.Admin,
+		"retenido":      id.Rol >= auth.Admin,
 		"configuracion": id.Rol >= auth.Superadmin,
 	}
 }

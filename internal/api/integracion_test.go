@@ -13,6 +13,7 @@ import (
 	"io"
 	"log/slog"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -31,6 +32,7 @@ import (
 	"github.com/diegoparras/factorum/internal/app"
 	"github.com/diegoparras/factorum/internal/arcanum"
 	"github.com/diegoparras/factorum/internal/config"
+	"github.com/diegoparras/factorum/internal/correo/correotest"
 	"github.com/diegoparras/factorum/internal/extractor"
 	"github.com/diegoparras/factorum/internal/mcpserver"
 	"github.com/diegoparras/factorum/internal/pdfx"
@@ -141,6 +143,22 @@ func armarCon(t *testing.T, ocr *extractor.Tesseract) *entorno { return armarCon
 
 func armarConCfg(t *testing.T, ocr *extractor.Tesseract, ajustar func(*config.Config)) *entorno {
 	t.Helper()
+	return armarConURL(t, ocr, func(c *config.Config, _ string) {
+		if ajustar != nil {
+			ajustar(c)
+		}
+	})
+}
+
+// armarConURL es como armarConCfg, pero ajustar recibe además la dirección en la que va a escuchar
+// el servidor (para usarla de URL pública).
+func armarConURL(t *testing.T, ocr *extractor.Tesseract, ajustar func(*config.Config, string), opciones ...func(*app.App)) *entorno {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := "http://" + ln.Addr().String()
 	url := os.Getenv("FACTORUM_TEST_DB")
 	if url == "" {
 		t.Skip("sin FACTORUM_TEST_DB")
@@ -156,7 +174,7 @@ func armarConCfg(t *testing.T, ocr *extractor.Tesseract, ajustar func(*config.Co
 		t.Fatal(err)
 	}
 	// Base limpia en cada corrida.
-	if _, err := st.Pool.Exec(ctx, `TRUNCATE lotes, documentos, comprobantes, correcciones, rubros_cuit, usuarios, sesiones, claves_api, configuracion, auditoria, pases_suite RESTART IDENTITY CASCADE`); err != nil {
+	if _, err := st.Pool.Exec(ctx, `TRUNCATE lotes, documentos, comprobantes, correcciones, rubros_cuit, usuarios, sesiones, claves_api, configuracion, auditoria, pases_suite, correo_mensajes, correo_adjuntos, tokens_cuenta, avisos_enviados RESTART IDENTITY CASCADE`); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(st.Cerrar)
@@ -173,10 +191,17 @@ func armarConCfg(t *testing.T, ocr *extractor.Tesseract, ajustar func(*config.Co
 		ArcanumURL: arc.URL, ArcanumAPIKey: "arc", ArcanumConsultante: "20222222223", ArcanumTimeout: 10 * time.Second,
 		CanalClienteCUIT: map[string]string{}}
 	if ajustar != nil {
-		ajustar(cfg)
+		ajustar(cfg, dir)
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	a := &app.App{Cfg: cfg, Store: st, Almacen: alm, Pipeline: pipeline.Nuevo(motor, ocr, nil, 2, 1), Log: log}
+	_, tlsCorreo, err := correotest.Certificado()
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &app.App{Cfg: cfg, Store: st, Almacen: alm, Pipeline: pipeline.Nuevo(motor, ocr, nil, 2, 1), Log: log, TLSCorreo: tlsCorreo, Calma: time.Second}
+	for _, o := range opciones {
+		o(a)
+	}
 	a.SetArcanum(arcanum.Nuevo(arc.URL, "arc", "20222222223", 10*time.Second))
 	if _, err := st.Pool.Exec(ctx, `TRUNCATE river_job`); err != nil && !strings.Contains(err.Error(), "does not exist") {
 		t.Fatal(err)
@@ -208,7 +233,8 @@ func armarConCfg(t *testing.T, ocr *extractor.Tesseract, ajustar func(*config.Co
 	if err := s.PrepararArranque(ctx); err != nil {
 		t.Fatal(err)
 	}
-	srv := httptest.NewServer(s.Handler())
+	srv := &httptest.Server{Listener: ln, Config: &http.Server{Handler: s.Handler()}}
+	srv.Start()
 	t.Cleanup(srv.Close)
 	return &entorno{app: a, srv: srv, arc: &n, api: s, aj: aj, fijadas: &fijadas, cfg: cfg}
 }

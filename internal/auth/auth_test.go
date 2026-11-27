@@ -110,3 +110,21 @@ func TestTokens(t *testing.T) {
 		t.Fatal("iguales")
 	}
 }
+
+func TestCupo(t *testing.T) {
+	ahora := time.Unix(1000, 0)
+	c := &Cupo{N: 2, Ventana: time.Hour, Ahora: func() time.Time { return ahora }}
+	if !c.Tomar("ip:1", "email:a") || !c.Tomar("ip:1", "email:b") {
+		t.Fatal("los dos primeros pasan")
+	}
+	if c.Tomar("ip:1", "email:c") {
+		t.Fatal("la IP llegó al tope")
+	}
+	if !c.Tomar("ip:2", "email:c") {
+		t.Fatal("otra IP pasa, y lo que no pasó no se anotó")
+	}
+	ahora = ahora.Add(61 * time.Minute)
+	if !c.Tomar("ip:1", "email:a") {
+		t.Fatal("pasada la hora, vuelve a haber lugar")
+	}
+}

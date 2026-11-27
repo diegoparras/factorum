@@ -51,10 +51,27 @@ const NAV_TODO = [
 ];
 const VISTAS = NAV_TODO.flatMap((g) => g[1]);
 const puede = (p) => !p || !!(YO && YO.permisos && YO.permisos[p]);
-const navVisible = () => NAV_TODO.map(([g, items]) => [g, items.filter((it) => puede(it[2]))]).filter(([, items]) => items.length);
-const vistaPermitida = (v) => VISTAS.some((it) => it[0] === v && puede(it[2]));
+// Sin clientes asignados (entró con Lockatus y todavía nadie le asignó clientes): solo Inicio, con el aviso.
+const sinClientes = () => !!(YO && YO.permisos && YO.permisos.sin_clientes);
+const navVisible = () => (sinClientes() ? [['Trabajo', [['inicio', 'Inicio']]]]
+  : NAV_TODO.map(([g, items]) => [g, items.filter((it) => puede(it[2]))]).filter(([, items]) => items.length));
+const vistaPermitida = (v) => (sinClientes() ? v === 'inicio' : VISTAS.some((it) => it[0] === v && puede(it[2])));
 const PENDIENTES = { error: 0, revisar: 0, retenido: 0 };
 let OLVIDE = false; // el login ofrece «Olvidé mi contraseña» (hay correo saliente)
+let LOCKATUS = { listo: false, solo: false }; // el login ofrece «Entrar con Lockatus»; solo: no hay login con contraseña
+// Lo que vuelve del inicio de sesión con Lockatus cuando no se pudo entrar (?lockatus=...).
+const AVISOS_LOCKATUS = {
+  estado: 'El inicio de sesión con Lockatus venció o no empezó en este navegador. Probá de nuevo.',
+  token: 'Lockatus devolvió una respuesta que no se pudo verificar. Probá de nuevo; si sigue, avisale a un admin.',
+  email: 'Lockatus no mandó un email verificado. Verificá tu email en Lockatus y probá de nuevo.',
+  desactivado: 'Tu cuenta de Factorum está desactivada: pedile a un admin que la reactive.',
+  sin_cuenta: 'Todavía no tenés cuenta en Factorum. Pedile a un admin que te la cree con tu email de Lockatus.',
+  cancelado: 'No se completó el inicio de sesión en Lockatus.',
+  caido: 'Lockatus no responde ahora. Probá en un rato.',
+  no_config: 'El inicio de sesión con Lockatus no está configurado.',
+  demasiados: 'Demasiados intentos. Probá de nuevo en unos minutos.',
+  error: 'No se pudo terminar de entrar. Probá de nuevo en un rato.',
+};
 let AVISO_GOOGLE = null; // al volver de Google: { ok, detalle }
 
 // ---------- Estado ----------
@@ -198,9 +215,9 @@ function pintarMenu() {
   const id = (YO && YO.identidad) || {};
   const quien = id.nombre || id.email || (id.clave ? 'Clave ' + id.clave : 'Factorum');
   $('#menu').innerHTML = `
-    <div class="menu-yo"><span class="avatar" aria-hidden="true">${esc(iniciales(quien))}</span><span><strong>${esc(quien)}</strong>${id.email && id.nombre ? `<br><span class="muted">${esc(id.email)}</span>` : ''}<br>${rolChip(id.rol)}${id.origen && id.origen.startsWith('suite:') ? ' <span class="muted">desde ' + esc(id.origen.slice(6)) + '</span>' : ''}</span></div>
+    <div class="menu-yo"><span class="avatar" aria-hidden="true">${esc(iniciales(quien))}</span><span><strong>${esc(quien)}</strong>${id.email && id.nombre ? `<br><span class="muted">${esc(id.email)}</span>` : ''}<br>${rolChip(id.rol)}${id.origen && id.origen.startsWith('suite:') ? ' <span class="muted">desde ' + esc(id.origen.slice(6)) + '</span>' : ''}${id.origen === 'lockatus' ? ' <span class="muted">con Lockatus</span>' : ''}</span></div>
     <div class="menu-sep"></div>
-    ${id.tipo === 'sesion' ? `<button class="menu-item" data-accion="miClave">${I.llave}<span>Cambiar mi contraseña</span></button>` : ''}
+    ${id.tipo === 'sesion' && !(YO.cuenta && YO.cuenta.origen === 'lockatus') ? `<button class="menu-item" data-accion="miClave">${I.llave}<span>Cambiar mi contraseña</span></button>` : ''}
     <button class="menu-item" data-accion="tema">${dark ? I.sol : I.luna}<span>${dark ? 'Tema claro' : 'Tema oscuro'}</span></button>
     <button class="menu-item" data-accion="novedades">${I.novedades}<span>Novedades</span></button>
     <button class="menu-item" data-accion="acerca">${I.info}<span>Acerca de Factorum</span></button>
@@ -234,13 +251,21 @@ function mostrarTarjeta(id) {
 
 function mostrarLogin(err, aviso) {
   mostrarTarjeta('#loginForm');
-  $('#olvideBtn').classList.toggle('hidden', !OLVIDE);
-  $('#olvideNota').classList.toggle('hidden', OLVIDE);
+  const lk = LOCKATUS.listo;
+  const solo = lk && LOCKATUS.solo;
+  $('#lockatusBtn').classList.toggle('hidden', !lk);
+  $('#loginO').classList.toggle('hidden', !lk || solo);
+  $('#loginLocal').classList.toggle('hidden', solo);
+  $('#loginSolo').classList.toggle('hidden', !solo);
+  $('#loginEntrar').classList.toggle('ghost', lk);
+  $('#loginEmail').required = $('#loginClave').required = !solo;
+  $('#olvideBtn').classList.toggle('hidden', !OLVIDE || solo);
+  $('#olvideNota').classList.toggle('hidden', OLVIDE || solo);
   $('#loginErr').textContent = err || '';
   $('#loginErr').classList.toggle('hidden', !err);
   $('#loginAviso').textContent = aviso || '';
   $('#loginAviso').classList.toggle('hidden', !aviso);
-  setTimeout(() => ($('#loginEmail').value ? $('#loginClave') : $('#loginEmail')).focus(), 50);
+  setTimeout(() => (solo ? $('#lockatusBtn') : $('#loginEmail').value ? $('#loginClave') : $('#loginEmail')).focus(), 50);
 }
 
 function mostrarArranque() {
@@ -306,7 +331,7 @@ async function usarLink() {
 }
 
 // sinSesion: la cookie venció o no hay. Si Factorum está por estrenar, la pantalla de arranque.
-async function sinSesion(aviso) {
+async function sinSesion(aviso, err) {
   YO = null;
   cerrarModal(true);
   $('#menu').classList.add('hidden');
@@ -315,18 +340,21 @@ async function sinSesion(aviso) {
   try {
     const a = await fetch('/api/arranque').then((r) => r.json());
     OLVIDE = !!a.olvide;
+    LOCKATUS = { listo: !!a.lockatus, solo: !!a.solo_lockatus };
     if (a.nombre) $$('.nombre-inst').forEach((e) => { e.textContent = a.nombre; });
     if (a.necesita) { mostrarArranque(); return; }
   } catch { /* sin conexión: login */ }
-  mostrarLogin('', aviso);
+  mostrarLogin(err || '', aviso);
 }
 
 async function arrancar() {
   // Al volver de otra app con un pase que no sirvió, el servidor manda acá con ?aviso=pase.
   const q = new URLSearchParams(location.search);
   const aviso = q.get('aviso') === 'pase' ? 'El pase para entrar venció o ya se usó. Volvé a tocar el botón en la otra app.' : '';
+  // Al volver de Lockatus sin poder entrar, el servidor manda acá con ?lockatus=<motivo> (nunca un texto).
+  const errLockatus = q.has('lockatus') ? AVISOS_LOCKATUS[q.get('lockatus')] || AVISOS_LOCKATUS.error : '';
   if (q.has('google')) AVISO_GOOGLE = { ok: q.get('google') === 'ok', detalle: q.get('detalle') || '' };
-  if (q.has('aviso') || q.has('google')) { try { history.replaceState(null, '', location.pathname + location.hash); } catch { /* nada */ } }
+  if (q.has('aviso') || q.has('google') || q.has('lockatus')) { try { history.replaceState(null, '', location.pathname + location.hash); } catch { /* nada */ } }
   // El link de un mail para elegir contraseña no necesita sesión.
   const h = location.hash.slice(1);
   if (h.startsWith('restablecer')) {
@@ -336,14 +364,14 @@ async function arrancar() {
   }
   try {
     YO = await api('/api/sesion', { sinRedirigir: true });
-  } catch { sinSesion(aviso); return; }
+  } catch { sinSesion(aviso, errLockatus); return; }
   iniciarApp();
 }
 
 async function iniciarApp() {
   $('#login').classList.add('hidden');
   const id = YO.identidad || {};
-  document.documentElement.setAttribute('data-puede-cargar', puede('cargar') ? 'si' : 'no');
+  document.documentElement.setAttribute('data-puede-cargar', puede('cargar') && !sinClientes() ? 'si' : 'no');
   // Con clientes asignados, la carga sugiere los propios.
   const dl = $('#misCuits') || Object.assign(document.createElement('datalist'), { id: 'misCuits' });
   dl.innerHTML = (id.cuits || []).map((c) => `<option value="${esc(cuit(c))}">`).join('');
@@ -359,6 +387,7 @@ async function iniciarApp() {
   // Con la contraseña temporal no se carga nada más hasta que la cambie (el servidor tampoco deja).
   if (id.debe_cambiar) { pedirCambioClave(true); return; }
   ir(location.hash.slice(1) || 'inicio');
+  if (sinClientes()) { verNovedades(false); return; } // no hay nada más que cargar
   if (AVISO_GOOGLE) {
     toast(AVISO_GOOGLE.ok ? `Gmail conectado: ${AVISO_GOOGLE.detalle}` : AVISO_GOOGLE.detalle || 'No se pudo conectar con Google', !AVISO_GOOGLE.ok);
     AVISO_GOOGLE = null;
@@ -761,6 +790,14 @@ function vacio(ico, titulo, texto, vistaBoton, textoBoton) {
 // ---------- Inicio ----------
 const mil = (n) => Number(n || 0).toLocaleString('es-AR');
 async function cargarInicio() {
+  const acciones = $('#v-inicio .cabecera .acciones');
+  acciones.classList.toggle('hidden', sinClientes());
+  if (sinClientes()) {
+    $('#inicioSub').textContent = 'Todavía no ves ningún cliente.';
+    $('#inicio').innerHTML = `<div class="aviso-card">${I.info}<div><strong>Pedile a un admin que te asigne clientes.</strong><br>
+      <span class="muted">Entraste bien${YO.identidad.origen === 'lockatus' ? ' con Lockatus' : ''}, pero tu cuenta todavía no tiene clientes asignados. Cuando un admin te los asigne en Usuarios, volvé a entrar y vas a ver sus facturas.</span></div></div>`;
+    return;
+  }
   try {
     const { panel: p, copia_fallida: cf } = await api('/api/panel');
     const avisoCopia = cf ? `<div class="aviso-card mal">${I.alerta}<div><strong>Falló la última copia de la base</strong> (${fechaHora(cf.cuando)}).<br><span class="muted">${esc(cf.error)}</span></div><button type="button" class="ghost mini" data-accion="verCopias">Ver las copias</button></div>` : '';
@@ -906,7 +943,8 @@ function acercaDe() {
 const TZ = 'America/Argentina/Buenos_Aires';
 const fechaHora = (s) => (s ? new Date(s).toLocaleString('es-AR', { timeZone: TZ, dateStyle: 'short', timeStyle: 'short' }) : '');
 const fechaCorta = (s) => (s ? new Date(s).toLocaleDateString('es-AR', { timeZone: TZ }) : '');
-const cuitsHTML = (l) => (l && l.length ? l.map((c) => `<span class="cuit-chip mono">${esc(cuit(c))}</span>`).join(' ') : '<span class="muted">Todos</span>');
+const cuitsHTML = (l) => (l && l.length ? l.map((c) => `<span class="cuit-chip mono">${esc(cuit(c))}</span>`).join(' ')
+  : Array.isArray(l) ? '<span class="chip-ninguno" title="No ve nada hasta que le asignes clientes">Ninguno todavía</span>' : '<span class="muted">Todos</span>');
 const cuitsTexto = (l) => (l || []).map(cuit).join(', ');
 const rolesHasta = (max, actual) => ORDEN_ROL.filter((r) => ORDEN_ROL.indexOf(r) <= ORDEN_ROL.indexOf(max))
   .map((r) => `<option value="${r}"${r === actual ? ' selected' : ''}>${ROLES[r]}</option>`).join('');
@@ -953,6 +991,16 @@ const SECCIONES = {
       'URL pública: la que ves en el navegador cuando usás Arcanum.',
       'Pegá la clave, guardá y tocá Probar: Factorum consulta /api/health y una lista de solo lectura.',
       'Para el camino inverso (de Arcanum a Factorum), creá acá en Claves de API una clave con «Puede abrir sesiones de la suite» y cargala en Arcanum como FACTORUM_TOKEN.'] },
+  lockatus: { t: 'Lockatus (inicio de sesión único)', d: 'Entrar con la cuenta de la suite Escriba: una sola contraseña para Factorum, Arcanum y las demás.', probar: true,
+    clave: ['lockatus.emisor', 'lockatus.client_id', 'lockatus.client_secret'],
+    como: ['En Lockatus, como administrador, registrá una aplicación nueva para Factorum: tipo confidencial (con client secret), flujo Authorization Code con PKCE (S256).',
+      'Redirect URI: copiá la de arriba tal cual (tu URL pública más /api/auth/oidc/callback). Tiene que coincidir exacta, con https y sin barra al final. Si no aparece, completá primero la URL pública en General.',
+      'Scopes: openid, profile y email. Factorum reconoce a cada persona por su email verificado: si Lockatus no lo manda, o lo manda con email_verified en false, no entra.',
+      'El rol: en Lockatus, mandá el rol de cada persona para Factorum en el claim role del id_token (superadmin, admin, usuario u operador, o lectura). Si usás otro claim, poné su nombre en «Claim del rol» (con puntos si está anidado, como realm_access.roles). Solo se usa para crear la cuenta; después manda el rol que tiene en Factorum.',
+      'Copiá acá el emisor (la dirección de Lockatus, tal como la publica en su discovery), el client ID y el client secret, guardá y tocá Probar: Factorum lee /.well-known/openid-configuration y las claves para firmar.',
+      'Cerrá sesión y tocá «Entrar con Lockatus». Si tu email ya tiene cuenta acá, entrás con tu rol y tus clientes de Factorum.',
+      'Quien entra por primera vez se crea con el rol que manda Lockatus (o el de «Rol para quien no trae uno conocido»). Admin y superadmin ven todos los clientes; usuario y lectura, ninguno hasta que les asignes clientes en Usuarios.',
+      'Ya adentro con Lockatus, podés activar «Solo se entra con Lockatus». Si Lockatus se cae, en el servidor poné FACTORUM_LOGIN_LOCAL=1 y reiniciá: vuelve el login con contraseña. Sacala cuando Lockatus ande.'] },
   telegram: { t: 'Telegram', d: 'Un bot que recibe PDFs y fotos y contesta cuando termina.', probar: true, clave: ['telegram.token'],
     como: ['En Telegram, abrí @BotFather y mandale /newbot.', 'Elegí un nombre y un usuario que termine en «bot».',
       'Copiá el token que te da (algo como 123456789:AA...) y pegalo acá.', 'Guardá: el bot arranca solo, sin reiniciar. Probar confirma el token con getMe.',
@@ -1225,6 +1273,13 @@ function mostrarProveedor() {
 
 function extraSeccion(sec) {
   if (sec === 'webhook') return datoCopiable('URL de entrada', CONF.webhook_entrada);
+  if (sec === 'lockatus') {
+    const lk = CONF.lockatus || {};
+    let h = datoCopiable('Redirect URI (para registrar en Lockatus)', lk.redirect);
+    if (lk.login_local) h += `<div class="aviso-mini mal">${I.alerta}<span><strong>Salida de emergencia activa:</strong> FACTORUM_LOGIN_LOCAL=1 deja entrar con email y contraseña aunque esté «Solo se entra con Lockatus». Sacala del servidor cuando Lockatus vuelva a andar.</span></div>`;
+    else if (!lk.sesion_lockatus) h += `<div class="aviso-mini">${I.info}<span>Para activar «Solo se entra con Lockatus», primero cerrá sesión y entrá con Lockatus: así queda probado que tu cuenta entra.</span></div>`;
+    return h;
+  }
   if (sec === 'whatsapp') return '<div id="waEstado" class="wa-estado"></div>';
   if (sec === 'r2') return '<div id="r2Pase" class="pase" aria-live="polite"></div>';
   if (sec === 'copias') return '<div id="copiasLista" class="copias"></div>';
@@ -1310,6 +1365,7 @@ function campoConfHTML(c) {
 
 function estadoSeccion(sec, campos) {
   const cfg = SECCIONES[sec];
+  if (sec === 'lockatus' && CONF.lockatus && CONF.lockatus.solo) return '<span class="est ok">Solo Lockatus</span>';
   if (sec === 'correo_entrada') {
     const e = (CONF.correo && CONF.correo.estado) || {};
     if (e.forma === 'apagado') return '<span class="est">Apagado</span>';
@@ -1590,52 +1646,74 @@ async function cargarUsuarios() {
   try {
     ({ usuarios: USUARIOS } = await api('/api/usuarios'));
     const yo = YO.identidad;
+    const sub = $('#usuariosSub');
+    if (!sub.dataset.orig) sub.dataset.orig = sub.textContent;
+    sub.textContent = YO.solo_lockatus
+      ? 'Quién entra a Factorum, con qué rol y a qué clientes. Solo se entra con Lockatus: cada persona entra con su email de Lockatus y acá no tiene contraseña. Las que entran por primera vez como usuario o lectura no ven nada hasta que les asignes clientes.'
+      : sub.dataset.orig + (YO.lockatus ? ' Quien entra con Lockatus no tiene contraseña acá: se reconoce por su email.' : '');
     const ORIGEN_U = { local: 'Factorum', arcanum: 'Arcanum', lockatus: 'Lockatus' };
     $('#usuarios').innerHTML = `<div class="tabla-scroll"><table class="t"><thead><tr><th>Persona</th><th>Rol</th><th>Clientes</th><th>Origen</th><th>Último ingreso</th><th>Estado</th><th></th></tr></thead><tbody>
       ${USUARIOS.map((u) => {
         const tocable = ORDEN_ROL.indexOf(u.rol) <= ORDEN_ROL.indexOf(yo.rol);
+        const conClave = u.origen !== 'lockatus' && !YO.solo_lockatus; // quien entra con Lockatus no tiene contraseña acá
         return `<tr class="${u.activo ? '' : 'apagado'}"><td><div class="persona"><span class="avatar chico" aria-hidden="true">${esc(iniciales(u.nombre || u.email))}</span><span><strong>${esc(u.nombre)}</strong>${u.id === yo.usuario_id ? ' <span class="muted">(vos)</span>' : ''}<br><span class="muted">${esc(u.email)}</span></span></div></td>
-          <td>${rolChip(u.rol)}</td><td>${cuitsHTML(u.cuits)}</td><td>${esc(ORIGEN_U[u.origen] || u.origen)}</td>
-          <td>${u.ultimo_ingreso ? fechaHora(u.ultimo_ingreso) : '<span class="muted">Nunca</span>'}${u.debe_cambiar ? '<br><span class="est revisar">Contraseña temporal</span>' : ''}${!u.tiene_clave && u.origen === 'local' ? '<br><span class="est revisar">Invitación pendiente</span>' : ''}</td>
+          <td>${rolChip(u.rol)}</td><td>${cuitsHTML(u.cuits)}</td><td>${u.origen === 'lockatus' ? `<span class="origen-u">${I.llave}Lockatus</span>` : esc(ORIGEN_U[u.origen] || u.origen)}</td>
+          <td>${u.ultimo_ingreso ? fechaHora(u.ultimo_ingreso) : '<span class="muted">Nunca</span>'}${u.debe_cambiar ? '<br><span class="est revisar">Contraseña temporal</span>' : ''}${!u.tiene_clave && u.origen === 'local' && conClave ? '<br><span class="est revisar">Invitación pendiente</span>' : ''}</td>
           <td>${u.activo ? '<span class="est ok">Activa</span>' : '<span class="est">Desactivada</span>'}</td>
           <td class="acciones-fila">${tocable ? `<div class="acc-apiladas"><button type="button" class="ghost mini" data-accion="editarUsuario" data-id="${u.id}">Editar</button>
-            ${YO.correo_saliente && u.activo ? `<button type="button" class="ghost mini" data-accion="linkUsuario" data-id="${u.id}" title="${u.tiene_clave ? 'Mandarle por mail un link para elegir una contraseña nueva' : 'Mandarle la invitación otra vez'}">${u.tiene_clave ? 'Link por mail' : 'Reenviar invitación'}</button>` : ''}
-            <button type="button" class="ghost mini" data-accion="restablecer" data-id="${u.id}" title="Restablecer la contraseña">Nueva contraseña</button>
+            ${YO.correo_saliente && u.activo && conClave ? `<button type="button" class="ghost mini" data-accion="linkUsuario" data-id="${u.id}" title="${u.tiene_clave ? 'Mandarle por mail un link para elegir una contraseña nueva' : 'Mandarle la invitación otra vez'}">${u.tiene_clave ? 'Link por mail' : 'Reenviar invitación'}</button>` : ''}
+            ${conClave ? `<button type="button" class="ghost mini" data-accion="restablecer" data-id="${u.id}" title="Restablecer la contraseña">Nueva contraseña</button>` : ''}
             ${u.id !== yo.usuario_id ? `<button type="button" class="ghost mini" data-accion="activarUsuario" data-id="${u.id}" data-activo="${u.activo ? '' : '1'}">${u.activo ? 'Desactivar' : 'Reactivar'}</button>` : ''}</div>` : '<span class="muted">Solo un superadmin</span>'}</td></tr>`;
       }).join('')}</tbody></table></div>`;
     tarjetas('#usuarios');
   } catch (e) { toast(e, true); }
 }
 
+// alcanceDe: todos (null), ninguno todavía ([]) o algunos.
+const alcanceDe = (l) => (l == null ? 'todos' : l.length ? 'estos' : 'ninguno');
+
 function formUsuario(u) {
   const yo = YO.identidad;
   const restr = yo.cuits && yo.cuits.length;
+  const alc = u ? alcanceDe(u.cuits) : (restr ? 'estos' : 'todos');
+  const opsAlc = [['todos', 'Todos los clientes'], ['ninguno', 'Ninguno todavía (no ve nada)'], ['estos', 'Solo estos CUITs']]
+    .filter(([v]) => !restr || v !== 'todos').map(([v, t]) => `<option value="${v}"${v === alc ? ' selected' : ''}>${t}</option>`).join('');
+  const lk = !u && YO.lockatus;
   abrirModal(u ? 'Editar a ' + (u.nombre || u.email) : 'Nueva persona', `<form id="fUsuario" class="form-modal" data-id="${u ? u.id : ''}">
     ${u ? `<p class="muted">${esc(u.email)}</p>` : '<label>Email<input id="usEmail" type="email" required autocomplete="off"></label>'}
     <label>Nombre<input id="usNombre" value="${esc(u ? u.nombre : '')}" autocomplete="off"></label>
     <label>Rol<select id="usRol">${rolesHasta(yo.rol, u ? u.rol : 'usuario')}</select>
       <span class="ayuda">Lectura solo mira. Usuario carga, revisa, corrige y aprueba. Admin además maneja personas, claves y clientes. Superadmin, todo.</span></label>
-    <label>Clientes (CUITs)<textarea id="usCuits" rows="2" placeholder="${restr ? 'Uno o más de tus clientes' : 'Vacío: todos los clientes'}">${esc(cuitsTexto(u ? u.cuits : (restr ? yo.cuits : [])))}</textarea>
-      <span class="ayuda">Separados por coma. Vacío: ve a todos los clientes.</span></label>
-    ${u ? '' : YO.correo_saliente ? `<label class="chk"><input type="checkbox" id="usInvitar" checked> Mandarle una invitación por mail</label>
+    <label>Qué clientes ve<select id="usAlcance">${opsAlc}</select></label>
+    <label id="usCuitsWrap" class="${alc === 'estos' ? '' : 'hidden'}">CUITs de los clientes<textarea id="usCuits" rows="2" placeholder="${restr ? 'Uno o más de tus clientes' : 'Por ejemplo: 20-22222222-3, 30-71111111-1'}">${esc(cuitsTexto(u ? u.cuits : (restr ? yo.cuits : [])))}</textarea>
+      <span class="ayuda">Separados por coma. Solo ve, carga y exporta lo de esos clientes.</span></label>
+    ${lk ? `<label class="chk"><input type="checkbox" id="usLockatus"${YO.solo_lockatus ? ' checked disabled' : ''}> Entra con Lockatus (sin contraseña de Factorum)</label>
+      <span class="ayuda">${YO.solo_lockatus ? 'Solo se entra con Lockatus: ' : ''}la persona entra con «Entrar con Lockatus» usando este email, con el rol y los clientes que elijas acá.</span>` : ''}
+    <div id="usClaveWrap" class="${YO.solo_lockatus ? 'hidden' : ''}">${u ? '' : YO.correo_saliente ? `<label class="chk"><input type="checkbox" id="usInvitar" checked> Mandarle una invitación por mail</label>
       <span class="ayuda">Le llega un link para elegir su contraseña (vence en 72 horas). Sin tildar, Factorum te muestra una contraseña temporal para pasársela vos.</span>`
-      : '<span class="ayuda">Para invitar por mail (en lugar de la contraseña temporal), configurá el correo saliente en Configuración.</span>'}
+      : '<span class="ayuda">Para invitar por mail (en lugar de la contraseña temporal), configurá el correo saliente en Configuración.</span>'}</div>
     <div class="login-err hidden" id="usErr"></div></form>`,
   { acciones: `<button type="button" class="ghost" data-accion="modalCerrar">Cancelar</button><button type="submit" form="fUsuario">${u ? 'Guardar' : 'Crear'}</button>` });
 }
 
 async function guardarUsuario(f) {
   const id = f.dataset.id;
-  const cuerpo = { nombre: $('#usNombre').value.trim(), rol: $('#usRol').value, cuits: $('#usCuits').value };
+  const alc = $('#usAlcance').value;
+  const cuerpo = { nombre: $('#usNombre').value.trim(), rol: $('#usRol').value, cuits: alc === 'estos' ? $('#usCuits').value : null };
+  if (alc === 'ninguno') cuerpo.sin_clientes = true;
+  const er = $('#usErr');
+  if (alc === 'estos' && !soloDig($('#usCuits').value)) { er.textContent = 'Escribí al menos un CUIT, o elegí «Todos» o «Ninguno todavía».'; er.classList.remove('hidden'); return; }
   try {
     if (id) {
       await api('/api/usuarios/' + id, { method: 'PATCH', json: cuerpo });
       cerrarModal(); toast('Guardado'); cargarUsuarios();
     } else {
       cuerpo.email = $('#usEmail').value.trim();
-      cuerpo.invitar = !!($('#usInvitar') && $('#usInvitar').checked);
+      cuerpo.lockatus = !!($('#usLockatus') && $('#usLockatus').checked);
+      cuerpo.invitar = !cuerpo.lockatus && !!($('#usInvitar') && $('#usInvitar').checked);
       const r = await api('/api/usuarios', { method: 'POST', json: cuerpo });
       cargarUsuarios();
+      if (r.lockatus) { cerrarModal(); toast(`Listo: ${r.usuario.email} entra con Lockatus.`); return; }
       if (cuerpo.invitar) {
         if (r.invitado) { cerrarModal(); toast(`Le mandamos la invitación a ${r.usuario.email}.`); }
         else abrirModal('Persona creada', `<p>${esc(r.aviso || 'No se pudo mandar la invitación.')}</p>`);
@@ -1644,7 +1722,7 @@ async function guardarUsuario(f) {
       secretoUnaVez('Persona creada', `Pasale a <strong>${esc(r.usuario.email)}</strong> esta contraseña temporal. Al entrar, Factorum le pide que elija una propia.`,
         r.clave_temporal, 'Se muestra una sola vez: si la perdés, restablecela.');
     }
-  } catch (e) { const er = $('#usErr'); er.textContent = e.message; er.classList.remove('hidden'); }
+  } catch (e) { er.textContent = e.message; er.classList.remove('hidden'); }
 }
 
 async function restablecer(id) {
@@ -1804,6 +1882,7 @@ function pintarConectar() {
 // ---------- Auditoría ----------
 const ACCIONES = {
   'sesion.entrar': 'Entró', 'sesion.fallida': 'Intento de entrada fallido', 'sesion.salir': 'Salió',
+  'sesion.entrar_lockatus': 'Entró con Lockatus', 'sesion.rechazo_lockatus': 'Lockatus: entrada rechazada',
   'usuario.crear': 'Alta de persona', 'usuario.editar': 'Cambio de persona', 'usuario.desactivar': 'Desactivó a una persona',
   'usuario.reactivar': 'Reactivó a una persona', 'usuario.restablecer': 'Restableció una contraseña', 'usuario.cambiar_clave': 'Cambió su contraseña',
   'clave.crear': 'Creó una clave de API', 'clave.revocar': 'Revocó una clave de API', 'config.cambiar': 'Cambió la configuración',
@@ -1842,7 +1921,7 @@ async function cargarAuditoria() {
     if (!eventos.length) { $('#auditoria').innerHTML = vacio('auditoria', 'No hay movimientos con estos filtros', 'Probá con otras fechas o sacando la persona.'); $('#audPager').innerHTML = ''; return; }
     $('#auditoria').innerHTML = `<div class="tabla-scroll"><table class="t"><thead><tr><th>Cuándo</th><th>Quién</th><th>Qué</th><th>Sobre</th><th>Detalle</th><th>IP</th></tr></thead><tbody>
       ${eventos.map((ev) => `<tr><td class="nowrap">${fechaHora(ev.creado)}</td><td>${esc(ev.actor || '')}</td>
-        <td><span class="accion ${esc(ev.accion.split('.')[0])}${ev.accion.endsWith('fallida') || ev.accion.endsWith('rechazado') || ev.accion.endsWith('fallido') || ev.accion.endsWith('.error') ? ' mal' : ''}">${esc(ACCIONES[ev.accion] || ev.accion)}</span></td>
+        <td><span class="accion ${esc(ev.accion.split('.')[0])}${ev.accion.endsWith('fallida') || ev.accion.endsWith('rechazado') || ev.accion.startsWith('sesion.rechazo') || ev.accion.endsWith('fallido') || ev.accion.endsWith('.error') ? ' mal' : ''}">${esc(ACCIONES[ev.accion] || ev.accion)}</span></td>
         <td>${esc(ev.objeto || '')}</td><td class="detalle">${detalleHTML(ev.detalle)}</td><td class="mono muted">${esc(ev.ip || '')}</td></tr>`).join('')}</tbody></table></div>`;
     tarjetas('#auditoria');
     const hasta = audOffset + eventos.length;
@@ -1979,6 +2058,8 @@ document.addEventListener('change', (ev) => {
   if (ev.target.id === 'ckSuite') $('#ckTopeWrap').classList.toggle('hidden', !ev.target.checked);
   if (ev.target.name === 'correoForma') cambiarForma(ev.target.value);
   if (ev.target.id === idCampo('correo.proveedor')) mostrarProveedor();
+  if (ev.target.id === 'usAlcance') $('#usCuitsWrap').classList.toggle('hidden', ev.target.value !== 'estos');
+  if (ev.target.id === 'usLockatus') $('#usClaveWrap').classList.toggle('hidden', ev.target.checked);
 });
 
 document.addEventListener('input', (ev) => {

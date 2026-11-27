@@ -21,12 +21,19 @@
     <h2 class="nombre-inst">Factorum</h2>
     <p class="login-sub">Lector de facturas de ARCA</p>
     <div class="login-aviso hidden" id="loginAviso" role="status"></div>
-    <input id="loginEmail" type="email" placeholder="Email" required autocomplete="username" aria-label="Email">
-    <div class="pass-wrap">
-      <input id="loginClave" type="password" placeholder="Contraseña" required autocomplete="current-password" aria-label="Contraseña">
-      <button type="button" class="pass-toggle" data-accion="ojo" data-para="loginClave" aria-label="Mostrar u ocultar la contraseña"></button>
+    <a class="login-sso hidden" id="lockatusBtn" href="/api/auth/oidc/login">
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
+      <span>Entrar con Lockatus</span></a>
+    <p class="login-o hidden" id="loginO"><span>o con tu email y contraseña</span></p>
+    <div class="login-local" id="loginLocal">
+      <input id="loginEmail" type="email" placeholder="Email" required autocomplete="username" aria-label="Email">
+      <div class="pass-wrap">
+        <input id="loginClave" type="password" placeholder="Contraseña" required autocomplete="current-password" aria-label="Contraseña">
+        <button type="button" class="pass-toggle" data-accion="ojo" data-para="loginClave" aria-label="Mostrar u ocultar la contraseña"></button>
+      </div>
+      <button type="submit" id="loginEntrar">Entrar</button>
     </div>
-    <button type="submit">Entrar</button>
+    <p class="login-solo hidden" id="loginSolo">En esta instalación se entra solo con Lockatus, el inicio de sesión único de la suite.</p>
     <div class="login-err hidden" id="loginErr"></div>
     <button type="button" class="link-btn hidden" id="olvideBtn" data-accion="olvide">Olvidé mi contraseña</button>
     <p class="login-foot"><span id="olvideNota">Si te olvidaste la contraseña, pedile a un admin que te la restablezca.<br></span>Parte de la suite Escriba</p>
@@ -216,7 +223,7 @@
 
     <!-- Usuarios -->
     <section class="vista hidden" id="v-usuarios">
-      <div class="cabecera"><div><h2>Usuarios</h2><p class="sub">Quién entra a Factorum, con qué rol y a qué clientes. Al crear a alguien, con el correo saliente configurado, Factorum le manda una invitación por mail para que elija su contraseña; si no, genera una temporal que se muestra una sola vez y obliga a cambiarla al entrar.</p></div>
+      <div class="cabecera"><div><h2>Usuarios</h2><p class="sub" id="usuariosSub">Quién entra a Factorum, con qué rol y a qué clientes. Al crear a alguien, con el correo saliente configurado, Factorum le manda una invitación por mail para que elija su contraseña; si no, genera una temporal que se muestra una sola vez y obliga a cambiarla al entrar.</p></div>
         <div class="acciones"><button type="button" data-accion="nuevoUsuario">Nueva persona</button></div></div>
       <div id="usuarios"></div>
     </section>

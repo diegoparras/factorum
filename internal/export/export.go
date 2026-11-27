@@ -7,6 +7,7 @@ import (
 	"encoding/csv"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 
 	"github.com/xuri/excelize/v2"
@@ -46,6 +47,7 @@ func imp(get func(c *modelo.Comprobante) modelo.Importe) func(f *Fila) any {
 
 var columnas = []columna{
 	{"Fecha", func(f *Fila) any { return f.C.Fecha }, 11, false},
+	{"Hora", func(f *Fila) any { return f.C.Hora }, 9, false},
 	{"Tipo", func(f *Fila) any { return f.C.Tipo }, 6, false},
 	{"Comprobante", func(f *Fila) any {
 		if tp, ok := arca.Tipo(f.C.Tipo); ok {
@@ -59,6 +61,7 @@ var columnas = []columna{
 	{"CUIT emisor", func(f *Fila) any { return arca.FormatearCUIT(f.C.CUITEmisor) }, 14, false},
 	{"Razón social emisor", func(f *Fila) any { return f.C.RazonSocialEmisor }, 32, false},
 	{"Condición IVA emisor", func(f *Fila) any { return f.C.CondicionIVAEmisor }, 20, false},
+	{"Rubro", func(f *Fila) any { return f.C.Rubro }, 13, false},
 	{"Doc. receptor", func(f *Fila) any { return f.C.DocNroReceptor }, 14, false},
 	{"Razón social receptor", func(f *Fila) any { return f.C.RazonSocialReceptor }, 28, false},
 	{"Neto gravado", imp(func(c *modelo.Comprobante) modelo.Importe { return c.NetoGravado }), 14, true},
@@ -167,6 +170,22 @@ func Excel(w io.Writer, filas []Fila) error {
 		{"IVA 2,5%", r.IVA25.Float()}, {"IVA 5%", r.IVA5.Float()}, {"IVA 10,5%", r.IVA105.Float()}, {"IVA 21%", r.IVA21.Float()}, {"IVA 27%", r.IVA27.Float()},
 		{"IVA total", r.IVATotal.Float()}, {"Otros tributos", r.OtrosTributos.Float()}, {"Subtotal B/C", r.Subtotal.Float()}, {"Total", r.Total.Float()},
 		{"", ""}, {"Para revisar", r.PorEstado["revisar"]}, {"Con errores", r.PorEstado["error"]}, {"En moneda extranjera (no sumados)", r.MonedaExtranjera},
+		{"", ""}, {"Tickets de compra", r.Tickets.Cantidad}, {"Total en tickets", r.Tickets.Total.Float()},
+	}
+	var rubros []string
+	for k := range r.PorRubro {
+		rubros = append(rubros, k)
+	}
+	sort.Strings(rubros)
+	if len(rubros) > 0 {
+		filasR = append(filasR, [2]any{"", ""}, [2]any{"Total por rubro", ""})
+		for _, k := range rubros {
+			nombre := k
+			if k == SinRubro {
+				nombre = "sin rubro"
+			}
+			filasR = append(filasR, [2]any{"  " + nombre, r.PorRubro[k].Float()})
+		}
 	}
 	for i, x := range filasR {
 		_ = f.SetCellValue(hr, fmt.Sprintf("A%d", i+1), x[0])
@@ -232,10 +251,24 @@ type Resumen struct {
 	MonedaExtranjera int            `json:"moneda_extranjera"`
 	PorEstado        map[string]int `json:"por_estado"`
 	PorTipo          map[string]int `json:"por_tipo"`
+	// Tickets de compra (tiques de controlador fiscal): cuántos y cuánto suman.
+	Tickets ResumenTickets `json:"tickets"`
+	// PorRubro: total por rubro de gasto (las notas de crédito restan; sin rubro va en "sin_rubro").
+	// Con el filtro clase=tickets son los "gastos con ticket" por rubro.
+	PorRubro map[string]modelo.Importe `json:"por_rubro"`
 }
 
+// ResumenTickets cuenta los tiques de controlador fiscal.
+type ResumenTickets struct {
+	Cantidad int            `json:"cantidad"`
+	Total    modelo.Importe `json:"total"`
+}
+
+// SinRubro es la clave de por_rubro para lo que no tiene rubro.
+const SinRubro = "sin_rubro"
+
 func Resumir(filas []Fila) Resumen {
-	r := Resumen{PorEstado: map[string]int{}, PorTipo: map[string]int{}}
+	r := Resumen{PorEstado: map[string]int{}, PorTipo: map[string]int{}, PorRubro: map[string]modelo.Importe{}}
 	for i := range filas {
 		f := &filas[i]
 		c := &f.C
@@ -262,6 +295,15 @@ func Resumir(filas []Fila) Resumen {
 		r.OtrosTributos += s * c.OtrosTributos
 		r.Subtotal += s * c.Subtotal
 		r.Total += s * c.Total
+		if c.EsTique || arca.EsTique(c.Tipo) {
+			r.Tickets.Cantidad++
+			r.Tickets.Total += s * c.Total
+		}
+		rb := c.Rubro
+		if rb == "" {
+			rb = SinRubro
+		}
+		r.PorRubro[rb] += s * c.Total
 	}
 	r.IVATotal = r.IVA25 + r.IVA5 + r.IVA105 + r.IVA21 + r.IVA27
 	return r

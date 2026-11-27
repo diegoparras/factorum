@@ -43,7 +43,7 @@ Lee la factura, corre los controles y, si Arcanum está configurado, la constata
 ```json
 {
   "ok": true,
-  "veredicto": "valida" | "invalida" | "apocrifa" | "no_verificable" | "con_errores",
+  "veredicto": "valida" | "invalida" | "apocrifa" | "tique_controlado" | "no_verificable" | "con_errores",
   "mensaje": "ARCA confirma que el comprobante existe con esos datos.",
   "resultado": { /* modelo.Resultado: archivo, sha256, paginas, comprobantes[], extractores, duracion_ms */ },
   "constatacion": [ { "valido": true, "resultado": "A", "observaciones": [], "apoc": { "consultado": true, "esApocrifo": false } } ]
@@ -57,8 +57,30 @@ Cómo se decide el veredicto:
 | `apocrifa` | El emisor está en la base de apócrifos. |
 | `invalida` | ARCA rechaza la constatación (`resultado` = `R`). |
 | `valida` | ARCA la aprueba (`A`) y no hay errores locales. |
+| `tique_controlado` | Un ticket de controlador fiscal sin errores locales: el CUIT es válido y el emisor no figura como apócrifo. |
 | `con_errores` | Hay errores locales (por ejemplo, QR distinto del texto) aunque ARCA la apruebe. |
 | `no_verificable` | No hay Arcanum, faltan datos clave (CAE, número...) o ARCA no respondió. |
+
+Si hay varios comprobantes en el archivo, el veredicto general es el más grave, en este orden: `valida`, `tique_controlado`, `no_verificable`, `con_errores`, `invalida`, `apocrifa`.
+
+### Tickets de compra
+
+Los tiques y tiques factura de controlador fiscal (supermercados, estaciones de servicio, farmacias, bares) **no se constatan en ARCA**: WSCDC no los cubre. Para un ticket, Factorum consulta solo la base de apócrifos (`GET /api/apoc/:cuit` de Arcanum) y guarda el resultado con la misma forma que la constatación, con `valido: null`:
+
+```json
+{ "valido": null, "resultado": null, "observaciones": [], "apoc": { "consultado": true, "esApocrifo": false, "fechaCondicion": null }, "fecha": "..." }
+```
+
+Veredicto de un ticket:
+
+| Veredicto | Cuándo |
+|---|---|
+| `apocrifa` | El emisor figura en la base de apócrifos. |
+| `con_errores` | Hay errores locales (CUIT inválido, sumas que no cierran, falta el total...). |
+| `tique_controlado` | "Ticket controlado: el CUIT es válido y el emisor no figura como apócrifo (los tiques no se constatan en ARCA)." |
+| `no_verificable` | No hay Arcanum o la base de apócrifos no respondió. |
+
+Los controles de un ticket no piden CAE y suman neto + IVA + otros solo si el ticket trae ese detalle. Siempre agregan el hallazgo informativo `tique_sin_constatacion`. Si la base de apócrifos responde que el emisor no figura, se agrega `apoc_controlado` (info).
 
 ## Lotes (procesamiento masivo)
 
@@ -97,7 +119,11 @@ Lote = { "id": 12, "nombre": "Noviembre", "cliente_cuit": "20222222223", "origen
 | `emisor` | CUIT del emisor |
 | `desde`, `hasta` | fecha de emisión |
 | `q` | busca en razón social, CUIT y número |
+| `clase` | `facturas` (todo lo que no es un ticket) o `tickets` (tiques de controlador fiscal, códigos 81, 82, 83 y del 109 al 120). Vacío trae todo |
+| `rubro` | `supermercado`, `combustible`, `farmacia`, `gastronomia`, `transporte`, `servicios`, `otros`, o `sin_rubro` para los que no tienen |
 | `limite` | hasta 500 (por defecto 100) |
+
+Un valor de `clase` o `rubro` que no se entiende da `400`.
 | `offset` | desde dónde |
 
 `GET /api/comprobantes/{id}` devuelve `{ ok, comprobante: Cbte, correcciones: Correccion[] }`.
@@ -110,11 +136,30 @@ Lote = { "id": 12, "nombre": "Noviembre", "cliente_cuit": "20222222223", "origen
 
 Cada campo cambiado queda en `correcciones` (antes, después, quién y cuándo) y pasa a tener origen `manual`. Los controles se recalculan. Con `aprobar: true`, el estado pasa a `aprobado`. La respuesta es `{ ok, comprobante: Cbte }`.
 
+Además de los campos de importe, fecha y emisor, se pueden corregir `hora` (`HH:MM` o `HH:MM:SS`) y `rubro` (uno de la lista de abajo; otro valor da `400`).
+
+### Rubro
+
+Cada comprobante puede tener un `rubro` de gasto: `supermercado`, `combustible`, `farmacia`, `gastronomia`, `transporte`, `servicios` u `otros`. Sale de tres capas; la de más arriba gana:
+
+| Capa | De dónde sale | Origen (`origenes.rubro`) |
+|---|---|---|
+| 3 | La corrección de una persona, recordada por CUIT del emisor | `manual` |
+| 2 | La actividad principal del emisor en el padrón A5 de ARCA (vía Arcanum): `actividades` con `idActividad` (código CLAE), `descripcionActividad` y `orden` (1 = principal) | `arcanum` |
+| 1 | Palabras clave del nombre del comercio y del texto (YPF, SHELL o "estación de servicio" es combustible; "farmacia" es farmacia...). Solo en tickets | `texto` u `ocr` |
+
+Si no hay con qué decidir, el rubro queda vacío: no se inventa.
+
+Cuando una persona corrige el rubro con `PATCH`, Factorum lo guarda para ese CUIT, lo pasa a los comprobantes ya cargados de ese emisor cuyo rubro no eligió una persona y lo usa en los que vengan.
+
+`GET /api/rubros` devuelve `{ ok, rubros: ["supermercado", ...], por_cuit: [ { cuit_emisor, rubro, usuario, actualizado } ] }`.
+
 `POST /api/comprobantes/{id}/constatar` constata ese comprobante con Arcanum y devuelve `{ ok, constatacion }`.
 
 ```json
 Cbte = { "id": 5, "lote_id": 12, "documento_id": 33, "cliente_cuit": "...", "archivo": "f.pdf",
          ...todos los campos de modelo.Comprobante (tipo, letra, punto_venta, numero, fecha, cuit_emisor, ...),
+         "es_tique": false, "hora": "13:45:10", "rubro": "supermercado",
          "estado": "ok", "confianza": 1, "hallazgos": [...], "origenes": {...},
          "constatacion": null | { "valido": true, "resultado": "A", "observaciones": [], "apoc": {...}, "fecha": "..." },
          "duplicado_de": null | 4, "creado": "...", "revisado_por": null, "revisado_en": null }
@@ -126,16 +171,19 @@ Cbte = { "id": 5, "lote_id": 12, "documento_id": 33, "cliente_cuit": "...", "arc
 
 `GET /api/export.xlsx` y `GET /api/export.csv` aceptan los mismos filtros que `GET /api/comprobantes`.
 
-- **Excel:** una fila por comprobante, más una hoja "Resumen" con los totales por alícuota.
+- **Excel:** una fila por comprobante (con `Hora` y `Rubro`), más una hoja "Resumen" con los totales por alícuota, los tickets y el total por rubro.
 - **CSV:** separado por `;`, en UTF-8 con BOM, con coma decimal (abre bien en el Excel en castellano).
 
 `GET /api/resumen` acepta los mismos filtros y devuelve los totales por alícuota, por tipo y por estado:
 
 ```json
-{ "ok": true, "resumen": { "cantidad": 120, "neto_gravado": ..., "iva_21": ..., "iva_10_5": ..., "otros_tributos": ..., "total": ..., "por_estado": {...}, "por_tipo": {...} } }
+{ "ok": true, "resumen": { "cantidad": 120, "neto_gravado": ..., "iva_21": ..., "iva_10_5": ..., "otros_tributos": ..., "total": ...,
+  "por_estado": {...}, "por_tipo": {...},
+  "tickets": { "cantidad": 14, "total": 182345.50 },
+  "por_rubro": { "combustible": 98000.00, "supermercado": 61200.50, "sin_rubro": 1210000.00 } } }
 ```
 
-Las notas de crédito restan.
+Las notas de crédito restan y los comprobantes en moneda extranjera no se suman. `tickets` cuenta los tiques de controlador fiscal. `por_rubro` es el total por rubro de todo lo que entra en el filtro; con `clase=tickets` son los gastos con ticket por rubro.
 
 `GET /api/panel` (lectura) devuelve lo que muestra Inicio: documentos y comprobantes de hoy y del mes, cantidades por estado, apócrifos, posibles adulteraciones, cuántos se leyeron con IA, los últimos 14 días (hora de Buenos Aires) y los últimos 5 lotes.
 
@@ -164,9 +212,9 @@ Las respuestas que vienen después (cuando termina el lote) se mandan con un `PO
 
 | Herramienta | Para qué | Permiso |
 |---|---|---|
-| `verificar_factura` | `{ nombre, contenido_base64, cuit_consultante? }`: el veredicto de `/api/verificar` | lectura |
+| `verificar_factura` | `{ nombre, contenido_base64, cuit_consultante? }`: el veredicto de `/api/verificar` (también para tickets) | lectura |
 | `procesar_factura` | `{ nombre, contenido_base64, cliente_cuit? }`: la procesa y la guarda | operador |
-| `buscar_comprobantes` | Mismos filtros que `GET /api/comprobantes` | lectura |
+| `buscar_comprobantes` | Mismos filtros que `GET /api/comprobantes`, `clase` y `rubro` incluidos. Cada resultado trae `es_tique` y, si los tiene, `hora` y `rubro` | lectura |
 | `comprobante` | `{ id }` | lectura |
 | `pendientes_revision` | `{ lote?, cliente? }`: lo que está en `revisar` o `error` | lectura |
 | `resumen` | Mismos filtros que `/api/resumen` | lectura |

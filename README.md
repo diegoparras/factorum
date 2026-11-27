@@ -79,12 +79,24 @@ Con [Arcanum](https://github.com/diegoparras/arcanum), cada comprobante se const
 | `valida` | ARCA confirma el comprobante con esos datos |
 | `invalida` | ARCA lo rechaza |
 | `apocrifa` | El emisor figura en la base de apócrifos |
+| `tique_controlado` | Un ticket de controlador fiscal: el CUIT es válido y el emisor no es apócrifo |
 | `con_errores` | Hay errores locales, aunque ARCA lo confirme |
 | `no_verificable` | No hay Arcanum, faltan datos o ARCA no respondió |
 
 ### 5. Papel de trabajo
 
 Cada dato guarda su origen: `qr`, `texto`, `ocr`, `vision`, `manual` o `arcanum`. Cada corrección queda registrada con el valor de antes, el de después, quién y cuándo. Una persona aprueba.
+
+## Tickets de compra
+
+Además de facturas, Factorum lee los **tickets de controlador fiscal**: el tique a consumidor final y el tique factura A, B o C del supermercado, la estación de servicio, la farmacia o el bar. Casi siempre llegan como foto del celular.
+
+- **Qué lee:** comercio y razón social, CUIT, condición frente al IVA, tipo (tique o tique factura y su letra), punto de venta y número, fecha (también con el año en dos dígitos) y hora, neto, IVA por alícuota, IVA contenido, subtotal y total. El pago, el vuelto y el "recibimos" no se toman como total.
+- **Fotos:** antes del OCR, la foto pasa a grises, se agranda si es angosta, se empareja la luz, se estira el contraste y, si hace falta, se binariza con Otsu. Tesseract la lee con dos segmentaciones de página y gana la lectura con más datos. El parser tolera el ruido típico (O por 0, espacios dentro de los números, "$" mal leído, "T O T A L") y nunca completa un dato que no está escrito.
+- **¿Es legal?** Los tiques **no se constatan en ARCA**: WSCDC no los cubre. Factorum controla el dígito verificador del CUIT y busca al emisor en la **base de apócrifos**. Si todo da bien, el veredicto es `tique_controlado`. No se pide CAE.
+- **Rubros:** cada ticket lleva un rubro de gasto: `supermercado`, `combustible`, `farmacia`, `gastronomia`, `transporte`, `servicios` u `otros`. Sale de las palabras clave del comercio (YPF, SHELL, AXION o "estación de servicio" es combustible), de la actividad principal del emisor en el padrón de ARCA (le gana a las palabras clave, y también les pone rubro a las facturas) o de la corrección de una persona, que se recuerda por CUIT y le gana a todo.
+
+Con el filtro `clase=tickets` se ven solo los tickets; el resumen trae cuántos hay, cuánto suman y el total por rubro.
 
 ## Velocidad
 

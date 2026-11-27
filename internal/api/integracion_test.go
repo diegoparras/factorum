@@ -29,6 +29,7 @@ import (
 	"github.com/diegoparras/factorum/internal/app"
 	"github.com/diegoparras/factorum/internal/arcanum"
 	"github.com/diegoparras/factorum/internal/config"
+	"github.com/diegoparras/factorum/internal/extractor"
 	"github.com/diegoparras/factorum/internal/mcpserver"
 	"github.com/diegoparras/factorum/internal/pdfx"
 	"github.com/diegoparras/factorum/internal/pipeline"
@@ -39,6 +40,14 @@ const (
 	claveOp   = "clave-operador-de-prueba"
 	claveLect = "clave-lectura-de-prueba"
 )
+
+// Para los tickets: el supermercado figura en la base de apócrifos; la estación de servicio y el
+// emisor de las facturas A tienen actividad en el padrón (combustible y supermercado).
+const cuitSuperApocrifo = "30712223339"
+
+var actividadesFalsas = map[string]string{"30708888881": "473000", "30711111111": "471120"}
+
+var apocLlamadas atomic.Int32
 
 // arcanumFalso: el emisor 20123456786 es apócrifo; el resto, válido. El padrón conoce a todos.
 func arcanumFalso(t *testing.T, llamadas *atomic.Int32) *httptest.Server {
@@ -66,7 +75,22 @@ func arcanumFalso(t *testing.T, llamadas *atomic.Int32) *httptest.Server {
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "constatacion": map[string]any{"resultados": res}})
 		case strings.HasPrefix(r.URL.Path, "/api/padron/a5/"):
-			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "datos": map[string]any{"datosGenerales": map[string]any{"razonSocial": "DESDE EL PADRON SA"}}})
+			datos := map[string]any{"datosGenerales": map[string]any{"razonSocial": "DESDE EL PADRON SA"}}
+			// Actividad principal (capa 2 del rubro) para algunos emisores.
+			if act, ok := actividadesFalsas[strings.TrimPrefix(r.URL.Path, "/api/padron/a5/")]; ok {
+				datos["datosRegimenGeneral"] = map[string]any{"actividad": []any{
+					map[string]any{"idActividad": "960990", "descripcionActividad": "SERVICIOS PERSONALES N.C.P.", "orden": "2"},
+					map[string]any{"idActividad": act, "descripcionActividad": "ACTIVIDAD " + act, "orden": "1"},
+				}}
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "datos": datos})
+		case strings.HasPrefix(r.URL.Path, "/api/apoc/"):
+			apocLlamadas.Add(1)
+			if r.URL.Query().Get("cuit") != "20222222223" {
+				t.Errorf("consultante de apócrifos %q", r.URL.Query().Get("cuit"))
+			}
+			cuit := strings.TrimPrefix(r.URL.Path, "/api/apoc/")
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "cuit": cuit, "esApocrifo": cuit == cuitSuperApocrifo, "codigo": nil, "descripcion": nil})
 		default:
 			w.WriteHeader(404)
 		}
@@ -79,7 +103,9 @@ type entorno struct {
 	arc *atomic.Int32
 }
 
-func armar(t *testing.T) *entorno {
+func armar(t *testing.T) *entorno { return armarCon(t, nil) }
+
+func armarCon(t *testing.T, ocr *extractor.Tesseract) *entorno {
 	t.Helper()
 	url := os.Getenv("FACTORUM_TEST_DB")
 	if url == "" {
@@ -96,7 +122,7 @@ func armar(t *testing.T) *entorno {
 		t.Fatal(err)
 	}
 	// Base limpia en cada corrida.
-	if _, err := st.Pool.Exec(ctx, `TRUNCATE lotes, documentos, comprobantes, correcciones RESTART IDENTITY CASCADE`); err != nil {
+	if _, err := st.Pool.Exec(ctx, `TRUNCATE lotes, documentos, comprobantes, correcciones, rubros_cuit RESTART IDENTITY CASCADE`); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(st.Cerrar)
@@ -110,7 +136,7 @@ func armar(t *testing.T) *entorno {
 	t.Cleanup(arc.Close)
 	cfg := &config.Config{APIKey: claveOp, APIKeyLect: claveLect, Workers: 4, MaxPaginas: 30, MaxArchivo: 25 << 20}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	a := &app.App{Cfg: cfg, Store: st, Almacen: alm, Pipeline: pipeline.Nuevo(motor, nil, nil, 2, 1), Log: log,
+	a := &app.App{Cfg: cfg, Store: st, Almacen: alm, Pipeline: pipeline.Nuevo(motor, ocr, nil, 2, 1), Log: log,
 		Arcanum: arcanum.Nuevo(arc.URL, "arc", "20222222223", 10*time.Second)}
 	if _, err := st.Pool.Exec(ctx, `TRUNCATE river_job`); err != nil && !strings.Contains(err.Error(), "does not exist") {
 		t.Fatal(err)

@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/riverqueue/river"
 
 	"github.com/diegoparras/factorum/internal/ajustes"
 	"github.com/diegoparras/factorum/internal/almacen"
@@ -31,8 +32,10 @@ import (
 	"github.com/diegoparras/factorum/internal/app"
 	"github.com/diegoparras/factorum/internal/arcanum"
 	"github.com/diegoparras/factorum/internal/config"
+	"github.com/diegoparras/factorum/internal/copias"
 	"github.com/diegoparras/factorum/internal/extractor"
 	"github.com/diegoparras/factorum/internal/mcpserver"
+	"github.com/diegoparras/factorum/internal/mudanza"
 	"github.com/diegoparras/factorum/internal/pdfx"
 	"github.com/diegoparras/factorum/internal/pipeline"
 	"github.com/diegoparras/factorum/internal/store"
@@ -133,6 +136,8 @@ type entorno struct {
 	aj      *ajustes.Servicio
 	fijadas *sync.Map
 	cfg     *config.Config
+	disco   *almacen.Disco
+	url     string
 }
 
 func armar(t *testing.T) *entorno { return armarCon(t, nil) }
@@ -140,8 +145,26 @@ func armar(t *testing.T) *entorno { return armarCon(t, nil) }
 func armarCon(t *testing.T, ocr *extractor.Tesseract) *entorno { return armarConCfg(t, ocr, nil) }
 
 func armarConCfg(t *testing.T, ocr *extractor.Tesseract, ajustar func(*config.Config)) *entorno {
+	return armarOpc(t, opcEntorno{ocr: ocr, ajustar: ajustar})
+}
+
+// opcEntorno: con url, se usa esa base en lugar de FACTORUM_TEST_DB y no se limpia; con dirAlmacen,
+// ese almacén en disco (para levantar Factorum sobre una base restaurada con sus archivos).
+type opcEntorno struct {
+	ocr        *extractor.Tesseract
+	ajustar    func(*config.Config)
+	url        string
+	dirAlmacen string
+	dirDatos   string
+}
+
+func armarOpc(t *testing.T, o opcEntorno) *entorno {
 	t.Helper()
-	url := os.Getenv("FACTORUM_TEST_DB")
+	ocr, ajustar := o.ocr, o.ajustar
+	url := o.url
+	if url == "" {
+		url = os.Getenv("FACTORUM_TEST_DB")
+	}
 	if url == "" {
 		t.Skip("sin FACTORUM_TEST_DB")
 	}
@@ -156,12 +179,21 @@ func armarConCfg(t *testing.T, ocr *extractor.Tesseract, ajustar func(*config.Co
 		t.Fatal(err)
 	}
 	// Base limpia en cada corrida.
-	if _, err := st.Pool.Exec(ctx, `TRUNCATE lotes, documentos, comprobantes, correcciones, rubros_cuit, usuarios, sesiones, claves_api, configuracion, auditoria, pases_suite RESTART IDENTITY CASCADE`); err != nil {
-		t.Fatal(err)
+	if o.url == "" {
+		if _, err := st.Pool.Exec(ctx, `TRUNCATE lotes, documentos, comprobantes, correcciones, rubros_cuit, usuarios, sesiones, claves_api, configuracion, auditoria, pases_suite RESTART IDENTITY CASCADE`); err != nil {
+			t.Fatal(err)
+		}
 	}
 	t.Cleanup(st.Cerrar)
 	clave := bytes.Repeat([]byte{7}, 32)
-	alm, err := almacen.Nuevo(&almacen.Disco{Dir: t.TempDir()}, clave)
+	if o.dirAlmacen == "" {
+		o.dirAlmacen = t.TempDir()
+	}
+	if o.dirDatos == "" {
+		o.dirDatos = t.TempDir()
+	}
+	disco := &almacen.Disco{Dir: o.dirAlmacen}
+	alm, err := almacen.Nuevo(disco, clave)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,7 +201,7 @@ func armarConCfg(t *testing.T, ocr *extractor.Tesseract, ajustar func(*config.Co
 	arc := arcanumFalso(t, &n)
 	t.Cleanup(arc.Close)
 	cfg := &config.Config{APIKey: claveOp, APIKeyLect: claveLect, Workers: 4, MaxPaginas: 30, MaxArchivo: 25 << 20,
-		ClaveMaestra: clave, DirDatos: t.TempDir(), Nombre: "Factorum", ConstatarPorDefecto: true, SuiteCrearUsuarios: true,
+		ClaveMaestra: clave, DirDatos: o.dirDatos, Nombre: "Factorum", ConstatarPorDefecto: true, SuiteCrearUsuarios: true,
 		ArcanumURL: arc.URL, ArcanumAPIKey: "arc", ArcanumConsultante: "20222222223", ArcanumTimeout: 10 * time.Second,
 		CanalClienteCUIT: map[string]string{}}
 	if ajustar != nil {
@@ -178,11 +210,28 @@ func armarConCfg(t *testing.T, ocr *extractor.Tesseract, ajustar func(*config.Co
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	a := &app.App{Cfg: cfg, Store: st, Almacen: alm, Pipeline: pipeline.Nuevo(motor, ocr, nil, 2, 1), Log: log}
 	a.SetArcanum(arcanum.Nuevo(arc.URL, "arc", "20222222223", 10*time.Second))
-	if _, err := st.Pool.Exec(ctx, `TRUNCATE river_job`); err != nil && !strings.Contains(err.Error(), "does not exist") {
-		t.Fatal(err)
+	if o.url == "" {
+		if _, err := st.Pool.Exec(ctx, `TRUNCATE river_job`); err != nil && !strings.Contains(err.Error(), "does not exist") {
+			t.Fatal(err)
+		}
+	}
+	auditar := func(ctx context.Context, accion, objeto, quien string, d map[string]any) {
+		_ = st.Auditar(ctx, store.Evento{Actor: quien, ActorTipo: "sistema", Accion: accion, Objeto: objeto, Detalle: d})
+	}
+	mud := &mudanza.Servicio{Pool: st.Pool, Disco: disco, R2: alm.R2, Log: log, Intervalo: 50 * time.Millisecond, Espera: 5 * time.Millisecond,
+		Auditar: func(ctx context.Context, accion string, d map[string]any) { auditar(ctx, accion, "", "Factorum", d) }}
+	cop := &copias.Servicio{Pool: st.Pool, Sello: alm, Config: a.Config, R2: alm.R2, Dir: filepath.Join(o.dirDatos, copias.Carpeta), Log: log, Auditar: auditar}
+	a.Trabajos = func(ws *river.Workers) {
+		river.AddWorker(ws, &mudanza.Worker{S: mud})
+		river.AddWorker(ws, &copias.Worker{S: cop})
 	}
 	if err := a.IniciarCola(ctx); err != nil {
 		t.Fatal(err)
+	}
+	mud.Encolar = func(ctx context.Context) error { _, err := a.River.Insert(ctx, mudanza.Args{}, nil); return err }
+	cop.Encolar = func(ctx context.Context, args copias.Args, opts *river.InsertOpts) error {
+		_, err := a.River.Insert(ctx, args, opts)
+		return err
 	}
 	t.Cleanup(func() {
 		sctx, c := context.WithTimeout(context.Background(), 5*time.Second)
@@ -203,14 +252,14 @@ func armarConCfg(t *testing.T, ocr *extractor.Tesseract, ajustar func(*config.Co
 		t.Fatal(err)
 	}
 	aj.Suscribir(func(_, nuevo *config.Config) { a.SetConfig(nuevo) })
-	s := &api.Server{App: a, Cfg: cfg, Log: log, Ajustes: aj}
+	s := &api.Server{App: a, Cfg: cfg, Log: log, Ajustes: aj, Mudanza: mud, Copias: cop}
 	s.MCP = mcpserver.Handler(a, s.IdentificarClave)
 	if err := s.PrepararArranque(ctx); err != nil {
 		t.Fatal(err)
 	}
 	srv := httptest.NewServer(s.Handler())
 	t.Cleanup(srv.Close)
-	return &entorno{app: a, srv: srv, arc: &n, api: s, aj: aj, fijadas: &fijadas, cfg: cfg}
+	return &entorno{app: a, srv: srv, arc: &n, api: s, aj: aj, fijadas: &fijadas, cfg: cfg, disco: disco, url: url}
 }
 
 func (e *entorno) pedir(t *testing.T, metodo, ruta, clave string, cuerpo io.Reader, tipo string) (int, map[string]any, []byte) {

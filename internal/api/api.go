@@ -26,7 +26,9 @@ import (
 	"github.com/diegoparras/factorum/internal/auth"
 	"github.com/diegoparras/factorum/internal/canal"
 	"github.com/diegoparras/factorum/internal/config"
+	"github.com/diegoparras/factorum/internal/copias"
 	"github.com/diegoparras/factorum/internal/export"
+	"github.com/diegoparras/factorum/internal/mudanza"
 	"github.com/diegoparras/factorum/internal/rubro"
 	"github.com/diegoparras/factorum/internal/store"
 )
@@ -48,6 +50,8 @@ type Server struct {
 	Ahora   func() time.Time  // para las pruebas
 	HTTP    *http.Client      // para hablar con las otras apps y las pruebas de la configuración
 	Probar  map[string]Prueba // pruebas de la configuración por sección (se pueden cambiar en las pruebas)
+	Mudanza *mudanza.Servicio // pasar lo del disco a R2 (nil = no disponible)
+	Copias  *copias.Servicio  // copias de seguridad de la base (nil = no disponibles)
 
 	limite         *auth.Limitador
 	arranqueMu     sync.Mutex
@@ -134,6 +138,11 @@ func (s *Server) Handler() http.Handler {
 	m.HandleFunc("PUT /api/configuracion", s.soloSesion(adm, s.guardarConfiguracion))
 	m.HandleFunc("POST /api/configuracion/probar/{seccion}", s.soloSesion(sup, s.probarConfiguracion))
 	m.HandleFunc("GET /api/auditoria", s.soloSesion(adm, s.verAuditoria))
+	m.HandleFunc("GET /api/r2/pase", s.soloSesion(sup, s.verPaseR2))
+	m.HandleFunc("POST /api/r2/pase", s.soloSesion(sup, s.accionPaseR2))
+	m.HandleFunc("GET /api/copias", s.soloSesion(sup, s.verCopias))
+	m.HandleFunc("POST /api/copias", s.soloSesion(sup, s.hacerCopia))
+	m.HandleFunc("GET /api/copias/{id}/archivo", s.soloSesion(sup, s.descargarCopia))
 
 	// Pase entre apps de la suite (docs/suite-pase.md).
 	m.HandleFunc("POST /api/suite/pase", s.auth(lect, s.emitirPase))

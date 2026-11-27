@@ -24,6 +24,9 @@ type OpcionesRestaurar struct {
 	// PrepararTablas crea las tablas que no son de las migraciones de Factorum y faltan en una base
 	// vacía (las de la sesión de WhatsApp).
 	PrepararTablas func(ctx context.Context, faltan []string) error
+	// Antes corre con la copia ya verificada y controlada contra la base, antes de tocarla (para
+	// hacer una copia de lo que hay).
+	Antes func(ctx context.Context, m *Manifiesto) error
 	// Despues corre dentro de la misma transacción, con todo cargado (para volver a encolar lo que
 	// quedó a medio procesar). Devuelve un texto para el informe.
 	Despues func(ctx context.Context, tx pgx.Tx) (string, error)
@@ -106,6 +109,11 @@ func Restaurar(ctx context.Context, pool *pgxpool.Pool, abrir func() (io.ReadClo
 		}
 	}
 
+	if opc.Antes != nil {
+		if err := opc.Antes(ctx, m); err != nil {
+			return inf, err
+		}
+	}
 	porArchivo := map[string]Tabla{}
 	for _, t := range m.Tablas {
 		porArchivo[t.Archivo] = t

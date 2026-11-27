@@ -537,6 +537,22 @@ func (s *Servicio) borrarArchivo(ctx context.Context, c Copia) error {
 	return errNoSePuedeBorrar
 }
 
+// limpiarCortadas marca con error las copias que figuran «haciendo» si nadie está haciendo una
+// (se cortaron al apagarse el servidor).
+func (s *Servicio) limpiarCortadas(ctx context.Context) {
+	conn, err := s.Pool.Acquire(ctx)
+	if err != nil {
+		return
+	}
+	defer conn.Release()
+	var ok bool
+	if err := conn.QueryRow(ctx, `SELECT pg_try_advisory_lock($1)`, int64(candado)).Scan(&ok); err != nil || !ok {
+		return
+	}
+	defer func() { _, _ = conn.Exec(context.WithoutCancel(ctx), `SELECT pg_advisory_unlock($1)`, int64(candado)) }()
+	_, _ = conn.Exec(ctx, `UPDATE copias SET estado='error', error='se cortó (se apagó o se reinició el servidor)', terminado=now() WHERE estado='haciendo'`)
+}
+
 // HoyToca dice si ya es hora de la copia de hoy y no se hizo (ni se intentó). Devuelve el día.
 func (s *Servicio) HoyToca(ctx context.Context) (string, bool, error) {
 	cfg := s.Config()
@@ -563,6 +579,7 @@ func (s *Servicio) Programar(ctx context.Context) {
 	if s.Encolar == nil {
 		return
 	}
+	s.limpiarCortadas(ctx)
 	t := time.NewTicker(time.Minute)
 	defer t.Stop()
 	for {

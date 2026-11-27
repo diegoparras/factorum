@@ -43,6 +43,11 @@ const I = {
   enviar: svg('<path d="M21 3L10 14"/><path d="M21 3l-7 18-4-7-7-4z"/>'),
   papelera: svg('<path d="M4 7h16"/><path d="M9 7V4.5h6V7"/><path d="M6 7l1 13h10l1-13"/><path d="M10 11v5.5M14 11v5.5"/>'),
   restaurar: svg('<path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3"/><path d="M4 4.5V9h4.5"/>'),
+  nube: svg('<path d="M7 18.5a4.5 4.5 0 0 1-.7-8.95 6 6 0 0 1 11.6 1.2A3.9 3.9 0 0 1 17.5 18.5"/><path d="M12 20v-7.5M9 15.5l3-3 3 3"/>'),
+  servidor: svg('<rect x="4" y="4" width="16" height="7" rx="1.6"/><rect x="4" y="13" width="16" height="7" rx="1.6"/><path d="M8 7.5h.01M8 16.5h.01M12 7.5h4M12 16.5h4"/>'),
+  globo: svg('<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.7 3.8 5.7 3.8 9s-1.3 6.3-3.8 9c-2.5-2.7-3.8-5.7-3.8-9S9.5 5.7 12 3z"/>'),
+  reloj: svg('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.2 2"/>'),
+  chip: svg('<rect x="7" y="7" width="10" height="10" rx="2"/><path d="M10 3.5V7M14 3.5V7M10 17v3.5M14 17v3.5M3.5 10H7M3.5 14H7M17 10h3.5M17 14h3.5"/><path d="M10.5 12h3"/>'),
 };
 
 // Cada sección dice qué permiso hace falta para verla (el servidor lo hace cumplir igual).
@@ -101,7 +106,7 @@ async function api(ruta, opts = {}) {
   }
   const d = await r.json().catch(() => ({}));
   if (r.status === 403 && d.debe_cambiar) { pedirCambioClave(true); const e = new Error(d.error); e.silencioso = true; throw e; }
-  if (!r.ok || d.ok === false) { const e = new Error(d.error || `Error ${r.status}`); e.status = r.status; throw e; }
+  if (!r.ok || d.ok === false) { const e = new Error(d.error || `Error ${r.status}`); e.status = r.status; e.datos = d; throw e; }
   return d;
 }
 
@@ -241,9 +246,10 @@ async function cargarSalud() {
     $('#loteConstatar').checked = SALUD.constatar_por_defecto !== false;
     $('#loteIA').checked = $('#iaVerificar').checked = SALUD.ia_por_defecto !== false;
     if (SALUD.nombre) $$('.nombre-inst').forEach((e) => { e.textContent = SALUD.nombre; });
-    $('#loteIA').closest('label').classList.toggle('hidden', !(SALUD.ia && SALUD.ia.habilitada));
-    $('#iaVerificar').closest('label').classList.toggle('hidden', !(SALUD.ia && SALUD.ia.habilitada));
+    $('#iaOpSubir').classList.toggle('hidden', !(SALUD.ia && SALUD.ia.habilitada));
+    $('#iaOpVerificar').classList.toggle('hidden', !(SALUD.ia && SALUD.ia.habilitada));
   } catch { /* se reintenta en la próxima acción */ }
+  await cargarAvisoIA();
 }
 
 // ---------- Sesión ----------
@@ -490,24 +496,29 @@ async function abrirApp(app, btn) {
 }
 
 // ---------- Verificar ----------
-async function verificar(ev) {
+async function verificar(ev, reintento) {
   ev.preventDefault();
   const f = $('#archVerificar').files[0];
   if (!f) return;
+  // Con una IA externa, la primera vez la persona ve qué pasa con los datos.
+  if ($('#iaVerificar').checked && !(await confirmarIAPersona())) $('#iaVerificar').checked = false;
   const fd = new FormData();
   fd.append('archivo', f);
   if (soloDig($('#cuitConsultante').value)) fd.append('cuit_consultante', soloDig($('#cuitConsultante').value));
   fd.append('ia', $('#iaVerificar').checked ? 'true' : 'false');
   const btn = $('#fVerificar button[type=submit]');
+  let otra = false;
   btn.disabled = true; btn.textContent = 'Verificando...';
   try {
     const r = await api('/api/verificar', { method: 'POST', body: fd });
     pintarVerificacion(r);
   } catch (e) {
-    toast(e, true);
+    // Cambió la IA desde que se abrió la pantalla: se muestra el aviso nuevo y se prueba de nuevo.
+    if (e.datos && e.datos.codigo === 'aviso_ia' && !reintento) { actualizarAvisoIA(e.datos.aviso_ia); otra = true; } else toast(e, true);
   } finally {
     btn.disabled = false; btn.textContent = 'Verificar';
   }
+  if (otra) verificar(ev, true);
 }
 
 function pintarVerificacion(r) {
@@ -538,10 +549,11 @@ function pintarVerificacion(r) {
 }
 
 // ---------- Subir ----------
-async function subir(ev) {
+async function subir(ev, reintento) {
   ev.preventDefault();
   const files = $('#archSubir').files;
   if (!files.length) return;
+  if ($('#loteIA').checked && !(await confirmarIAPersona())) $('#loteIA').checked = false;
   const fd = new FormData();
   for (const f of files) fd.append('archivos', f);
   fd.append('nombre', $('#loteNombre').value.trim());
@@ -564,6 +576,7 @@ async function subir(ev) {
     let d = {};
     try { d = JSON.parse(xhr.responseText); } catch { /* nada */ }
     if (xhr.status === 401) { sinSesion(); return; }
+    if (xhr.status === 409 && d.codigo === 'aviso_ia' && !reintento) { actualizarAvisoIA(d.aviso_ia); subir(ev, true); return; }
     if (xhr.status >= 300 || !d.ok) { toast(d.error || `Error ${xhr.status}`, true); return; }
     let msg = `Lote ${d.lote.id}: ${d.recibidos} archivo(s) recibidos.`;
     if (d.repetidos) msg += ` ${d.repetidos} ya estaban cargados.`;
@@ -1471,6 +1484,146 @@ async function cargarBandeja() {
   } catch (e) { toast(e, true); }
 }
 
+// ---------- Aviso de la IA externa ----------
+// Qué pasa con los datos cuando se usa una IA que no corre en el servidor. Lo arma el servidor
+// (GET /api/ia/aviso) con los datos verificados de cada proveedor; acá solo se pinta.
+let AVISO_IA = null;
+let AIA = null; // el aviso abierto: { resolver, previo }
+const ICONO_TARJETA = { donde: 'globo', tiempo: 'reloj', entrenan: 'chip', factorum: 'verificar' };
+// Negrita mínima (**así**) sobre texto ya escapado.
+const negrita = (t) => esc(t).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+const iconoGrande = (k) => I[k].replace('width="18" height="18"', 'width="30" height="30"');
+// Un host largo (generativelanguage.googleapis.com) se corta en los puntos, no en cualquier letra.
+const hostCortable = (h) => esc(h).replace(/\./g, '.<wbr>');
+
+async function cargarAvisoIA() {
+  if (!YO) return;
+  try { actualizarAvisoIA(await api('/api/ia/aviso')); } catch { /* sin aviso: los sellos quedan vacíos */ }
+}
+function actualizarAvisoIA(a) {
+  AVISO_IA = a || null;
+  $$('[data-ia-sello]').forEach((el) => { el.innerHTML = selloIA(AVISO_IA); });
+}
+
+// El sello que va al lado de «Usar IA si hace falta» (y en Configuración y Conectar).
+function selloIA(a, conLink = true) {
+  if (!a || !a.configurada) return '';
+  if (a.local) return `<span class="sello-ia local" title="${esc(a.host)}">${I.servidor}<span>${esc(a.aviso.sello)}</span></span>`;
+  const link = conLink ? '<button type="button" class="link-btn" data-accion="avisoIA">Qué pasa con los datos</button>' : '';
+  return `<span class="sello-ia externa" title="${esc(a.host)}">${I.nube}<span>${esc(a.aviso.sello)}</span></span>${link}`;
+}
+
+function htmlAvisoIA(a, modo) {
+  const av = a.aviso || {};
+  const region = a.region_nombre ? `<span class="aia-region">${I.globo}Región: ${esc(a.region_nombre)}</span>` : '';
+  const alerta = av.alerta ? `<div class="aia-alerta ${esc(av.alerta.nivel)}" role="note">${I.alerta}<div><strong>${esc(av.alerta.titulo)}</strong><p>${negrita(av.alerta.texto)}</p></div></div>` : '';
+  const tarjetas = (av.tarjetas || []).map((t) => `<section class="aia-t" aria-labelledby="aia-t-${esc(t.id)}">
+      <div class="aia-t-cab"><span class="aia-t-ico">${I[ICONO_TARJETA[t.id] || 'info']}</span><h4 id="aia-t-${esc(t.id)}">${esc(t.titulo)}</h4></div>
+      <p class="aia-dest ${esc(t.tono || '')}">${esc(t.destacado)}</p>
+      <ul>${t.puntos.map((p) => `<li>${negrita(p)}</li>`).join('')}</ul>
+      ${(t.notas || []).length ? `<details class="aia-mas"><summary>Más detalle</summary>${t.notas.map((n) => `<p>${negrita(n)}</p>`).join('')}</details>` : ''}
+    </section>`).join('');
+  const fuentes = (av.fuentes || []).map((f) => `<li><a href="${esc(f.url)}" target="_blank" rel="noopener noreferrer">${esc(f.titulo)}${I.externo}</a>${f.nota ? `<span class="aia-nota">${esc(f.nota)}</span>` : ''}</li>`).join('');
+  const quien = (YO && YO.identidad && (YO.identidad.email || YO.identidad.nombre)) || '';
+  const registro = {
+    admin: `Al aceptar queda registrado que ${quien ? 'lo aceptaste vos (' + esc(quien) + ')' : 'lo aceptaste'}, hoy, para <code>${hostCortable(a.host)}</code>. Si cambiás de proveedor o de host, se pide de nuevo.`,
+    persona: 'Se recuerda para tu cuenta: no te lo vuelve a preguntar mientras no cambie el proveedor o este aviso.',
+  }[modo] || '';
+  const botones = {
+    admin: '<button type="button" class="ghost" data-accion="aiaCancelar">Cancelar</button><button type="button" data-accion="aiaOK">Entiendo y quiero usarla</button>',
+    persona: '<button type="button" class="ghost" data-accion="aiaCancelar">Seguir sin IA</button><button type="button" data-accion="aiaOK">Entendido, usar IA</button>',
+  }[modo] || '<button type="button" data-accion="aiaCancelar">Cerrar</button>';
+  return `<header class="aia-cab">
+      <div class="aia-ico" aria-hidden="true">${iconoGrande('nube')}</div>
+      <div class="aia-cab-txt"><span class="aia-kicker">IA externa · Qué pasa con los datos</span>
+        <h3 id="aiaTit">${a.proveedor === 'desconocido' ? 'Un proveedor que Factorum no conoce' : esc(av.titulo || a.nombre)}</h3>
+        <div class="aia-host"><code>${hostCortable(a.host)}</code>${region}</div></div>
+      <button type="button" class="modal-x" data-accion="aiaCancelar" aria-label="${modo === 'persona' ? 'Seguir sin IA' : modo === 'admin' ? 'Cancelar' : 'Cerrar'}">&times;</button>
+    </header>
+    <div class="aia-cuerpo">
+      <p class="aia-intro" id="aiaIntro">${negrita(av.intro || '')}</p>
+      ${alerta}
+      <div class="aia-grid">${tarjetas}</div>
+      <footer class="aia-fuentes"><p>${esc(av.pie || '')}</p>${fuentes ? `<ul>${fuentes}</ul>` : ''}</footer>
+      ${registro ? `<p class="aia-registro cel">${registro}</p>` : ''}
+    </div>
+    <div class="aia-pie">${registro ? `<p class="aia-registro esc">${registro}</p>` : ''}<div class="aia-botones">${botones}</div></div>`;
+}
+
+// abrirAvisoIA muestra el aviso y resuelve true si se aceptó. modo: admin (aceptar para la
+// instalación), persona (la primera vez que la usa) o lectura. Esc, la X y el fondo cancelan.
+function abrirAvisoIA(a, modo) {
+  if (AIA) cerrarAvisoIA(false);
+  return new Promise((resolver) => {
+    const card = $('#aiaCard');
+    card.innerHTML = htmlAvisoIA(a, modo);
+    AIA = { resolver, previo: document.activeElement };
+    $('#avisoIA').classList.remove('hidden');
+    document.documentElement.classList.add('sin-scroll');
+    card.querySelector('.aia-cuerpo').scrollTop = 0;
+    card.focus();
+  });
+}
+function cerrarAvisoIA(ok) {
+  if (!AIA) return;
+  const { resolver, previo } = AIA;
+  AIA = null;
+  $('#avisoIA').classList.add('hidden');
+  document.documentElement.classList.remove('sin-scroll');
+  if (previo && previo.focus && document.contains(previo)) previo.focus();
+  resolver(ok);
+}
+// El foco no sale del aviso mientras está abierto.
+function atraparFoco(ev, caja) {
+  const f = $$('button, a[href], summary, [tabindex]:not([tabindex="-1"])', caja).filter((x) => !x.disabled && x.offsetParent !== null);
+  if (!f.length) { ev.preventDefault(); return; }
+  const primero = f[0], ultimo = f[f.length - 1];
+  if (ev.shiftKey && (document.activeElement === primero || document.activeElement === caja)) { ev.preventDefault(); ultimo.focus(); }
+  else if (!ev.shiftKey && document.activeElement === ultimo) { ev.preventDefault(); primero.focus(); }
+  else if (!caja.contains(document.activeElement)) { ev.preventDefault(); primero.focus(); }
+}
+
+// confirmarIAPersona: la primera vez que esta persona va a usar la IA externa, el aviso. Devuelve
+// true si puede usarla (local, ya lo vio o lo acaba de aceptar).
+async function confirmarIAPersona() {
+  const a = AVISO_IA;
+  if (!a || !a.en_uso || !a.externa || !a.persona || a.visto) return true;
+  if (!(await abrirAvisoIA(a, 'persona'))) return false;
+  try {
+    actualizarAvisoIA(await api('/api/ia/aviso/visto', { method: 'POST', json: { host: a.host, version: a.version } }));
+    return true;
+  } catch (e) {
+    if (e.datos && e.datos.aviso_ia) actualizarAvisoIA(e.datos.aviso_ia);
+    toast(e, true);
+    return false;
+  }
+}
+
+// Desde Configuración: aceptar el aviso de la IA que fija el entorno (no hay nada más que guardar).
+async function aceptarAvisoIA(btn) {
+  const a = CONF && CONF.ia_aviso;
+  if (!a || !(await abrirAvisoIA(a, 'admin'))) return;
+  if (btn) btn.disabled = true;
+  try {
+    CONF = await api('/api/configuracion', { method: 'PUT', json: { cambios: {}, aceptar_aviso_ia: { host: a.host, version: a.version } } });
+    pintarConfiguracion();
+    cargarSalud();
+    toast(`Aceptado: Factorum ya usa ${a.nombre} cuando hace falta.`);
+  } catch (e) { toast(e, true); } finally { if (btn) btn.disabled = false; }
+}
+
+// En Configuración, IA (visión): el sello, quién aceptó el aviso o el pedido de aceptarlo.
+function estadoAvisoIA() {
+  const a = CONF && CONF.ia_aviso;
+  if (!a || !a.configurada) return '';
+  if (a.local) return `<div class="ia-conf">${selloIA(a)}</div>`;
+  if (!a.aceptado) {
+    return `<div class="aviso-mini mal ia-falta">${I.alerta}<span><strong>Factorum no está usando esta IA.</strong> Es externa (${esc(a.nombre)}, <code>${esc(a.host)}</code>) y ningún superadmin aceptó todavía el aviso de qué pasa con los datos. Hasta entonces no se usa: ni en la pantalla, ni en los chats, ni por MCP.</span>${a.puede_aceptar ? '<button type="button" class="mini" data-accion="aceptarAvisoIA">Ver el aviso y aceptarla</button>' : ''}</div>`;
+  }
+  const ac = a.aceptacion || {};
+  return `<div class="ia-conf">${selloIA(a)}<span class="muted">Aviso aceptado${ac.por ? ' por ' + esc(ac.por) : ''}${ac.cuando ? ' (' + fechaHora(ac.cuando) + ')' : ''}. Si cambiás de proveedor o de host, se pide de nuevo.</span></div>`;
+}
+
 // ---------- Ventana: Novedades y Acerca de ----------
 let MODAL_FIJO = false;
 // abrirModal(titulo, html, { acciones, fijo, ancho }): fijo no se cierra con Esc, la X ni el fondo.
@@ -1526,7 +1679,7 @@ async function verNovedades(todas) {
 
 function acercaDe() {
   const s = SALUD || {};
-  const ia = s.ia && s.ia.habilitada ? `${esc(s.ia.modelo)}${s.ia.local ? ' (local)' : ' (externo: los comprobantes que la necesiten salen del servidor)'}` : 'apagada';
+  const ia = s.ia && s.ia.habilitada ? `${esc(s.ia.modelo)}${s.ia.local ? ' (local)' : ` (externa${AVISO_IA && AVISO_IA.nombre ? ': ' + esc(AVISO_IA.nombre) : ''}: los comprobantes que la necesiten salen del servidor)`}` : 'apagada';
   abrirModal('Acerca de Factorum', `<div class="acerca"><img src="logo.svg" alt="" width="56" height="56"><div><strong style="font-size:17px;color:var(--text)">Factorum ${esc(s.version || '')}</strong><br>Lector de facturas de ARCA. Parte de la suite Escriba.</div></div>
     <p>Lee los comprobantes por su QR y su texto, sin depender de una IA; controla que todo cierre y, con Arcanum, los constata con ARCA.</p>
     <dl class="kv" style="margin-top:12px">
@@ -1618,7 +1771,8 @@ const SECCIONES = {
   ia: { t: 'IA (visión)', d: 'Último recurso: solo completa lo que el QR, el texto y el OCR no pudieron leer.', probar: true, clave: ['ia.url', 'ia.modelo'],
     como: ['Con Ollama en el mismo compose: docker compose --profile ia up -d y después docker compose exec ollama ollama pull qwen2.5vl:7b.',
       'Endpoint: http://ollama:11434/v1. Modelo: qwen2.5vl:7b. Sin clave.',
-      'Con otro proveedor compatible con OpenAI, poné su endpoint (terminado en /v1), el modelo y la clave. Ojo: los comprobantes que necesiten IA van a salir del servidor.',
+      'Con otro proveedor compatible con OpenAI (OpenAI, Anthropic, Google Gemini u otro), poné su endpoint, el modelo y la clave. Los comprobantes que necesiten IA van a salir del servidor: antes de guardar, Factorum te muestra a dónde viajan, cuánto tiempo se guardan y si entrenan con ellos, y tenés que aceptarlo. Sin esa aceptación no la usa.',
+      'Cada persona, la primera vez que marca «Usar IA si hace falta», ve el mismo aviso. Si cambiás de proveedor o de host, se pide de nuevo.',
       'Probar lista los modelos del endpoint y controla que esté el elegido.'] },
   r2: { t: 'Almacenamiento R2', d: 'Dónde se guardan los archivos. Sin R2, en el disco del servidor. Siempre comprimidos y cifrados.', probar: true, clave: ['r2.endpoint', 'r2.bucket', 'r2.access_key', 'r2.secret_key'],
     como: ['En Cloudflare, R2, creá un bucket (por ejemplo factorum).', 'En «Administrar tokens de la API de R2», creá un token de lectura y escritura sobre ese bucket.',
@@ -1885,6 +2039,7 @@ function extraSeccion(sec) {
     return h;
   }
   if (sec === 'whatsapp') return '<div id="waEstado" class="wa-estado"></div>';
+  if (sec === 'ia') return estadoAvisoIA();
   if (sec === 'r2') return '<div id="r2Pase" class="pase" aria-live="polite"></div>';
   if (sec === 'copias') return '<div id="copiasLista" class="copias"></div>';
   if (sec === 'correo_salida') return `<label class="campo-conf destino-prueba"><span class="et">Mandar la prueba a</span><input id="smtpDestino" type="email" placeholder="tu@email.com" autocomplete="email"><span class="ayuda">Probar manda un mail de prueba a esta dirección. Vacío: solo controla que el servidor acepte el usuario.</span></label>`;
@@ -1970,6 +2125,7 @@ function campoConfHTML(c) {
 function estadoSeccion(sec, campos) {
   const cfg = SECCIONES[sec];
   if (sec === 'lockatus' && CONF.lockatus && CONF.lockatus.solo) return '<span class="est ok">Solo Lockatus</span>';
+  if (sec === 'ia' && CONF.ia_aviso && CONF.ia_aviso.configurada && !CONF.ia_aviso.en_uso) return '<span class="est error">Sin usar: falta aceptar el aviso</span>';
   if (sec === 'correo_entrada') {
     const e = (CONF.correo && CONF.correo.estado) || {};
     if (e.forma === 'apagado') return '<span class="est">Apagado</span>';
@@ -2044,7 +2200,15 @@ async function guardarConf(sec, cambios, btn) {
   if (!Object.keys(cambios).length) { toast('No hay cambios'); return; }
   if (btn) btn.disabled = true;
   try {
-    CONF = await api('/api/configuracion', { method: 'PUT', json: { cambios } });
+    try {
+      CONF = await api('/api/configuracion', { method: 'PUT', json: { cambios } });
+    } catch (e) {
+      // Una IA externa nueva (o de otro host): antes de guardarla, el aviso de qué pasa con los datos.
+      if (!(e.datos && e.datos.codigo === 'aviso_ia')) throw e;
+      const a = e.datos.aviso_ia;
+      if (!(await abrirAvisoIA(a, 'admin'))) { toast('No se guardó. La IA externa no se usa hasta que aceptes el aviso.'); return; }
+      CONF = await api('/api/configuracion', { method: 'PUT', json: { cambios, aceptar_aviso_ia: { host: a.host, version: a.version } } });
+    }
     pintarConfiguracion();
     cargarSalud(); cargarSuite();
     api('/api/sesion').then((r) => { YO = r; }).catch(() => {}); // por si cambió el correo saliente (invitar por mail)
@@ -2480,7 +2644,10 @@ function pintarConectar() {
         ${bloqueCodigo(desktop, 'Claude Desktop: claude_desktop_config.json')}
         <p class="muted">En Claude Desktop: Configuración, Desarrollador, Editar configuración. Pegá el bloque, reemplazá <code>${clave}</code> por tu clave y reiniciá Claude. Hace falta Node (npx).</p>
       </section>
-    </div>`;
+    </div>
+    ${AVISO_IA && AVISO_IA.configurada && AVISO_IA.en_uso ? `<section class="card ia-conectar"><div class="card-cab"><h3>IA</h3></div>
+      <p class="muted">${SALUD && SALUD.ia_por_defecto === false ? 'Por la API se puede pedir la IA con <code>ia=true</code>; los chats, el correo y MCP no la usan (está apagada en Configuración, General).' : 'Lo que llega por los chats, el correo, MCP y la API (salvo que mande <code>ia=false</code>) usa la IA cuando el QR, el texto y el OCR no alcanzan.'}</p>
+      <div class="ia-conf">${selloIA(AVISO_IA)}</div></section>` : ''}`;
 }
 
 // ---------- Auditoría ----------
@@ -2632,6 +2799,11 @@ document.addEventListener('click', (ev) => {
     case 'acerca': $('#menu').classList.add('hidden'); acercaDe(); break;
     case 'modalCerrar': cerrarModal(); break;
     case 'modalFondo': if (ev.target === el) cerrarModal(); break;
+    case 'avisoIA': if (AVISO_IA || (CONF && CONF.ia_aviso)) abrirAvisoIA(el.closest('#conf-ia') && CONF && CONF.ia_aviso ? CONF.ia_aviso : AVISO_IA, 'lectura'); break;
+    case 'aiaOK': cerrarAvisoIA(true); break;
+    case 'aiaCancelar': cerrarAvisoIA(false); break;
+    case 'aiaFondo': if (ev.target === el) cerrarAvisoIA(false); break;
+    case 'aceptarAvisoIA': aceptarAvisoIA(el); break;
     case 'abrirOriginal':
       api(`/api/documentos/${el.dataset.doc}/archivo`, { binario: true }).then((b) => {
         const u = URL.createObjectURL(b); window.open(u, '_blank', 'noopener'); setTimeout(() => URL.revokeObjectURL(u), 60000);
@@ -2703,6 +2875,11 @@ document.addEventListener('submit', (ev) => {
 });
 
 document.addEventListener('change', (ev) => {
+  // Marcar «Usar IA si hace falta» con una IA externa: la primera vez, el aviso.
+  if ((ev.target.id === 'iaVerificar' || ev.target.id === 'loteIA') && ev.target.checked) {
+    const ck = ev.target;
+    confirmarIAPersona().then((ok) => { if (!ok) ck.checked = false; });
+  }
   if (ev.target.id === 'ckSuite') $('#ckTopeWrap').classList.toggle('hidden', !ev.target.checked);
   if (ev.target.name === 'correoForma') cambiarForma(ev.target.value);
   if (ev.target.id === idCampo('correo.proveedor')) mostrarProveedor();
@@ -2721,6 +2898,10 @@ document.addEventListener('input', (ev) => {
 });
 
 document.addEventListener('keydown', (ev) => {
+  if (AIA) { // el aviso de la IA se queda con el teclado
+    if (ev.key === 'Escape') { ev.preventDefault(); cerrarAvisoIA(false); } else if (ev.key === 'Tab') atraparFoco(ev, $('#aiaCard'));
+    return;
+  }
   if (ev.key === 'Escape' && !$('#modal').classList.contains('hidden')) { cerrarModal(); return; }
   if (!$('#modal').classList.contains('hidden')) return; // con una ventana abierta, el teclado es de la ventana
   if (ev.key === 'Escape') { $('#menu').classList.add('hidden'); $('#suiteMenu').classList.add('hidden'); }

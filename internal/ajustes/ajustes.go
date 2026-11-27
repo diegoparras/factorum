@@ -149,7 +149,7 @@ var Campos = func() []Campo {
 	add(campo("webhook.salida_url", "webhook", "URL de salida", URL, "FACTORUM_WEBHOOK_SALIDA_URL", "A dónde se mandan los avisos de fin de lote. Vacía: solo se contesta en la respuesta del webhook.", "https://n8n.estudio.com.ar/webhook/factorum", g, s))
 
 	g, s = texto(func(c *config.Config) *string { return &c.LLMBaseURL })
-	add(campo("ia.url", "ia", "Endpoint", URL, "LLM_API_BASE_URL", "Compatible con OpenAI: Ollama, LM Studio, vLLM...", "http://ollama:11434/v1", g, s))
+	add(campo("ia.url", "ia", "Endpoint", URL, "LLM_API_BASE_URL", "Compatible con OpenAI: Ollama, LM Studio, vLLM o un proveedor externo (OpenAI, Anthropic, Google Gemini). Una IA externa no se usa hasta que aceptes el aviso de qué pasa con los datos.", "http://ollama:11434/v1", g, s))
 	g, s = texto(func(c *config.Config) *string { return &c.LLMModelo })
 	add(campo("ia.modelo", "ia", "Modelo", Texto, "LLM_MODEL", "Un modelo que entienda imágenes.", "qwen2.5vl:7b", g, s))
 	g, s = texto(func(c *config.Config) *string { return &c.LLMAPIKey })

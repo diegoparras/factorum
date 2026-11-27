@@ -558,3 +558,97 @@ button.mini.peligro svg { width:14px; height:14px; }
   table.t.tarjetas td.num { text-align:left; }
   table.t.pap.tarjetas td:nth-child(2)::before { display:none; }
 }
+
+/* ---- IA: el sello al lado de «Usar IA si hace falta» y el aviso de la IA externa ---- */
+.pie-form > .ia-opcion { min-height:40px; }
+.ia-opcion { display:inline-flex; align-items:center; gap:6px 12px; flex-wrap:wrap; }
+.ia-sello:empty { display:none; }
+.ia-sello, .ia-conf { display:inline-flex; align-items:center; gap:6px 12px; flex-wrap:wrap; }
+.ia-conf { display:flex; margin-top:10px; font-size:13px; }
+.sello-ia { display:inline-flex; align-items:center; gap:6px; font-size:12px; font-weight:600; line-height:1.3; padding:4px 11px 4px 9px;
+  border-radius:999px; border:1px solid; }
+.sello-ia svg { width:15px; height:15px; flex:0 0 auto; }
+.sello-ia.externa { color:var(--warn); border-color:color-mix(in srgb, var(--warn) 38%, transparent); background:color-mix(in srgb, var(--warn) 8%, transparent); }
+.sello-ia.local { color:var(--ok); border-color:color-mix(in srgb, var(--ok) 38%, transparent); background:color-mix(in srgb, var(--ok) 8%, transparent); }
+.ia-falta code, .ia-conf code { font-family:var(--mono); font-size:12px; }
+.ia-falta > button { flex:0 0 auto; }
+.ia-conectar { margin-top:16px; }
+
+html.sin-scroll, html.sin-scroll body { overflow:hidden; }
+.aia-back { position:fixed; inset:0; z-index:140; display:grid; place-items:center; padding:24px;
+  background:rgba(6,22,26,.55); backdrop-filter:blur(4px); -webkit-backdrop-filter:blur(4px); }
+.aia { position:relative; width:min(780px, 100%); max-height:min(92vh, 940px); display:flex; flex-direction:column; overflow:hidden;
+  background:var(--panel); color:var(--text); border:1px solid var(--border); border-radius:20px; outline:none;
+  box-shadow:0 2px 6px rgba(0,0,0,.08), 0 28px 70px -28px rgba(0,0,0,.5); }
+.aia:focus-visible { box-shadow:var(--ring), 0 28px 70px -28px rgba(0,0,0,.5); }
+.aia-cab { position:relative; display:flex; gap:16px; align-items:center; padding:22px 60px 18px 24px;
+  background:linear-gradient(180deg, var(--accent-suave), transparent 92%); border-bottom:1px solid var(--border); }
+.aia-cab .modal-x { top:16px; right:16px; }
+.aia-ico { flex:0 0 auto; width:60px; height:60px; border-radius:18px; display:grid; place-items:center; background:var(--accent); color:var(--on-accent); }
+.aia-cab-txt { min-width:0; }
+.aia-kicker { display:block; font-size:11.5px; text-transform:uppercase; letter-spacing:.07em; font-weight:650; color:var(--accent); }
+.aia-cab h3 { margin:3px 0 6px; font-size:23px; line-height:1.15; letter-spacing:-.025em; font-weight:700; overflow-wrap:anywhere; }
+.aia-host { display:flex; flex-wrap:wrap; gap:6px 10px; align-items:center; font-size:13px; color:var(--muted-2); }
+.aia-host code { font-family:var(--mono); font-size:12.5px; padding:2px 9px; border-radius:7px; background:var(--panel); border:1px solid var(--border); color:var(--text); overflow-wrap:break-word; min-width:0; }
+.aia-region { display:inline-flex; align-items:center; gap:5px; font-weight:600; }
+.aia-region svg { width:15px; height:15px; color:var(--accent); }
+.aia-cuerpo { overflow-y:auto; overscroll-behavior:contain; padding:18px 24px 4px; }
+.aia-intro { margin:0 0 16px; color:var(--muted-2); font-size:14.5px; line-height:1.6; max-width:68ch; }
+.aia-intro strong { color:var(--text); }
+.aia-alerta { display:flex; gap:12px; align-items:flex-start; padding:14px 16px; margin:0 0 16px; border-radius:14px; border:1px solid; }
+.aia-alerta > svg { width:22px; height:22px; flex:0 0 auto; margin-top:1px; }
+.aia-alerta strong { display:block; font-size:14.5px; line-height:1.4; }
+.aia-alerta p { margin:5px 0 0; font-size:13.5px; color:var(--muted-2); line-height:1.55; }
+.aia-alerta.mal { color:var(--err); border-color:color-mix(in srgb, var(--err) 45%, transparent); background:color-mix(in srgb, var(--err) 7%, transparent); }
+.aia-alerta.aviso { color:var(--warn); border-color:color-mix(in srgb, var(--warn) 45%, transparent); background:color-mix(in srgb, var(--warn) 8%, transparent); }
+.aia-grid { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:12px; }
+.aia-t { display:flex; flex-direction:column; gap:4px; padding:15px 16px 14px; border:1px solid var(--border); border-radius:15px; background:var(--card-2); min-width:0; }
+.aia-t-cab { display:flex; align-items:center; gap:10px; }
+.aia-t-ico { width:32px; height:32px; flex:0 0 auto; border-radius:10px; display:grid; place-items:center; background:var(--accent-suave); color:var(--accent); }
+.aia-t h4 { margin:0; font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); font-weight:650; }
+.aia-dest { margin:6px 0 4px; font-size:20px; line-height:1.2; font-weight:700; letter-spacing:-.02em; }
+.aia-dest.ok { color:var(--ok); }
+.aia-dest.aviso { color:var(--warn); }
+.aia-dest.mal { color:var(--err); }
+.aia-t ul { margin:0; padding:0; list-style:none; display:flex; flex-direction:column; gap:7px; font-size:13.5px; line-height:1.5; color:var(--muted-2); }
+.aia-t li { overflow-wrap:anywhere; }
+.aia-t li strong, .aia-mas strong { color:var(--text); font-weight:650; }
+.aia-mas { margin-top:6px; }
+.aia-mas summary { cursor:pointer; width:max-content; font-size:12.5px; font-weight:600; color:var(--accent); border-radius:6px; }
+.aia-mas summary:focus-visible { outline:none; box-shadow:var(--ring); }
+.aia-mas p { margin:7px 0 0; font-size:12.5px; line-height:1.5; color:var(--muted); }
+.aia-fuentes { margin:16px 0 12px; padding-top:12px; border-top:1px solid var(--border); font-size:12.5px; color:var(--muted); line-height:1.5; }
+.aia-fuentes p { margin:0; }
+.aia-fuentes ul { list-style:none; margin:8px 0 0; padding:0; display:flex; flex-direction:column; gap:5px; }
+.aia-fuentes a { display:inline-flex; align-items:center; gap:4px; color:var(--accent); font-weight:600; text-decoration:none; overflow-wrap:anywhere; }
+.aia-fuentes a:hover { text-decoration:underline; }
+.aia-fuentes a svg { width:13px; height:13px; flex:0 0 auto; }
+.aia-pie { display:flex; flex-direction:column; gap:12px; padding:14px 24px 20px; border-top:1px solid var(--border); background:var(--panel); }
+.aia-registro { margin:0; font-size:12.5px; line-height:1.5; color:var(--muted); }
+.aia-registro code { font-family:var(--mono); font-size:12px; }
+.aia-botones { display:flex; gap:10px; justify-content:flex-end; flex-wrap:wrap; }
+.aia-botones button { padding:12px 24px; font-size:14.5px; border-radius:999px; }
+/* El texto de quién acepta va arriba de los botones; en el celular, al final del aviso (para que los
+   botones no le quiten lugar a lo que hay que leer). */
+.aia-registro.cel { display:none; }
+.aia-nota { display:block; margin-top:1px; }
+:root[data-theme="dark"] .aia-botones button:not(.ghost):hover { color:#fff; }
+@media (max-width: 640px) {
+  .aia-registro.esc { display:none; }
+  .aia-registro.cel { display:block; margin:0 0 14px; }
+  .aia-back { padding:0; place-items:end center; }
+  .aia { width:100%; max-height:94vh; max-height:94dvh; border-radius:20px 20px 0 0; border-bottom:0; }
+  .aia-cab { gap:12px; padding:18px 52px 14px 16px; }
+  .aia-cab .modal-x { top:12px; right:12px; }
+  .aia-ico { width:46px; height:46px; border-radius:14px; }
+  .aia-ico svg { width:24px; height:24px; }
+  .aia-cab h3 { font-size:19px; }
+  .aia-host code { font-size:11.5px; padding:2px 7px; }
+  .aia-cuerpo { padding:14px 16px 2px; }
+  .aia-intro { font-size:14px; }
+  .aia-grid { grid-template-columns:1fr; gap:10px; }
+  .aia-dest { font-size:18px; }
+  .aia-pie { padding:12px 16px 16px; }
+  .aia-botones { flex-direction:column-reverse; }
+  .aia-botones button { width:100%; padding:11px 20px; }
+}

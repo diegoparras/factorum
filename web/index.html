@@ -146,7 +146,7 @@
         </label>
         <div class="fila pie-form">
           <label class="corto" title="El cliente con certificado en Arcanum">CUIT consultante (opcional)<input id="cuitConsultante" placeholder="20-12345678-9" inputmode="numeric" maxlength="13"></label>
-          <label class="chk"><input type="checkbox" id="iaVerificar" checked> Usar IA si hace falta</label>
+          <div class="ia-opcion" id="iaOpVerificar"><label class="chk"><input type="checkbox" id="iaVerificar" checked> Usar IA si hace falta</label><span class="ia-sello" data-ia-sello></span></div>
           <span class="sp"></span>
           <button type="submit">Verificar</button>
         </div>
@@ -171,7 +171,7 @@
           <label class="corto">CUIT del cliente (opcional)<input id="loteCliente" placeholder="20-12345678-9" inputmode="numeric" maxlength="13"></label>
         </div>
         <div class="fila pie-form">
-          <label class="chk"><input type="checkbox" id="loteIA" checked> Usar IA si hace falta</label>
+          <div class="ia-opcion" id="iaOpSubir"><label class="chk"><input type="checkbox" id="loteIA" checked> Usar IA si hace falta</label><span class="ia-sello" data-ia-sello></span></div>
           <label class="chk"><input type="checkbox" id="loteConstatar" checked> Constatar con ARCA al terminar</label>
           <span class="sp"></span>
           <button type="submit">Cargar</button>
@@ -337,6 +337,11 @@
     <div class="modal-cuerpo" id="modalCuerpo"></div>
     <div class="modal-acciones" id="modalAcciones"><button type="button" data-accion="modalCerrar">Entendido</button></div>
   </div>
+</div>
+
+<!-- Aviso de la IA externa: qué pasa con los datos -->
+<div class="aia-back hidden" id="avisoIA" data-accion="aiaFondo">
+  <div class="aia" id="aiaCard" role="dialog" aria-modal="true" aria-labelledby="aiaTit" aria-describedby="aiaIntro" tabindex="-1"></div>
 </div>
 
 <div class="toast hidden" id="toast" role="status"></div>

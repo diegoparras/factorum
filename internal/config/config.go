@@ -14,13 +14,22 @@ import (
 // Version la completa el build (-ldflags "-X .../config.Version=0.1.0").
 var Version = "0.1.0-dev"
 
+// Config es la configuración de Factorum. La de arranque sale del entorno (Leer); lo que se puede
+// configurar desde la pantalla lo pisa el servicio de ajustes, salvo que la variable de entorno
+// esté puesta: el entorno gana.
 type Config struct {
-	Puerto       int
-	DatabaseURL  string
-	APIKey       string
-	APIKeyLect   string
-	DirDatos     string // archivos en disco cuando no hay R2
-	ClaveMaestra []byte // 32 bytes para cifrar lo que se guarda (AES-256-GCM)
+	Nombre     string // nombre de la instalación, para la pantalla
+	URLPublica string // la que ve el navegador (https://factorum.estudio.com); hace falta para la suite
+
+	Puerto      int
+	DatabaseURL string
+	APIKey      string
+	APIKeyLect  string
+	// APIKeySuiteTope habilita FACTORUM_API_KEY para abrir sesiones de la suite (la que usa Arcanum
+	// como FACTORUM_TOKEN), con ese rol tope: lectura, usuario, admin o superadmin. Vacía = no.
+	APIKeySuiteTope string
+	DirDatos        string // archivos en disco cuando no hay R2
+	ClaveMaestra    []byte // 32 bytes para cifrar lo que se guarda (AES-256-GCM)
 
 	Workers      int // documentos procesados en paralelo
 	MaxPaginas   int
@@ -28,6 +37,8 @@ type Config struct {
 	ConcOCR      int
 	ConcIA       int
 	IAPorDefecto bool // usar el modelo cuando hace falta, si no se dice otra cosa
+
+	ConstatarPorDefecto bool // constatar con Arcanum al terminar un lote, si no se dice otra cosa
 
 	// Modelo de visión (API compatible con OpenAI: Ollama, LM Studio, vLLM, OpenAI...).
 	LLMBaseURL string
@@ -46,10 +57,14 @@ type Config struct {
 	R2Prefijo   string
 
 	// Arcanum.
-	ArcanumURL         string
+	ArcanumURL         string // interna (http://arcanum:8094)
+	ArcanumURLPublica  string // la que ve el navegador, para el pase entre apps
 	ArcanumAPIKey      string
 	ArcanumConsultante string
 	ArcanumTimeout     time.Duration
+
+	// Suite: si una persona que no existe llega con un pase desde otra app, se la crea.
+	SuiteCrearUsuarios bool
 
 	// Canales.
 	TelegramToken      string
@@ -98,22 +113,29 @@ func lista(k string) []string {
 // Leer arma la configuración desde el entorno.
 func Leer() (*Config, error) {
 	c := &Config{
-		Puerto:       envInt("FACTORUM_PUERTO", 8095),
-		DatabaseURL:  env("FACTORUM_DATABASE_URL", env("DATABASE_URL", "")),
-		APIKey:       env("FACTORUM_API_KEY", ""),
-		APIKeyLect:   env("FACTORUM_API_KEY_LECTURA", ""),
-		DirDatos:     env("FACTORUM_DATOS", "/data"),
-		Workers:      envInt("FACTORUM_WORKERS", runtime.NumCPU()),
-		MaxPaginas:   envInt("FACTORUM_MAX_PAGINAS", 30),
-		MaxArchivo:   int64(envInt("FACTORUM_MAX_MB", 25)) << 20,
-		ConcOCR:      envInt("FACTORUM_OCR_CONCURRENCIA", max(1, runtime.NumCPU()/2)),
-		ConcIA:       envInt("FACTORUM_IA_CONCURRENCIA", 1),
-		IAPorDefecto: envBool("FACTORUM_IA_POR_DEFECTO", true),
-		LLMBaseURL:   env("LLM_API_BASE_URL", ""),
-		LLMAPIKey:    env("LLM_API_KEY", ""),
-		LLMModelo:    env("LLM_MODEL", ""),
-		LLMTimeout:   time.Duration(envInt("LLM_TIMEOUT_S", 180)) * time.Second,
-		OCRIdiomas:   env("FACTORUM_OCR_IDIOMAS", "spa"),
+		Nombre:      env("FACTORUM_NOMBRE", "Factorum"),
+		URLPublica:  strings.TrimRight(env("FACTORUM_URL_PUBLICA", ""), "/"),
+		Puerto:      envInt("FACTORUM_PUERTO", 8095),
+		DatabaseURL: env("FACTORUM_DATABASE_URL", env("DATABASE_URL", "")),
+		APIKey:      env("FACTORUM_API_KEY", ""),
+		APIKeyLect:  env("FACTORUM_API_KEY_LECTURA", ""),
+
+		APIKeySuiteTope: strings.ToLower(env("FACTORUM_API_KEY_SUITE_TOPE", "")),
+		DirDatos:        env("FACTORUM_DATOS", "/data"),
+		Workers:         envInt("FACTORUM_WORKERS", runtime.NumCPU()),
+		MaxPaginas:      envInt("FACTORUM_MAX_PAGINAS", 30),
+		MaxArchivo:      int64(envInt("FACTORUM_MAX_MB", 25)) << 20,
+		ConcOCR:         envInt("FACTORUM_OCR_CONCURRENCIA", max(1, runtime.NumCPU()/2)),
+		ConcIA:          envInt("FACTORUM_IA_CONCURRENCIA", 1),
+		IAPorDefecto:    envBool("FACTORUM_IA_POR_DEFECTO", true),
+
+		ConstatarPorDefecto: envBool("FACTORUM_CONSTATAR_POR_DEFECTO", true),
+		SuiteCrearUsuarios:  envBool("FACTORUM_SUITE_CREAR_USUARIOS", true),
+		LLMBaseURL:          env("LLM_API_BASE_URL", ""),
+		LLMAPIKey:           env("LLM_API_KEY", ""),
+		LLMModelo:           env("LLM_MODEL", ""),
+		LLMTimeout:          time.Duration(envInt("LLM_TIMEOUT_S", 180)) * time.Second,
+		OCRIdiomas:          env("FACTORUM_OCR_IDIOMAS", "spa"),
 
 		R2Endpoint:  env("FACTORUM_R2_ENDPOINT", ""),
 		R2Bucket:    env("FACTORUM_R2_BUCKET", ""),
@@ -123,6 +145,7 @@ func Leer() (*Config, error) {
 		R2Prefijo:   env("FACTORUM_R2_PREFIJO", "factorum/"),
 
 		ArcanumURL:         strings.TrimRight(env("ARCANUM_URL", ""), "/"),
+		ArcanumURLPublica:  strings.TrimRight(env("ARCANUM_URL_PUBLICA", ""), "/"),
 		ArcanumAPIKey:      env("ARCANUM_API_KEY", ""),
 		ArcanumConsultante: env("ARCANUM_CUIT_CONSULTANTE", ""),
 		ArcanumTimeout:     time.Duration(envInt("ARCANUM_TIMEOUT_S", 60)) * time.Second,
@@ -147,20 +170,49 @@ func Leer() (*Config, error) {
 		}
 		c.ClaveMaestra = b
 	}
-	if c.R2Endpoint != "" && (c.R2Bucket == "" || c.R2AccessKey == "" || c.R2SecretKey == "") {
-		return nil, fmt.Errorf("R2 a medias: con FACTORUM_R2_ENDPOINT hacen falta FACTORUM_R2_BUCKET, FACTORUM_R2_ACCESS_KEY y FACTORUM_R2_SECRET_KEY")
+	switch c.APIKeySuiteTope {
+	case "", "lectura", "usuario", "admin", "superadmin":
+	default:
+		return nil, fmt.Errorf("FACTORUM_API_KEY_SUITE_TOPE tiene que ser lectura, usuario, admin o superadmin (o vacía)")
 	}
-	if c.R2Endpoint != "" && c.ClaveMaestra == nil {
-		return nil, fmt.Errorf("para guardar en R2 hace falta FACTORUM_MASTER_KEY (openssl rand -hex 32): los comprobantes se cifran antes de salir")
-	}
-	if c.LLMBaseURL != "" && c.LLMModelo == "" {
-		return nil, fmt.Errorf("con LLM_API_BASE_URL hace falta LLM_MODEL (por ejemplo qwen2.5vl:7b)")
+	if err := c.Validar(); err != nil {
+		return nil, err
 	}
 	if c.Workers < 1 {
 		c.Workers = 1
 	}
 	return c, nil
 }
+
+// Validar controla que la configuración tenga sentido (sirve para el arranque y para lo que se
+// guarda desde la pantalla).
+func (c *Config) Validar() error {
+	if c.R2Endpoint != "" && (c.R2Bucket == "" || c.R2AccessKey == "" || c.R2SecretKey == "") {
+		return fmt.Errorf("R2 a medias: con el endpoint hacen falta el bucket, la access key y la secret key")
+	}
+	if c.R2Endpoint != "" && c.ClaveMaestra == nil {
+		return fmt.Errorf("para guardar en R2 hace falta FACTORUM_MASTER_KEY (openssl rand -hex 32): los comprobantes se cifran antes de salir")
+	}
+	if c.LLMBaseURL != "" && c.LLMModelo == "" {
+		return fmt.Errorf("con la URL del modelo de visión hace falta el modelo (por ejemplo qwen2.5vl:7b)")
+	}
+	return nil
+}
+
+// Clonar copia la configuración, con sus listas y mapas.
+func (c *Config) Clonar() *Config {
+	n := *c
+	n.TelegramPermitidos = append([]string(nil), c.TelegramPermitidos...)
+	n.WhatsAppPermitidos = append([]string(nil), c.WhatsAppPermitidos...)
+	n.CanalClienteCUIT = make(map[string]string, len(c.CanalClienteCUIT))
+	for k, v := range c.CanalClienteCUIT {
+		n.CanalClienteCUIT[k] = v
+	}
+	return &n
+}
+
+// DecodificarClave lee FACTORUM_MASTER_KEY (64 caracteres hexadecimales).
+func DecodificarClave(s string) ([]byte, error) { return decodificarClave(s) }
 
 func decodificarClave(s string) ([]byte, error) {
 	s = strings.TrimSpace(s)
@@ -180,6 +232,9 @@ func decodificarClave(s string) ([]byte, error) {
 
 // IAConfigurada indica si hay un modelo de visión.
 func (c *Config) IAConfigurada() bool { return c.LLMBaseURL != "" && c.LLMModelo != "" }
+
+// EsHTTPS dice si la URL pública es https (las cookies van con Secure).
+func (c *Config) EsHTTPS() bool { return strings.HasPrefix(strings.ToLower(c.URLPublica), "https://") }
 
 // ArcanumConfigurado indica si se puede constatar.
 func (c *Config) ArcanumConfigurado() bool { return c.ArcanumURL != "" && c.ArcanumAPIKey != "" }

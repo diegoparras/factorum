@@ -24,6 +24,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/diegoparras/factorum/internal/ajustes"
 	"github.com/diegoparras/factorum/internal/almacen"
 	"github.com/diegoparras/factorum/internal/api"
 	"github.com/diegoparras/factorum/internal/app"
@@ -77,11 +78,24 @@ func salud() error {
 	}
 	defer r.Body.Close()
 	var b struct {
-		OK   bool `json:"ok"`
-		Base bool `json:"base"`
+		OK       bool `json:"ok"`
+		Base     bool `json:"base"`
+		Arranque bool `json:"arranque"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&b); err != nil || !b.OK || !b.Base {
 		return errors.New("Factorum no está sano (sin base de datos)")
+	}
+	if b.Arranque {
+		dir := os.Getenv("FACTORUM_DATOS")
+		if dir == "" {
+			dir = "/data"
+		}
+		cod, err := os.ReadFile(filepath.Join(dir, api.ArchivoArranque))
+		if err == nil {
+			fmt.Printf("Falta crear el primer superadmin. Entrá a Factorum y usá este código de un solo uso: %s\n", strings.TrimSpace(string(cod)))
+		} else {
+			fmt.Println("Falta crear el primer superadmin: el código de un solo uso está en el log del servidor.")
+		}
 	}
 	return nil
 }
@@ -90,8 +104,13 @@ func uso() {
 	fmt.Fprint(os.Stderr, `Factorum `+config.Version+`
 
   factorum serve
-      Levanta la API, la UI, MCP, los canales y la cola. Se configura por variables de entorno
-      (ver README). Necesita FACTORUM_DATABASE_URL y FACTORUM_API_KEY.
+      Levanta la API, la UI, MCP, los canales y la cola. Necesita FACTORUM_DATABASE_URL y
+      FACTORUM_MASTER_KEY; lo demás se configura desde la pantalla (o por variables de entorno, que
+      ganan). Sin usuarios, escribe en el log el código para crear el primer superadmin.
+
+  factorum salud
+      Consulta el servidor local (para el HEALTHCHECK) y, si falta el primer superadmin, muestra el
+      código de arranque.
 
   factorum procesar [-xlsx salida.xlsx] [-csv salida.csv] [-json] [-ia] [-workers N] archivos...
       Procesa PDFs, imágenes, ZIPs o carpetas sin base de datos y arma un Excel o CSV.
@@ -113,71 +132,152 @@ func armarPipeline(c *config.Config, log *slog.Logger) *pipeline.Pipeline {
 	if ocr == nil {
 		log.Info("tesseract no está instalado: sin OCR para escaneados")
 	}
-	var vis *extractor.Vision
-	if c.IAConfigurada() {
-		vis = &extractor.Vision{BaseURL: c.LLMBaseURL, APIKey: c.LLMAPIKey, Modelo: c.LLMModelo, Timeout: c.LLMTimeout}
-		if !vis.Local() {
-			log.Warn("el modelo de visión no parece local: los comprobantes que necesiten IA van a salir de este servidor", "url", c.LLMBaseURL)
-		}
+	return pipeline.Nuevo(motor, ocr, armarVision(c, log), c.ConcOCR, c.ConcIA)
+}
+
+func armarVision(c *config.Config, log *slog.Logger) *extractor.Vision {
+	if !c.IAConfigurada() {
+		return nil
 	}
-	return pipeline.Nuevo(motor, ocr, vis, c.ConcOCR, c.ConcIA)
+	vis := &extractor.Vision{BaseURL: c.LLMBaseURL, APIKey: c.LLMAPIKey, Modelo: c.LLMModelo, Timeout: c.LLMTimeout}
+	if !vis.Local() {
+		log.Warn("el modelo de visión no parece local: los comprobantes que necesiten IA van a salir de este servidor", "url", c.LLMBaseURL)
+	}
+	return vis
+}
+
+func armarArcanum(c *config.Config) *arcanum.Cliente {
+	if !c.ArcanumConfigurado() {
+		return nil
+	}
+	return arcanum.Nuevo(c.ArcanumURL, c.ArcanumAPIKey, c.ArcanumConsultante, c.ArcanumTimeout)
+}
+
+func firmaArcanum(c *config.Config) string {
+	return strings.Join([]string{c.ArcanumURL, c.ArcanumAPIKey, c.ArcanumConsultante, c.ArcanumTimeout.String()}, "|")
+}
+
+func firmaIA(c *config.Config) string {
+	return strings.Join([]string{c.LLMBaseURL, c.LLMAPIKey, c.LLMModelo, c.LLMTimeout.String()}, "|")
+}
+
+func firmaR2(c *config.Config) string {
+	return strings.Join([]string{c.R2Endpoint, c.R2Bucket, c.R2AccessKey, c.R2SecretKey, c.R2Region, c.R2Prefijo}, "|")
+}
+
+func armarS3(c *config.Config) (*almacen.S3, error) {
+	return almacen.NuevoS3(c.R2Endpoint, c.R2Bucket, c.R2AccessKey, c.R2SecretKey, c.R2Region, c.R2Prefijo)
 }
 
 func servir() error {
 	log := logger()
 	slog.SetDefault(log)
-	c, err := config.Leer()
+	base, err := config.Leer()
 	if err != nil {
 		return err
 	}
-	if c.DatabaseURL == "" {
+	if base.DatabaseURL == "" {
 		return errors.New("falta FACTORUM_DATABASE_URL (postgres://usuario:clave@host:5432/factorum)")
 	}
-	if c.APIKey == "" {
-		return errors.New("falta FACTORUM_API_KEY (openssl rand -hex 24)")
+	if base.ClaveMaestra == nil {
+		return errors.New("falta FACTORUM_MASTER_KEY (openssl rand -hex 32): cifra los archivos y la configuración secreta. Guardala fuera del servidor")
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	st, err := store.Abrir(ctx, c.DatabaseURL, c.Workers*2+10)
+	st, err := store.Abrir(ctx, base.DatabaseURL, base.Workers*2+10)
 	if err != nil {
 		return err
 	}
 	defer st.Cerrar()
 
-	var backend almacen.Backend = &almacen.Disco{Dir: filepath.Join(c.DirDatos, "almacen")}
-	if c.R2Endpoint != "" {
-		s3, err := almacen.NuevoS3(c.R2Endpoint, c.R2Bucket, c.R2AccessKey, c.R2SecretKey, c.R2Region, c.R2Prefijo)
-		if err != nil {
-			return fmt.Errorf("R2: %w", err)
-		}
-		backend = s3
-	}
-	alm, err := almacen.Nuevo(backend, c.ClaveMaestra)
+	// Lo configurado desde la pantalla pisa al entorno, salvo las variables que están puestas.
+	aj, err := ajustes.Nuevo(st, base, log)
 	if err != nil {
 		return err
 	}
-	if !alm.Cifrado() {
-		log.Warn("sin FACTORUM_MASTER_KEY: los archivos se guardan comprimidos pero sin cifrar")
+	if err := aj.Cargar(ctx); err != nil {
+		return fmt.Errorf("leyendo la configuración guardada: %w", err)
+	}
+	c := aj.Actual()
+
+	disco := &almacen.Disco{Dir: filepath.Join(c.DirDatos, "almacen")}
+	alm, err := almacen.Nuevo(disco, c.ClaveMaestra)
+	if err != nil {
+		return err
+	}
+	var s3 *almacen.S3
+	if c.R2Endpoint != "" {
+		if s3, err = armarS3(c); err != nil {
+			return fmt.Errorf("R2: %w", err)
+		}
+		alm.CambiarBackend(s3, disco)
 	}
 
 	a := &app.App{Cfg: c, Store: st, Almacen: alm, Pipeline: armarPipeline(c, log), Log: log}
-	if c.ArcanumConfigurado() {
-		a.Arcanum = arcanum.Nuevo(c.ArcanumURL, c.ArcanumAPIKey, c.ArcanumConsultante, c.ArcanumTimeout)
-	}
+	a.SetArcanum(armarArcanum(c))
 	if err := a.IniciarCola(ctx); err != nil {
 		return err
 	}
-	webhook := iniciarCanales(ctx, a, st, log)
+	canales := nuevoGestor(ctx, a, st, log)
+	canales.Aplicar(c)
 
-	srv := &api.Server{App: a, Cfg: c, Log: log, Webhook: webhook}
+	srv := &api.Server{App: a, Cfg: base, Log: log, Webhook: canales.Webhook, Ajustes: aj}
 	if sub, err := fs.Sub(web.Archivos, "."); err == nil {
 		srv.Web = sub
 	}
-	srv.MCP = mcpserver.Handler(a, func(r *http.Request) (bool, bool) {
-		rol := srv.Rol(r)
-		return rol != api.RolNinguno, rol == api.RolOperador
+	srv.MCP = mcpserver.Handler(a, srv.IdentificarClave)
+	if err := srv.PrepararArranque(ctx); err != nil {
+		return err
+	}
+
+	// Recarga en caliente: cada componente se rearma solo si cambió lo suyo. Los avisos llegan de a
+	// uno (el servicio de ajustes los serializa).
+	aj.Suscribir(func(viejo, nuevo *config.Config) {
+		a.SetConfig(nuevo)
+		if firmaArcanum(viejo) != firmaArcanum(nuevo) {
+			a.SetArcanum(armarArcanum(nuevo))
+			log.Info("Arcanum reconfigurado", "conectado", a.Arcanum() != nil)
+		}
+		if firmaIA(viejo) != firmaIA(nuevo) {
+			a.Pipeline.SetVision(armarVision(nuevo, log))
+			log.Info("modelo de visión reconfigurado", "habilitado", a.Pipeline.Vision() != nil)
+		}
+		if firmaR2(viejo) != firmaR2(nuevo) {
+			if nuevo.R2Endpoint == "" {
+				var resp almacen.Backend
+				if s3 != nil {
+					resp = s3 // lo que se guardó en R2 se sigue pudiendo leer
+				}
+				alm.CambiarBackend(disco, resp)
+				s3 = nil
+			} else if n, err := armarS3(nuevo); err != nil {
+				log.Error("R2 mal configurado: se sigue guardando donde estaba", "error", err)
+			} else {
+				s3 = n
+				alm.CambiarBackend(n, disco) // lo guardado en disco se sigue leyendo (la migración es aparte)
+			}
+			log.Info("almacén reconfigurado", "almacen", alm.Backend())
+		}
+		canales.Aplicar(nuevo)
 	})
+
+	// Sesiones y pases vencidos.
+	go func() {
+		t := time.NewTicker(time.Hour)
+		defer t.Stop()
+		for {
+			if err := st.Limpiar(ctx); err != nil && ctx.Err() == nil {
+				log.Warn("no se pudieron limpiar las sesiones vencidas", "error", err)
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+			}
+		}
+	}()
+
 	hs := &http.Server{
 		Addr:              fmt.Sprintf(":%d", c.Puerto),
 		Handler:           srv.Handler(),
@@ -192,7 +292,7 @@ func servir() error {
 		_ = a.River.Stop(sctx)
 	}()
 	log.Info("Factorum escuchando", "version", config.Version, "puerto", c.Puerto, "workers", c.Workers,
-		"ocr", a.Pipeline.OCR != nil, "ia", a.Pipeline.Vision != nil, "arcanum", a.Arcanum != nil, "almacen", alm.Backend())
+		"ocr", a.Pipeline.OCR != nil, "ia", a.Pipeline.Vision() != nil, "arcanum", a.Arcanum() != nil, "almacen", alm.Backend())
 	if err := hs.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}

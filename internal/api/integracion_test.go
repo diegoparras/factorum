@@ -18,12 +18,14 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/diegoparras/factorum/internal/ajustes"
 	"github.com/diegoparras/factorum/internal/almacen"
 	"github.com/diegoparras/factorum/internal/api"
 	"github.com/diegoparras/factorum/internal/app"
@@ -49,14 +51,40 @@ var actividadesFalsas = map[string]string{"30708888881": "473000", "30711111111"
 
 var apocLlamadas atomic.Int32
 
+// paseArcanum guarda el último pedido de pase que recibió el Arcanum falso.
+var paseArcanum atomic.Value
+
 // arcanumFalso: el emisor 20123456786 es apócrifo; el resto, válido. El padrón conoce a todos.
 func arcanumFalso(t *testing.T, llamadas *atomic.Int32) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/health" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "service": "arcanum", "version": "9.9.9"})
+			return
+		}
+		if r.URL.Path == "/api/suite/pase" {
+			if r.Header.Get("Authorization") != "Bearer arc" {
+				w.WriteHeader(401)
+				_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "Clave inválida"})
+				return
+			}
+			var b map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&b)
+			paseArcanum.Store(b)
+			if b["email"] == "nadie@ejemplo.com" {
+				w.WriteHeader(403)
+				_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "Esa persona no tiene cuenta en Arcanum"})
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "url": "https://arcanum.ejemplo.com/suite/entrar?pase=abc", "vence": "2026-11-27T12:00:00Z"})
+			return
+		}
 		if r.Header.Get("X-API-Key") != "arc" {
 			w.WriteHeader(401)
 			return
 		}
 		switch {
+		case r.URL.Path == "/api/tenants":
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "tenants": []any{map[string]any{"cuit": "20222222223"}}})
 		case r.URL.Path == "/api/constatacion":
 			llamadas.Add(1)
 			var b struct {
@@ -98,14 +126,20 @@ func arcanumFalso(t *testing.T, llamadas *atomic.Int32) *httptest.Server {
 }
 
 type entorno struct {
-	app *app.App
-	srv *httptest.Server
-	arc *atomic.Int32
+	app     *app.App
+	srv     *httptest.Server
+	arc     *atomic.Int32
+	api     *api.Server
+	aj      *ajustes.Servicio
+	fijadas *sync.Map
+	cfg     *config.Config
 }
 
 func armar(t *testing.T) *entorno { return armarCon(t, nil) }
 
-func armarCon(t *testing.T, ocr *extractor.Tesseract) *entorno {
+func armarCon(t *testing.T, ocr *extractor.Tesseract) *entorno { return armarConCfg(t, ocr, nil) }
+
+func armarConCfg(t *testing.T, ocr *extractor.Tesseract, ajustar func(*config.Config)) *entorno {
 	t.Helper()
 	url := os.Getenv("FACTORUM_TEST_DB")
 	if url == "" {
@@ -122,7 +156,7 @@ func armarCon(t *testing.T, ocr *extractor.Tesseract) *entorno {
 		t.Fatal(err)
 	}
 	// Base limpia en cada corrida.
-	if _, err := st.Pool.Exec(ctx, `TRUNCATE lotes, documentos, comprobantes, correcciones, rubros_cuit RESTART IDENTITY CASCADE`); err != nil {
+	if _, err := st.Pool.Exec(ctx, `TRUNCATE lotes, documentos, comprobantes, correcciones, rubros_cuit, usuarios, sesiones, claves_api, configuracion, auditoria, pases_suite RESTART IDENTITY CASCADE`); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(st.Cerrar)
@@ -134,10 +168,16 @@ func armarCon(t *testing.T, ocr *extractor.Tesseract) *entorno {
 	var n atomic.Int32
 	arc := arcanumFalso(t, &n)
 	t.Cleanup(arc.Close)
-	cfg := &config.Config{APIKey: claveOp, APIKeyLect: claveLect, Workers: 4, MaxPaginas: 30, MaxArchivo: 25 << 20}
+	cfg := &config.Config{APIKey: claveOp, APIKeyLect: claveLect, Workers: 4, MaxPaginas: 30, MaxArchivo: 25 << 20,
+		ClaveMaestra: clave, DirDatos: t.TempDir(), Nombre: "Factorum", ConstatarPorDefecto: true, SuiteCrearUsuarios: true,
+		ArcanumURL: arc.URL, ArcanumAPIKey: "arc", ArcanumConsultante: "20222222223", ArcanumTimeout: 10 * time.Second,
+		CanalClienteCUIT: map[string]string{}}
+	if ajustar != nil {
+		ajustar(cfg)
+	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	a := &app.App{Cfg: cfg, Store: st, Almacen: alm, Pipeline: pipeline.Nuevo(motor, ocr, nil, 2, 1), Log: log,
-		Arcanum: arcanum.Nuevo(arc.URL, "arc", "20222222223", 10*time.Second)}
+	a := &app.App{Cfg: cfg, Store: st, Almacen: alm, Pipeline: pipeline.Nuevo(motor, ocr, nil, 2, 1), Log: log}
+	a.SetArcanum(arcanum.Nuevo(arc.URL, "arc", "20222222223", 10*time.Second))
 	if _, err := st.Pool.Exec(ctx, `TRUNCATE river_job`); err != nil && !strings.Contains(err.Error(), "does not exist") {
 		t.Fatal(err)
 	}
@@ -149,14 +189,28 @@ func armarCon(t *testing.T, ocr *extractor.Tesseract) *entorno {
 		defer c()
 		_ = a.River.Stop(sctx)
 	})
-	s := &api.Server{App: a, Cfg: cfg, Log: log}
-	s.MCP = mcpserver.Handler(a, func(r *http.Request) (bool, bool) {
-		rol := s.Rol(r)
-		return rol != api.RolNinguno, rol == api.RolOperador
-	})
+	aj, err := ajustes.Nuevo(st, cfg, log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fijadas sync.Map // variables de entorno de mentira: la prueba no depende del entorno real
+	aj.Getenv = func(k string) string {
+		v, _ := fijadas.Load(k)
+		s, _ := v.(string)
+		return s
+	}
+	if err := aj.Cargar(ctx); err != nil {
+		t.Fatal(err)
+	}
+	aj.Suscribir(func(_, nuevo *config.Config) { a.SetConfig(nuevo) })
+	s := &api.Server{App: a, Cfg: cfg, Log: log, Ajustes: aj}
+	s.MCP = mcpserver.Handler(a, s.IdentificarClave)
+	if err := s.PrepararArranque(ctx); err != nil {
+		t.Fatal(err)
+	}
 	srv := httptest.NewServer(s.Handler())
 	t.Cleanup(srv.Close)
-	return &entorno{app: a, srv: srv, arc: &n}
+	return &entorno{app: a, srv: srv, arc: &n, api: s, aj: aj, fijadas: &fijadas, cfg: cfg}
 }
 
 func (e *entorno) pedir(t *testing.T, metodo, ruta, clave string, cuerpo io.Reader, tipo string) (int, map[string]any, []byte) {

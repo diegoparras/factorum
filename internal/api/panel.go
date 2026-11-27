@@ -8,7 +8,7 @@ import (
 )
 
 func (s *Server) panel(w http.ResponseWriter, r *http.Request) {
-	p, err := s.App.Store.Panel(r.Context(), time.Now())
+	p, err := s.App.Store.Panel(r.Context(), time.Now(), IdentidadDe(r.Context()).Alcance())
 	if err != nil {
 		s.fallo(w, err)
 		return

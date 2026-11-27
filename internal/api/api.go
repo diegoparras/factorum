@@ -4,7 +4,6 @@ package api
 import (
 	"bytes"
 	"context"
-	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -13,27 +12,23 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	qrcode "github.com/skip2/go-qrcode"
 
+	"github.com/diegoparras/factorum/internal/ajustes"
 	"github.com/diegoparras/factorum/internal/app"
 	"github.com/diegoparras/factorum/internal/arca"
+	"github.com/diegoparras/factorum/internal/auth"
 	"github.com/diegoparras/factorum/internal/canal"
 	"github.com/diegoparras/factorum/internal/config"
 	"github.com/diegoparras/factorum/internal/export"
 	"github.com/diegoparras/factorum/internal/rubro"
 	"github.com/diegoparras/factorum/internal/store"
-)
-
-type Rol int
-
-const (
-	RolNinguno Rol = iota
-	RolLectura
-	RolOperador
 )
 
 // Webhook es lo que la API necesita del canal webhook.
@@ -44,85 +39,128 @@ type Webhook interface {
 
 type Server struct {
 	App     *app.App
-	Cfg     *config.Config
+	Cfg     *config.Config // la del arranque: de acá salen las claves del entorno
 	Log     *slog.Logger
-	Web     fs.FS   // UI estática
-	Webhook Webhook // nil = sin webhook
-	MCP     http.Handler
+	Web     fs.FS             // UI estática
+	Webhook func() Webhook    // el webhook vigente (nil o que devuelve nil = sin webhook)
+	MCP     http.Handler      // nil = sin MCP
+	Ajustes *ajustes.Servicio // configuración desde la pantalla (nil = solo la del entorno)
+	Ahora   func() time.Time  // para las pruebas
+	HTTP    *http.Client      // para hablar con las otras apps y las pruebas de la configuración
+	Probar  map[string]Prueba // pruebas de la configuración por sección (se pueden cambiar en las pruebas)
+
+	limite         *auth.Limitador
+	arranqueMu     sync.Mutex
+	codigoArranque string
+	suiteMu        sync.Mutex
+	suiteSalud     map[string]saludApp
 }
 
-type ctxRol struct{}
-
-// RolDe devuelve el rol autenticado del pedido.
-func RolDe(ctx context.Context) Rol {
-	r, _ := ctx.Value(ctxRol{}).(Rol)
-	return r
+func (s *Server) cliente() *http.Client {
+	if s.HTTP != nil {
+		return s.HTTP
+	}
+	return &http.Client{Timeout: 15 * time.Second}
 }
 
-// Rol autentica un pedido (lo usa también MCP).
-func (s *Server) Rol(r *http.Request) Rol { return s.rol(r) }
-
-func (s *Server) rol(r *http.Request) Rol {
-	k := r.Header.Get("X-API-Key")
-	if k == "" {
-		if a := r.Header.Get("Authorization"); strings.HasPrefix(a, "Bearer ") {
-			k = strings.TrimPrefix(a, "Bearer ")
+// cuitEnAlcance limpia un CUIT de cliente que viene en el pedido y controla que quien pide lo pueda
+// usar. Vacío con un solo CUIT asignado: ese.
+func cuitEnAlcance(id *auth.Identidad, cuit string) (string, error) {
+	c := arca.SoloDigitos(cuit)
+	if c == "" {
+		if id.Restringido() && len(id.CUITs) == 1 {
+			return id.CUITs[0], nil
 		}
+		return "", nil
 	}
-	if k == "" {
-		return RolNinguno
+	if !id.Permite(c) {
+		return "", fmt.Errorf("El CUIT %s no está entre tus clientes", arca.FormatearCUIT(c))
 	}
-	if s.Cfg.APIKey != "" && subtle.ConstantTimeCompare([]byte(k), []byte(s.Cfg.APIKey)) == 1 {
-		return RolOperador
-	}
-	if s.Cfg.APIKeyLect != "" && subtle.ConstantTimeCompare([]byte(k), []byte(s.Cfg.APIKeyLect)) == 1 {
-		return RolLectura
-	}
-	return RolNinguno
+	return c, nil
 }
 
-// auth exige clave. Las claves de lectura solo pueden hacer GET (y verificar, que no guarda).
-func (s *Server) auth(min Rol, h http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		rol := s.rol(r)
-		if rol == RolNinguno {
-			jsonErr(w, http.StatusUnauthorized, "Falta la clave de API o no es válida (X-API-Key o Authorization: Bearer)")
-			return
-		}
-		if rol < min {
-			jsonErr(w, http.StatusForbidden, "Esta clave es de solo lectura")
-			return
-		}
-		h(w, r.WithContext(context.WithValue(r.Context(), ctxRol{}, rol)))
+// cbteVisible trae un comprobante si quien pide lo puede ver (si no, «no encontrado»).
+func (s *Server) cbteVisible(r *http.Request, id int64) (*store.Cbte, error) {
+	c, err := s.App.Store.Comprobante(r.Context(), id)
+	if err != nil {
+		return nil, err
 	}
+	if !IdentidadDe(r.Context()).Permite(c.ClienteCUIT) {
+		return nil, store.ErrNoEncontrado
+	}
+	return c, nil
+}
+
+// original trae el archivo de un documento si quien pide lo puede ver.
+func (s *Server) original(r *http.Request, id int64) (*store.Documento, []byte, error) {
+	d, err := s.App.Store.Documento(r.Context(), id)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !IdentidadDe(r.Context()).Permite(d.ClienteCUIT) {
+		return nil, nil, store.ErrNoEncontrado
+	}
+	return s.App.Original(r.Context(), id)
 }
 
 // Handler arma el ruteo completo.
 func (s *Server) Handler() http.Handler {
+	if s.limite == nil {
+		s.limite = auth.NuevoLimitador()
+	}
+	if s.Probar == nil {
+		s.Probar = s.pruebasPorDefecto()
+	}
+	lect, usu, adm, sup := auth.Lectura, auth.Usuario, auth.Admin, auth.Superadmin
 	m := http.NewServeMux()
 	m.HandleFunc("GET /healthz", s.salud)
-	m.HandleFunc("GET /metrics", s.auth(RolLectura, s.metricas))
+	m.HandleFunc("GET /metrics", s.auth(lect, s.metricas))
 
-	m.HandleFunc("POST /api/verificar", s.auth(RolLectura, s.verificar))
-	m.HandleFunc("POST /api/lotes", s.auth(RolOperador, s.crearLote))
-	m.HandleFunc("GET /api/lotes", s.auth(RolLectura, s.lotes))
-	m.HandleFunc("GET /api/lotes/{id}", s.auth(RolLectura, s.lote))
-	m.HandleFunc("GET /api/comprobantes", s.auth(RolLectura, s.comprobantes))
-	m.HandleFunc("GET /api/comprobantes/{id}", s.auth(RolLectura, s.comprobante))
-	m.HandleFunc("PATCH /api/comprobantes/{id}", s.auth(RolOperador, s.corregir))
-	m.HandleFunc("POST /api/comprobantes/{id}/constatar", s.auth(RolOperador, s.constatar))
-	m.HandleFunc("GET /api/documentos/{id}/archivo", s.auth(RolLectura, s.archivo))
-	m.HandleFunc("GET /api/documentos/{id}/pagina/{n}", s.auth(RolLectura, s.pagina))
-	m.HandleFunc("GET /api/export.xlsx", s.auth(RolLectura, s.exportar("xlsx")))
-	m.HandleFunc("GET /api/export.csv", s.auth(RolLectura, s.exportar("csv")))
-	m.HandleFunc("GET /api/resumen", s.auth(RolLectura, s.resumen))
-	m.HandleFunc("GET /api/panel", s.auth(RolLectura, s.panel))
+	// Sesión, arranque y cuentas.
+	m.HandleFunc("GET /api/arranque", s.verArranque)
+	m.HandleFunc("POST /api/arranque", s.publicoCSRF(s.crearArranque))
+	m.HandleFunc("POST /api/sesion", s.publicoCSRF(s.entrar))
+	m.HandleFunc("GET /api/sesion", s.auth(lect, s.yo))
+	m.HandleFunc("DELETE /api/sesion", s.soloSesion(lect, s.salirSesion))
+	m.HandleFunc("POST /api/sesion/clave", s.soloSesion(lect, s.cambiarMiClave))
+	m.HandleFunc("GET /api/usuarios", s.soloSesion(adm, s.usuarios))
+	m.HandleFunc("POST /api/usuarios", s.soloSesion(adm, s.crearUsuario))
+	m.HandleFunc("PATCH /api/usuarios/{id}", s.soloSesion(adm, s.editarUsuario))
+	m.HandleFunc("POST /api/usuarios/{id}/restablecer", s.soloSesion(adm, s.restablecerUsuario))
+	m.HandleFunc("GET /api/claves", s.soloSesion(adm, s.claves))
+	m.HandleFunc("POST /api/claves", s.soloSesion(adm, s.crearClave))
+	m.HandleFunc("DELETE /api/claves/{id}", s.soloSesion(adm, s.revocarClave))
+	m.HandleFunc("GET /api/configuracion", s.soloSesion(adm, s.verConfiguracion))
+	m.HandleFunc("PUT /api/configuracion", s.soloSesion(adm, s.guardarConfiguracion))
+	m.HandleFunc("POST /api/configuracion/probar/{seccion}", s.soloSesion(sup, s.probarConfiguracion))
+	m.HandleFunc("GET /api/auditoria", s.soloSesion(adm, s.verAuditoria))
+
+	// Pase entre apps de la suite (docs/suite-pase.md).
+	m.HandleFunc("POST /api/suite/pase", s.auth(lect, s.emitirPase))
+	m.HandleFunc("GET /suite/entrar", s.entrarConPase)
+	m.HandleFunc("GET /api/suite/apps", s.soloSesion(lect, s.appsSuite))
+	m.HandleFunc("POST /api/suite/abrir/{app}", s.soloSesion(lect, s.abrirApp))
+
+	m.HandleFunc("POST /api/verificar", s.auth(lect, s.verificar))
+	m.HandleFunc("POST /api/lotes", s.auth(usu, s.crearLote))
+	m.HandleFunc("GET /api/lotes", s.auth(lect, s.lotes))
+	m.HandleFunc("GET /api/lotes/{id}", s.auth(lect, s.lote))
+	m.HandleFunc("GET /api/comprobantes", s.auth(lect, s.comprobantes))
+	m.HandleFunc("GET /api/comprobantes/{id}", s.auth(lect, s.comprobante))
+	m.HandleFunc("PATCH /api/comprobantes/{id}", s.auth(usu, s.corregir))
+	m.HandleFunc("POST /api/comprobantes/{id}/constatar", s.auth(usu, s.constatar))
+	m.HandleFunc("GET /api/documentos/{id}/archivo", s.auth(lect, s.archivo))
+	m.HandleFunc("GET /api/documentos/{id}/pagina/{n}", s.auth(lect, s.pagina))
+	m.HandleFunc("GET /api/export.xlsx", s.auth(lect, s.exportar("xlsx")))
+	m.HandleFunc("GET /api/export.csv", s.auth(lect, s.exportar("csv")))
+	m.HandleFunc("GET /api/resumen", s.auth(lect, s.resumen))
+	m.HandleFunc("GET /api/panel", s.auth(lect, s.panel))
 	m.HandleFunc("GET /api/novedades", s.novedades)
-	m.HandleFunc("GET /api/rubros", s.auth(RolLectura, s.rubros))
-	m.HandleFunc("GET /api/canales", s.auth(RolLectura, s.canales))
-	m.HandleFunc("GET /api/canales/whatsapp/qr.png", s.auth(RolOperador, s.qrWhatsApp))
-	m.HandleFunc("POST /api/canales/whatsapp/vincular", s.auth(RolOperador, s.vincularWhatsApp))
-	m.HandleFunc("POST /api/canales/whatsapp/desvincular", s.auth(RolOperador, s.desvincularWhatsApp))
+	m.HandleFunc("GET /api/rubros", s.auth(lect, s.rubros))
+	m.HandleFunc("GET /api/canales", s.auth(lect, s.canales))
+	m.HandleFunc("GET /api/canales/whatsapp/qr.png", s.soloSesion(sup, s.qrWhatsApp))
+	m.HandleFunc("POST /api/canales/whatsapp/vincular", s.soloSesion(sup, s.vincularWhatsApp))
+	m.HandleFunc("POST /api/canales/whatsapp/desvincular", s.soloSesion(sup, s.desvincularWhatsApp))
 	m.HandleFunc("POST /api/canales/webhook", s.webhook)
 	if s.MCP != nil {
 		m.Handle("/mcp", s.MCP)
@@ -185,6 +223,13 @@ func jsonOK(w http.ResponseWriter, status int, v map[string]any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
+// jsonCrudo escribe el mapa tal cual (sin forzar ok).
+func jsonCrudo(w http.ResponseWriter, status int, v map[string]any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v)
+}
+
 func jsonErr(w http.ResponseWriter, status int, msg string) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
@@ -207,6 +252,7 @@ func idDe(r *http.Request) (int64, error) {
 	return strconv.ParseInt(r.PathValue("id"), 10, 64)
 }
 
+// filtroDe lee el filtro de la query y le pone el alcance de quien pide.
 func filtroDe(r *http.Request) store.Filtro {
 	q := r.URL.Query()
 	n := func(k string) int { v, _ := strconv.Atoi(q.Get(k)); return v }
@@ -215,6 +261,7 @@ func filtroDe(r *http.Request) store.Filtro {
 		Emisor: arca.SoloDigitos(q.Get("emisor")), Desde: q.Get("desde"), Hasta: q.Get("hasta"), Q: q.Get("q"),
 		Clase: strings.ToLower(strings.TrimSpace(q.Get("clase"))), Rubro: strings.ToLower(strings.TrimSpace(q.Get("rubro"))),
 		Limite: min(max(n("limite"), 0), 500), Offset: max(n("offset"), 0),
+		Alcance: IdentidadDe(r.Context()).Alcance(),
 	}
 }
 
@@ -230,17 +277,24 @@ func verdadero(s string) bool {
 
 func (s *Server) salud(w http.ResponseWriter, r *http.Request) {
 	ia := map[string]any{"habilitada": false}
-	if v := s.App.Pipeline.Vision; v != nil {
+	if v := s.App.Pipeline.Vision(); v != nil {
 		ia = map[string]any{"habilitada": true, "modelo": v.Modelo, "local": v.Local()}
 	}
 	base := s.App.Store.Pool.Ping(r.Context()) == nil
+	cfg := s.App.Config()
 	jsonOK(w, http.StatusOK, map[string]any{
 		"version": config.Version, "base": base, "ocr": s.App.Pipeline.OCR != nil, "ia": ia,
-		"arcanum": s.App.Arcanum != nil, "almacen": s.App.Almacen.Backend(), "cifrado": s.App.Almacen.Cifrado(),
+		"arcanum": s.App.Arcanum() != nil, "almacen": s.App.Almacen.Backend(), "cifrado": s.App.Almacen.Cifrado(),
+		"nombre": cfg.Nombre, "ia_por_defecto": cfg.IAPorDefecto, "constatar_por_defecto": cfg.ConstatarPorDefecto,
+		"arranque": s.arranquePendiente(),
 	})
 }
 
 func (s *Server) metricas(w http.ResponseWriter, r *http.Request) {
+	if IdentidadDe(r.Context()).Restringido() {
+		jsonErr(w, http.StatusForbidden, "Las métricas son de toda la instalación: hace falta una clave sin restricción de clientes")
+		return
+	}
 	m, err := s.App.Store.Estadisticas(r.Context())
 	if err != nil {
 		s.fallo(w, err)
@@ -257,7 +311,8 @@ func (s *Server) metricas(w http.ResponseWriter, r *http.Request) {
 // leerArchivo saca un archivo de un multipart ("archivo") o de un JSON {nombre, contenido_base64}.
 func (s *Server) leerArchivo(w http.ResponseWriter, r *http.Request) (nombre string, datos []byte, campos map[string]string, err error) {
 	campos = map[string]string{}
-	r.Body = http.MaxBytesReader(w, r.Body, s.Cfg.MaxArchivo*4/3+1<<20)
+	maxArchivo := s.App.Config().MaxArchivo
+	r.Body = http.MaxBytesReader(w, r.Body, maxArchivo*4/3+1<<20)
 	if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/") {
 		if err = r.ParseMultipartForm(32 << 20); err != nil {
 			return "", nil, nil, fmt.Errorf("formulario inválido: %w", err)
@@ -272,9 +327,9 @@ func (s *Server) leerArchivo(w http.ResponseWriter, r *http.Request) (nombre str
 			return "", nil, nil, errors.New("falta el campo \"archivo\"")
 		}
 		defer f.Close()
-		datos, err = io.ReadAll(io.LimitReader(f, s.Cfg.MaxArchivo+1))
-		if int64(len(datos)) > s.Cfg.MaxArchivo {
-			return "", nil, nil, fmt.Errorf("el archivo supera los %d MB", s.Cfg.MaxArchivo>>20)
+		datos, err = io.ReadAll(io.LimitReader(f, maxArchivo+1))
+		if int64(len(datos)) > maxArchivo {
+			return "", nil, nil, fmt.Errorf("el archivo supera los %d MB", maxArchivo>>20)
 		}
 		return h.Filename, datos, campos, err
 	}
@@ -305,12 +360,22 @@ func (s *Server) verificar(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	ia := s.Cfg.IAPorDefecto
+	id := IdentidadDe(r.Context())
+	ia := s.App.Config().IAPorDefecto
 	if v, ok := campos["ia"]; ok {
 		ia = verdadero(v)
 	}
-	guardar := verdadero(campos["guardar"]) && RolDe(r.Context()) >= RolOperador
-	v, err := s.App.Verificar(r.Context(), nombre, datos, arca.SoloDigitos(campos["cuit_consultante"]), ia, guardar)
+	consultante, err := cuitEnAlcance(id, campos["cuit_consultante"])
+	if err != nil {
+		jsonErr(w, http.StatusForbidden, err.Error())
+		return
+	}
+	guardar := verdadero(campos["guardar"]) && id.Rol >= auth.Usuario
+	if guardar && id.Restringido() && consultante == "" {
+		jsonErr(w, http.StatusBadRequest, "Para guardar, elegí el CUIT del cliente (cuit_consultante)")
+		return
+	}
+	v, err := s.App.Verificar(r.Context(), nombre, datos, consultante, ia, guardar)
 	if err != nil {
 		jsonErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -334,7 +399,7 @@ func (s *Server) crearLote(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				continue
 			}
-			b, err := io.ReadAll(io.LimitReader(f, s.Cfg.MaxArchivo*8+1)) // un ZIP puede ser más grande que un archivo suelto
+			b, err := io.ReadAll(io.LimitReader(f, s.App.Config().MaxArchivo*8+1)) // un ZIP puede ser más grande que un archivo suelto
 			f.Close()
 			if err != nil {
 				continue
@@ -342,26 +407,38 @@ func (s *Server) crearLote(w http.ResponseWriter, r *http.Request) {
 			arch = append(arch, app.Archivo{Nombre: h.Filename, Mime: h.Header.Get("Content-Type"), Datos: b})
 		}
 	}
-	ia := s.Cfg.IAPorDefecto
+	id := IdentidadDe(r.Context())
+	cliente, err := cuitEnAlcance(id, r.FormValue("cliente_cuit"))
+	if err != nil {
+		jsonErr(w, http.StatusForbidden, err.Error())
+		return
+	}
+	if id.Restringido() && cliente == "" {
+		jsonErr(w, http.StatusBadRequest, "Elegí el CUIT del cliente: tu usuario tiene más de un cliente asignado")
+		return
+	}
+	cfg, hayArcanum := s.App.Config(), s.App.Arcanum() != nil
+	ia := cfg.IAPorDefecto
 	if v := r.FormValue("ia"); v != "" {
 		ia = verdadero(v)
 	}
-	constatar := s.App.Arcanum != nil
+	constatar := cfg.ConstatarPorDefecto && hayArcanum
 	if v := r.FormValue("constatar"); v != "" {
-		constatar = verdadero(v) && s.App.Arcanum != nil
+		constatar = verdadero(v) && hayArcanum
 	}
 	origen := r.FormValue("origen")
 	if origen != "arcanum" && origen != "mcp" {
 		origen = "web"
 	}
 	res, err := s.App.CrearLote(r.Context(), store.LoteNuevo{
-		Nombre: strings.TrimSpace(r.FormValue("nombre")), ClienteCUIT: arca.SoloDigitos(r.FormValue("cliente_cuit")),
+		Nombre: strings.TrimSpace(r.FormValue("nombre")), ClienteCUIT: cliente,
 		Origen: origen, IA: ia, Constatar: constatar,
 	}, arch, 0)
 	if err != nil {
 		jsonErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	s.auditar(r, "lote.crear", fmt.Sprintf("lote %d", res.Lote.ID), map[string]any{"cliente_cuit": cliente, "archivos": res.Recibidos, "origen": origen})
 	jsonOK(w, http.StatusAccepted, map[string]any{"lote": res.Lote, "recibidos": res.Recibidos, "repetidos": res.Repetidos, "descartados": res.Descartados})
 }
 
@@ -375,7 +452,7 @@ func envMB(k string, def int) int {
 
 func (s *Server) lotes(w http.ResponseWriter, r *http.Request) {
 	f := filtroDe(r)
-	ls, total, err := s.App.Store.Lotes(r.Context(), f.Limite, f.Offset)
+	ls, total, err := s.App.Store.Lotes(r.Context(), f.Limite, f.Offset, f.Alcance)
 	if err != nil {
 		s.fallo(w, err)
 		return
@@ -390,6 +467,9 @@ func (s *Server) lote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	l, err := s.App.Store.Lote(r.Context(), id)
+	if err == nil && !IdentidadDe(r.Context()).Permite(l.ClienteCUIT) {
+		err = store.ErrNoEncontrado
+	}
 	if err != nil {
 		s.fallo(w, err)
 		return
@@ -412,7 +492,7 @@ func (s *Server) comprobante(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusBadRequest, "id inválido")
 		return
 	}
-	c, err := s.App.Store.Comprobante(r.Context(), id)
+	c, err := s.cbteVisible(r, id)
 	if err != nil {
 		s.fallo(w, err)
 		return
@@ -436,14 +516,27 @@ func (s *Server) corregir(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusBadRequest, "JSON inválido")
 		return
 	}
+	if _, err := s.cbteVisible(r, id); err != nil {
+		s.fallo(w, err)
+		return
+	}
 	campos := map[string]string{}
+	nombres := []string{}
 	for k, v := range b.Campos {
 		campos[k] = fmt.Sprint(v)
+		nombres = append(nombres, k)
 	}
-	if len(b.Usuario) > 100 {
-		b.Usuario = b.Usuario[:100]
+	sort.Strings(nombres)
+	// Con sesión, el papel de trabajo dice quién es la persona (no lo que mande el pedido). Con una
+	// clave, la app que llama (Arcanum) puede decir en nombre de quién corrige.
+	quien := IdentidadDe(r.Context()).Quien()
+	if IdentidadDe(r.Context()).Tipo != auth.TipoSesion && strings.TrimSpace(b.Usuario) != "" {
+		quien = strings.TrimSpace(b.Usuario)
 	}
-	c, err := s.App.Corregir(r.Context(), id, campos, b.Aprobar, b.Usuario)
+	if len(quien) > 100 {
+		quien = quien[:100]
+	}
+	c, err := s.App.Corregir(r.Context(), id, campos, b.Aprobar, quien)
 	if err != nil {
 		if errors.Is(err, store.ErrNoEncontrado) {
 			s.fallo(w, err)
@@ -452,13 +545,19 @@ func (s *Server) corregir(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if len(nombres) > 0 {
+		s.auditar(r, "comprobante.corregir", fmt.Sprintf("comprobante %d", id), map[string]any{"campos": nombres, "en_nombre_de": quien})
+	}
+	if b.Aprobar {
+		s.auditar(r, "comprobante.aprobar", fmt.Sprintf("comprobante %d", id), map[string]any{"en_nombre_de": quien})
+	}
 	jsonOK(w, http.StatusOK, map[string]any{"comprobante": c})
 }
 
 // rubros devuelve los rubros que se recuerdan por CUIT del emisor (lo que corrigió una persona) y la
 // lista de rubros válidos.
 func (s *Server) rubros(w http.ResponseWriter, r *http.Request) {
-	rs, err := s.App.Store.Rubros(r.Context())
+	rs, err := s.App.Store.Rubros(r.Context(), IdentidadDe(r.Context()).Alcance())
 	if err != nil {
 		s.fallo(w, err)
 		return
@@ -470,6 +569,10 @@ func (s *Server) constatar(w http.ResponseWriter, r *http.Request) {
 	id, err := idDe(r)
 	if err != nil {
 		jsonErr(w, http.StatusBadRequest, "id inválido")
+		return
+	}
+	if _, err := s.cbteVisible(r, id); err != nil {
+		s.fallo(w, err)
 		return
 	}
 	c, err := s.App.ConstatarUno(r.Context(), id)
@@ -490,7 +593,7 @@ func (s *Server) archivo(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusBadRequest, "id inválido")
 		return
 	}
-	d, b, err := s.App.Original(r.Context(), id)
+	d, b, err := s.original(r, id)
 	if err != nil {
 		s.fallo(w, err)
 		return
@@ -514,7 +617,7 @@ func (s *Server) pagina(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusBadRequest, "id o página inválidos")
 		return
 	}
-	d, b, err := s.App.Original(r.Context(), id)
+	d, b, err := s.original(r, id)
 	if err != nil {
 		s.fallo(w, err)
 		return
@@ -548,11 +651,13 @@ func (s *Server) pagina(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) exportar(formato string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		filas, err := s.App.Filas(r.Context(), filtroDe(r))
+		f := filtroDe(r)
+		filas, err := s.App.Filas(r.Context(), f)
 		if err != nil {
 			s.fallo(w, err)
 			return
 		}
+		s.auditar(r, "exportar", formato, map[string]any{"filas": len(filas), "filtro": r.URL.RawQuery})
 		nombre := "factorum-" + time.Now().Format("20060102-1504")
 		var buf bytes.Buffer
 		tipo := "text/csv; charset=utf-8"
@@ -609,7 +714,7 @@ func (s *Server) qrWhatsApp(w http.ResponseWriter, r *http.Request) {
 func (s *Server) vincularWhatsApp(w http.ResponseWriter, r *http.Request) {
 	v, ok := s.App.Canal("whatsapp").(vinculable)
 	if !ok {
-		jsonErr(w, http.StatusNotFound, "WhatsApp no está habilitado (FACTORUM_WHATSAPP=true)")
+		jsonErr(w, http.StatusNotFound, "WhatsApp no está activado (Configuración, WhatsApp)")
 		return
 	}
 	var b struct {
@@ -634,15 +739,20 @@ func (s *Server) desvincularWhatsApp(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusBadGateway, err.Error())
 		return
 	}
+	s.auditar(r, "config.whatsapp_desvincular", "whatsapp", nil)
 	jsonOK(w, http.StatusOK, map[string]any{})
 }
 
 func (s *Server) webhook(w http.ResponseWriter, r *http.Request) {
-	if s.Webhook == nil {
-		jsonErr(w, http.StatusNotFound, "El webhook no está habilitado (FACTORUM_WEBHOOK_TOKEN)")
+	var wh Webhook
+	if s.Webhook != nil {
+		wh = s.Webhook()
+	}
+	if wh == nil {
+		jsonErr(w, http.StatusNotFound, "El webhook no está habilitado (Configuración, Webhook)")
 		return
 	}
-	if !s.Webhook.Autorizado(r.Header.Get("X-Factorum-Token")) {
+	if !wh.Autorizado(r.Header.Get("X-Factorum-Token")) {
 		jsonErr(w, http.StatusUnauthorized, "Token inválido")
 		return
 	}
@@ -651,7 +761,7 @@ func (s *Server) webhook(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusRequestEntityTooLarge, "Cuerpo demasiado grande")
 		return
 	}
-	m, err := s.Webhook.Decodificar(body)
+	m, err := wh.Decodificar(body)
 	if err != nil {
 		jsonErr(w, http.StatusBadRequest, err.Error())
 		return

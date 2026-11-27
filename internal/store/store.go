@@ -127,6 +127,8 @@ type Documento struct {
 	Error      string    `json:"error,omitempty"`
 	RepetidoDe *int64    `json:"repetido_de,omitempty"`
 	Creado     time.Time `json:"creado"`
+	// ClienteCUIT es el del lote: decide quién puede ver el archivo.
+	ClienteCUIT string `json:"cliente_cuit"`
 }
 
 // Cbte es un comprobante guardado: los datos leídos más su estado en Factorum.
@@ -181,6 +183,9 @@ type Filtro struct {
 	Q       string
 	Clase   string // "", "facturas" (todo lo que no es tique) o "tickets" (tiques de controlador fiscal)
 	Rubro   string // supermercado, combustible...; "sin_rubro" trae los que no tienen
+	// Alcance son los CUITs de cliente que puede ver quien pide: nil = todos. Lo pone la API según
+	// la identidad, nunca el pedido.
+	Alcance []string
 	Limite  int
 	Offset  int
 }
@@ -259,11 +264,12 @@ func (s *Store) Lote(ctx context.Context, id int64) (*Lote, error) {
 	return scanLote(s.Pool.QueryRow(ctx, selLote+` WHERE l.id=$1`, id))
 }
 
-func (s *Store) Lotes(ctx context.Context, limite, offset int) ([]Lote, int, error) {
+// Lotes lista los lotes, del más nuevo al más viejo. alcance: CUITs de cliente visibles (nil = todos).
+func (s *Store) Lotes(ctx context.Context, limite, offset int, alcance []string) ([]Lote, int, error) {
 	if limite <= 0 || limite > 500 {
 		limite = 50
 	}
-	rows, err := s.Pool.Query(ctx, selLote+` ORDER BY l.id DESC LIMIT $1 OFFSET $2`, limite, offset)
+	rows, err := s.Pool.Query(ctx, selLote+` WHERE ($3::text[] IS NULL OR l.cliente_cuit = ANY($3)) ORDER BY l.id DESC LIMIT $1 OFFSET $2`, limite, offset, alcance)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -277,7 +283,7 @@ func (s *Store) Lotes(ctx context.Context, limite, offset int) ([]Lote, int, err
 		res = append(res, *l)
 	}
 	var total int
-	_ = s.Pool.QueryRow(ctx, `SELECT count(*) FROM lotes`).Scan(&total)
+	_ = s.Pool.QueryRow(ctx, `SELECT count(*) FROM lotes l WHERE ($1::text[] IS NULL OR l.cliente_cuit = ANY($1))`, alcance).Scan(&total)
 	return res, total, rows.Err()
 }
 
@@ -325,8 +331,9 @@ func (s *Store) CrearDocumento(ctx context.Context, tx pgx.Tx, lote int64, nombr
 func (s *Store) Documento(ctx context.Context, id int64) (*Documento, error) {
 	var d Documento
 	var e *string
-	err := s.Pool.QueryRow(ctx, `SELECT id, lote_id, nombre, mime, tamano, sha256, estado, error, repetido_de, creado FROM documentos WHERE id=$1`, id).
-		Scan(&d.ID, &d.LoteID, &d.Nombre, &d.Mime, &d.Tamano, &d.SHA256, &d.Estado, &e, &d.RepetidoDe, &d.Creado)
+	err := s.Pool.QueryRow(ctx, `SELECT d.id, d.lote_id, d.nombre, d.mime, d.tamano, d.sha256, d.estado, d.error, d.repetido_de, d.creado, l.cliente_cuit
+		FROM documentos d JOIN lotes l ON l.id = d.lote_id WHERE d.id=$1`, id).
+		Scan(&d.ID, &d.LoteID, &d.Nombre, &d.Mime, &d.Tamano, &d.SHA256, &d.Estado, &e, &d.RepetidoDe, &d.Creado, &d.ClienteCUIT)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNoEncontrado
 	}
@@ -449,6 +456,9 @@ func (f Filtro) where() (string, []any) {
 	add := func(cond string, v any) {
 		a = append(a, v)
 		w = append(w, strings.ReplaceAll(cond, "?", "$"+strconv.Itoa(len(a))))
+	}
+	if f.Alcance != nil {
+		add("c.cliente_cuit = ANY(?::text[])", f.Alcance)
 	}
 	if f.Lote > 0 {
 		add("c.lote_id = ?", f.Lote)
@@ -669,9 +679,12 @@ func (s *Store) GuardarRubroCUIT(ctx context.Context, cuit, rubro, usuario strin
 	return n, err
 }
 
-// Rubros lista los rubros guardados por CUIT, del más reciente al más viejo.
-func (s *Store) Rubros(ctx context.Context) ([]RubroCUIT, error) {
-	rows, err := s.Pool.Query(ctx, `SELECT cuit_emisor, rubro, usuario, actualizado FROM rubros_cuit ORDER BY actualizado DESC LIMIT 5000`)
+// Rubros lista los rubros guardados por CUIT, del más reciente al más viejo. Con alcance, solo los
+// de emisores que aparecen en comprobantes de esos clientes.
+func (s *Store) Rubros(ctx context.Context, alcance []string) ([]RubroCUIT, error) {
+	rows, err := s.Pool.Query(ctx, `SELECT cuit_emisor, rubro, usuario, actualizado FROM rubros_cuit r
+		WHERE $1::text[] IS NULL OR EXISTS (SELECT 1 FROM comprobantes c WHERE c.cuit_emisor = r.cuit_emisor AND c.cliente_cuit = ANY($1))
+		ORDER BY actualizado DESC LIMIT 5000`, alcance)
 	if err != nil {
 		return nil, err
 	}

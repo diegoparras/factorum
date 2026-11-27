@@ -181,7 +181,7 @@ func TestVisionCompletaSinPisar(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]any{"content": contenido}}}})
 	}))
 	defer srv.Close()
-	p.Vision = &extractor.Vision{BaseURL: srv.URL, Modelo: "prueba"}
+	p.SetVision(&extractor.Vision{BaseURL: srv.URL, Modelo: "prueba"})
 	r := p.Procesar(context.Background(), "foto.png", leer(t, "foto_fb.png"), Opciones{IA: true})
 	if llamadas != 1 {
 		t.Fatalf("llamadas al modelo: %d", llamadas)

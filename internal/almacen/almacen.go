@@ -19,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/klauspost/compress/zstd"
 	"github.com/minio/minio-go/v7"
@@ -35,10 +36,12 @@ type Backend interface {
 
 // Almacen comprime y cifra sobre un Backend.
 type Almacen struct {
-	b    Backend
-	aead cipher.AEAD
-	enc  *zstd.Encoder
-	dec  *zstd.Decoder
+	mu       sync.RWMutex
+	b        Backend
+	respaldo Backend // si se cambió de backend: de acá se lee lo que no está en el nuevo
+	aead     cipher.AEAD
+	enc      *zstd.Encoder
+	dec      *zstd.Decoder
 }
 
 var ErrNoExiste = errors.New("el objeto no existe")
@@ -68,8 +71,26 @@ func Nuevo(b Backend, clave []byte) (*Almacen, error) {
 	return a, nil
 }
 
-func (a *Almacen) Backend() string { return a.b.Nombre() }
-func (a *Almacen) Cifrado() bool   { return a.aead != nil }
+func (a *Almacen) backends() (Backend, Backend) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.b, a.respaldo
+}
+
+// Backend es el nombre del backend donde se guarda lo nuevo ("disco" o "r2").
+func (a *Almacen) Backend() string {
+	b, _ := a.backends()
+	return b.Nombre()
+}
+
+// CambiarBackend pasa a guardar en b (se cambió R2 desde la pantalla). respaldo, si no es nil, es
+// de donde se sigue leyendo lo que todavía no está en b (lo guardado antes del cambio).
+func (a *Almacen) CambiarBackend(b, respaldo Backend) {
+	a.mu.Lock()
+	a.b, a.respaldo = b, respaldo
+	a.mu.Unlock()
+}
+func (a *Almacen) Cifrado() bool { return a.aead != nil }
 
 const magia = "FTM1"
 const flagCifrado = 1
@@ -121,19 +142,24 @@ func (a *Almacen) Abrir(obj []byte) ([]byte, error) {
 // Guardar sella y sube. La clave suele ser "originales/<sha256>" o "resultados/<sha256>.json".
 // Si ya existe, no se vuelve a subir.
 func (a *Almacen) Guardar(ctx context.Context, clave string, datos []byte) (int, error) {
-	if ok, err := a.b.Existe(ctx, clave); err == nil && ok {
+	b, _ := a.backends()
+	if ok, err := b.Existe(ctx, clave); err == nil && ok {
 		return 0, nil
 	}
 	obj, err := a.Sellar(datos)
 	if err != nil {
 		return 0, err
 	}
-	return len(obj), a.b.Poner(ctx, clave, obj)
+	return len(obj), b.Poner(ctx, clave, obj)
 }
 
-// Leer baja y abre.
+// Leer baja y abre. Si no está en el backend actual y hay respaldo, lo busca ahí.
 func (a *Almacen) Leer(ctx context.Context, clave string) ([]byte, error) {
-	obj, err := a.b.Traer(ctx, clave)
+	b, resp := a.backends()
+	obj, err := b.Traer(ctx, clave)
+	if err != nil && resp != nil {
+		obj, err = resp.Traer(ctx, clave)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -246,6 +272,11 @@ func (s *S3) Traer(ctx context.Context, clave string) ([]byte, error) {
 		return nil, err
 	}
 	return b, nil
+}
+
+// Borrar saca un objeto (lo usa la prueba de la configuración de R2).
+func (s *S3) Borrar(ctx context.Context, clave string) error {
+	return s.cli.RemoveObject(ctx, s.bucket, s.prefijo+clave, minio.RemoveObjectOptions{})
 }
 
 func (s *S3) Existe(ctx context.Context, clave string) (bool, error) {

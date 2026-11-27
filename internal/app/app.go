@@ -18,6 +18,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -38,19 +39,39 @@ import (
 )
 
 type App struct {
-	Cfg      *config.Config
+	Cfg      *config.Config // la configuración del arranque; la vigente la da Config()
 	Store    *store.Store
 	Almacen  *almacen.Almacen
 	Pipeline *pipeline.Pipeline
-	Arcanum  *arcanum.Cliente // nil = sin Arcanum
 	River    *river.Client[pgx.Tx]
 	Log      *slog.Logger
+
+	cfg atomic.Pointer[config.Config]   // la vigente, si se cambió desde la pantalla
+	arc atomic.Pointer[arcanum.Cliente] // nil = sin Arcanum
 
 	mu      sync.RWMutex
 	canales map[string]canal.Canal
 
 	padron sync.Map // cuit -> razón social
 }
+
+// Config es la configuración vigente. Se cambia en caliente (Configuración): cada llamado puede
+// devolver otra, así que conviene tomarla una vez por operación.
+func (a *App) Config() *config.Config {
+	if c := a.cfg.Load(); c != nil {
+		return c
+	}
+	return a.Cfg
+}
+
+// SetConfig reemplaza la configuración vigente.
+func (a *App) SetConfig(c *config.Config) { a.cfg.Store(c) }
+
+// Arcanum es el cliente de Arcanum vigente (nil = sin Arcanum).
+func (a *App) Arcanum() *arcanum.Cliente { return a.arc.Load() }
+
+// SetArcanum cambia el cliente de Arcanum (nil lo apaga).
+func (a *App) SetArcanum(c *arcanum.Cliente) { a.arc.Store(c) }
 
 // ---------- Trabajos de la cola ----------
 
@@ -120,7 +141,7 @@ func (a *App) IniciarCola(ctx context.Context) error {
 	river.AddWorker(ws, &notificarWorker{a: a})
 	a.River, err = river.NewClient(drv, &river.Config{
 		Queues: map[string]river.QueueConfig{
-			river.QueueDefault: {MaxWorkers: a.Cfg.Workers},
+			river.QueueDefault: {MaxWorkers: a.Config().Workers},
 			"arcanum":          {MaxWorkers: 1}, // WSCDC no es para ráfagas
 		},
 		Workers:     ws,
@@ -142,6 +163,13 @@ func (a *App) RegistrarCanal(c canal.Canal) {
 		a.canales = map[string]canal.Canal{}
 	}
 	a.canales[c.Nombre()] = c
+}
+
+// QuitarCanal saca un canal (se apagó desde la configuración).
+func (a *App) QuitarCanal(nombre string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	delete(a.canales, nombre)
 }
 
 func (a *App) Canal(nombre string) canal.Canal {
@@ -255,7 +283,7 @@ type ResultadoLote struct {
 // CrearLote guarda los archivos y encola su procesamiento. Con ventana > 0 y un chat, reutiliza el
 // lote abierto de ese chat (WhatsApp manda los archivos de a uno).
 func (a *App) CrearLote(ctx context.Context, n store.LoteNuevo, archivos []Archivo, ventana time.Duration) (*ResultadoLote, error) {
-	ok, desc := Expandir(archivos, a.Cfg.MaxArchivo)
+	ok, desc := Expandir(archivos, a.Config().MaxArchivo)
 	if len(ok) == 0 {
 		if len(desc) > 0 {
 			return nil, fmt.Errorf("ningún archivo es un PDF o una imagen: %s", strings.Join(desc, ", "))
@@ -321,7 +349,7 @@ func (a *App) CrearLote(ctx context.Context, n store.LoteNuevo, archivos []Archi
 }
 
 func (a *App) opciones(l *store.Lote) pipeline.Opciones {
-	return pipeline.Opciones{MaxPaginas: a.Cfg.MaxPaginas, IA: l.IA}
+	return pipeline.Opciones{MaxPaginas: a.Config().MaxPaginas, IA: l.IA}
 }
 
 // procesar es el trabajo de la cola para un documento.
@@ -375,7 +403,7 @@ func (a *App) alTerminarLote(ctx context.Context, loteID int64) {
 	if err != nil {
 		return
 	}
-	if l.Constatar && a.Arcanum != nil {
+	if l.Constatar && a.Arcanum() != nil {
 		if _, err := a.River.Insert(ctx, ConstatarArgs{LoteID: loteID}, nil); err != nil {
 			a.Log.Error("no se pudo encolar la constatación", "lote", loteID, "error", err)
 		}
@@ -399,7 +427,8 @@ func (a *App) encolarAviso(ctx context.Context, l *store.Lote) {
 // le gana a las palabras clave, pero no a lo que eligió una persona). El padrón se guarda en
 // memoria por CUIT.
 func (a *App) enriquecerConPadron(ctx context.Context, r *modelo.Resultado) {
-	if a.Arcanum == nil || a.Arcanum.Consultante == "" {
+	arc := a.Arcanum()
+	if arc == nil || arc.Consultante == "" {
 		return
 	}
 	for i := range r.Comprobantes {
@@ -414,7 +443,7 @@ func (a *App) enriquecerConPadron(ctx context.Context, r *modelo.Resultado) {
 		} else {
 			cctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 			var err error
-			p, err = a.Arcanum.Padron(cctx, "", c.CUITEmisor)
+			p, err = arc.Padron(cctx, "", c.CUITEmisor)
 			cancel()
 			if err != nil {
 				a.Log.Info("padrón no disponible", "error", err)
@@ -528,7 +557,8 @@ func (a *App) aplicarConstatacion(ctx context.Context, c *store.Cbte, k *arcanum
 }
 
 func (a *App) constatarLote(ctx context.Context, loteID int64) error {
-	if a.Arcanum == nil {
+	arc := a.Arcanum()
+	if arc == nil {
 		return nil
 	}
 	l, err := a.Store.Lote(ctx, loteID)
@@ -551,7 +581,7 @@ func (a *App) constatarLote(ctx context.Context, loteID int64) error {
 		if arca.CUITValido(l.ClienteCUIT) {
 			consultante = l.ClienteCUIT
 		}
-		ks, err := a.Arcanum.ConstatarTodo(ctx, consultante, ptrs)
+		ks, err := arc.ConstatarTodo(ctx, consultante, ptrs)
 		if err != nil {
 			return err // la cola reintenta con espera creciente
 		}
@@ -567,8 +597,9 @@ func (a *App) constatarLote(ctx context.Context, loteID int64) error {
 
 // ConstatarUno constata un comprobante en el momento.
 func (a *App) ConstatarUno(ctx context.Context, id int64) (*store.Cbte, error) {
-	if a.Arcanum == nil {
-		return nil, errors.New("Arcanum no está configurado (ARCANUM_URL y ARCANUM_API_KEY)")
+	arc := a.Arcanum()
+	if arc == nil {
+		return nil, errors.New("Arcanum no está configurado (Configuración, Arcanum)")
 	}
 	c, err := a.Store.Comprobante(ctx, id)
 	if err != nil {
@@ -578,7 +609,7 @@ func (a *App) ConstatarUno(ctx context.Context, id int64) (*store.Cbte, error) {
 	if arca.CUITValido(c.ClienteCUIT) {
 		consultante = c.ClienteCUIT
 	}
-	ks, err := a.Arcanum.ConstatarTodo(ctx, consultante, []*modelo.Comprobante{&c.Datos})
+	ks, err := arc.ConstatarTodo(ctx, consultante, []*modelo.Comprobante{&c.Datos})
 	if err != nil {
 		return nil, err
 	}
@@ -609,10 +640,11 @@ var gravedad = map[string]int{"valida": 0, "tique_controlado": 1, "no_verificabl
 
 // Verificar lee un archivo y lo constata, sin guardarlo (salvo que se pida).
 func (a *App) Verificar(ctx context.Context, nombre string, datos []byte, consultante string, ia, guardar bool) (*Verificacion, error) {
-	if int64(len(datos)) > a.Cfg.MaxArchivo {
-		return nil, fmt.Errorf("el archivo supera los %d MB", a.Cfg.MaxArchivo>>20)
+	cfg, arc := a.Config(), a.Arcanum()
+	if int64(len(datos)) > cfg.MaxArchivo {
+		return nil, fmt.Errorf("el archivo supera los %d MB", cfg.MaxArchivo>>20)
 	}
-	r := a.Pipeline.Procesar(ctx, nombre, datos, pipeline.Opciones{MaxPaginas: a.Cfg.MaxPaginas, IA: ia})
+	r := a.Pipeline.Procesar(ctx, nombre, datos, pipeline.Opciones{MaxPaginas: cfg.MaxPaginas, IA: ia})
 	v := &Verificacion{Resultado: r, Constatacion: []arcanum.Constatacion{}, Comprobantes: []VeredictoComprobante{}}
 	if r.Error != "" {
 		v.Veredicto, v.Mensaje = "no_verificable", "No se pudo leer el archivo: "+r.Error
@@ -626,12 +658,12 @@ func (a *App) Verificar(ctx context.Context, nombre string, datos []byte, consul
 	a.aplicarRubrosGuardados(ctx, &r)
 	v.Resultado = r
 	ks := make([]arcanum.Constatacion, len(r.Comprobantes))
-	if a.Arcanum != nil {
+	if arc != nil {
 		ptrs := make([]*modelo.Comprobante, len(r.Comprobantes))
 		for i := range r.Comprobantes {
 			ptrs[i] = &r.Comprobantes[i].Comprobante
 		}
-		res, err := a.Arcanum.ConstatarTodo(ctx, consultante, ptrs)
+		res, err := arc.ConstatarTodo(ctx, consultante, ptrs)
 		if err != nil {
 			for i := range ks {
 				ks[i] = arcanum.Constatacion{Error: err.Error()}
@@ -643,7 +675,7 @@ func (a *App) Verificar(ctx context.Context, nombre string, datos []byte, consul
 	peor := -1
 	for i := range r.Comprobantes {
 		var k *arcanum.Constatacion
-		if a.Arcanum != nil {
+		if arc != nil {
 			k = &ks[i]
 		}
 		ver, msg := arcanum.Veredicto(&r.Comprobantes[i], k)
@@ -653,7 +685,7 @@ func (a *App) Verificar(ctx context.Context, nombre string, datos []byte, consul
 			v.Veredicto, v.Mensaje = ver, msg
 		}
 	}
-	if a.Arcanum != nil {
+	if arc != nil {
 		v.Constatacion = ks
 	}
 	if guardar {

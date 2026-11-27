@@ -26,13 +26,14 @@ const ayuda = `Factorum lee facturas de ARCA.
 
 // Permitido decide si un remitente puede usar el canal.
 func (a *App) Permitido(m canal.Mensaje) bool {
+	cfg := a.Config()
 	switch m.Canal {
 	case "webhook":
 		return true // ya pasó por el token
 	case "telegram":
-		return contiene(a.Cfg.TelegramPermitidos, m.Remitente) || contiene(a.Cfg.TelegramPermitidos, m.Chat)
+		return contiene(cfg.TelegramPermitidos, m.Remitente) || contiene(cfg.TelegramPermitidos, m.Chat)
 	case "whatsapp":
-		return contiene(a.Cfg.WhatsAppPermitidos, arca.SoloDigitos(m.Remitente))
+		return contiene(cfg.WhatsAppPermitidos, arca.SoloDigitos(m.Remitente))
 	}
 	return false
 }
@@ -97,14 +98,15 @@ func (a *App) responder(ctx context.Context, m canal.Mensaje) string {
 			return "Mandame el PDF o la foto de la factura. Escribí \"ayuda\" para ver qué puedo hacer."
 		}
 	}
-	cliente := a.Cfg.CanalClienteCUIT[m.Remitente]
+	cfg := a.Config()
+	cliente := cfg.CanalClienteCUIT[m.Remitente]
 	if cliente == "" {
-		cliente = a.Cfg.CanalClienteCUIT[arca.SoloDigitos(m.Remitente)]
+		cliente = cfg.CanalClienteCUIT[arca.SoloDigitos(m.Remitente)]
 	}
 	if strings.Contains(texto, "verific") || strings.Contains(texto, "legal") || strings.Contains(texto, "trucha") {
 		var partes []string
 		for _, f := range m.Archivos {
-			v, err := a.Verificar(ctx, f.Nombre, f.Datos, cliente, a.Cfg.IAPorDefecto, false)
+			v, err := a.Verificar(ctx, f.Nombre, f.Datos, cliente, cfg.IAPorDefecto, false)
 			if err != nil {
 				partes = append(partes, f.Nombre+": "+err.Error())
 				continue
@@ -115,7 +117,7 @@ func (a *App) responder(ctx context.Context, m canal.Mensaje) string {
 	}
 	rl, err := a.CrearLote(ctx, store.LoteNuevo{
 		Nombre: fmt.Sprintf("%s %s", m.Canal, time.Now().Format("02/01 15:04")), ClienteCUIT: cliente,
-		Origen: m.Canal, Canal: m.Canal, Chat: m.Chat, IA: a.Cfg.IAPorDefecto, Constatar: a.Arcanum != nil,
+		Origen: m.Canal, Canal: m.Canal, Chat: m.Chat, IA: cfg.IAPorDefecto, Constatar: cfg.ConstatarPorDefecto && a.Arcanum() != nil,
 	}, m.Archivos, 5*time.Minute)
 	if err != nil {
 		return "No pude cargar los archivos: " + err.Error()

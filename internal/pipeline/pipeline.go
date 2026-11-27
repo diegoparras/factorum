@@ -14,6 +14,7 @@ import (
 	"image/jpeg"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	xdraw "golang.org/x/image/draw"
@@ -37,11 +38,11 @@ type Opciones struct {
 
 // Pipeline es seguro para usar desde varias goroutines a la vez.
 type Pipeline struct {
-	Motor  pdfx.Motor
-	OCR    *extractor.Tesseract // nil = sin OCR
-	Vision *extractor.Vision    // nil = sin IA
-	Ahora  func() time.Time
+	Motor pdfx.Motor
+	OCR   *extractor.Tesseract // nil = sin OCR
+	Ahora func() time.Time
 
+	vis       atomic.Pointer[extractor.Vision] // nil = sin IA; se cambia en caliente desde Configuración
 	semOCR    chan struct{}
 	semVision chan struct{}
 }
@@ -55,9 +56,17 @@ func Nuevo(motor pdfx.Motor, ocr *extractor.Tesseract, vision *extractor.Vision,
 	if concIA <= 0 {
 		concIA = 1
 	}
-	return &Pipeline{Motor: motor, OCR: ocr, Vision: vision, Ahora: time.Now,
+	p := &Pipeline{Motor: motor, OCR: ocr, Ahora: time.Now,
 		semOCR: make(chan struct{}, concOCR), semVision: make(chan struct{}, concIA)}
+	p.vis.Store(vision)
+	return p
 }
+
+// Vision es el modelo de visión actual (nil = sin IA).
+func (p *Pipeline) Vision() *extractor.Vision { return p.vis.Load() }
+
+// SetVision cambia el modelo de visión (nil lo apaga). Lo que ya está corriendo termina con el anterior.
+func (p *Pipeline) SetVision(v *extractor.Vision) { p.vis.Store(v) }
 
 // Procesar lee un archivo (PDF o imagen) y devuelve sus comprobantes con los controles.
 func (p *Pipeline) Procesar(ctx context.Context, nombre string, datos []byte, op Opciones) (res modelo.Resultado) {
@@ -231,7 +240,7 @@ func (p *Pipeline) leerPDF(ctx context.Context, datos []byte, op Opciones, res *
 			p.cronometrar(res, "ocr", t)
 		}
 		g.hallazgos = append(g.hallazgos, fusionarQR(&g.cbte, g.qr)...)
-		if op.IA && p.Vision != nil && necesitaMas(&g.cbte) {
+		if op.IA && p.Vision() != nil && necesitaMas(&g.cbte) {
 			t := time.Now()
 			var img []byte
 			mime := ""
@@ -285,7 +294,7 @@ func (p *Pipeline) leerImagen(ctx context.Context, datos []byte, op Opciones, re
 		p.cronometrar(res, "ocr", t)
 	}
 	g.hallazgos = append(g.hallazgos, fusionarQR(&g.cbte, g.qr)...)
-	if op.IA && p.Vision != nil && necesitaMas(&g.cbte) {
+	if op.IA && p.Vision() != nil && necesitaMas(&g.cbte) {
 		t := time.Now()
 		b, mime := paraModelo(img)
 		if v, err := p.vision(ctx, b, mime, ""); err == nil {
@@ -296,7 +305,7 @@ func (p *Pipeline) leerImagen(ctx context.Context, datos []byte, op Opciones, re
 		}
 		p.cronometrar(res, "vision", t)
 	}
-	if g.qr == nil && p.OCR == nil && (!op.IA || p.Vision == nil) {
+	if g.qr == nil && p.OCR == nil && (!op.IA || p.Vision() == nil) {
 		return nil, errors.New("la imagen no tiene un QR de ARCA legible y no hay OCR ni modelo de visión configurado")
 	}
 	g.cbte.Paginas = g.paginas
@@ -368,7 +377,11 @@ func (p *Pipeline) vision(ctx context.Context, img []byte, mime, texto string) (
 		return modelo.Comprobante{}, ctx.Err()
 	}
 	defer func() { <-p.semVision }()
-	return p.Vision.Extraer(ctx, img, mime, texto)
+	v := p.Vision()
+	if v == nil {
+		return modelo.Comprobante{}, errors.New("el modelo de visión se apagó")
+	}
+	return v.Extraer(ctx, img, mime, texto)
 }
 
 // fusionarQR pisa los campos que trae el QR (dato oficial) y avisa si el texto decía otra cosa:

@@ -15,9 +15,9 @@ Cada pedido se hace con **una clave de API** o con **la sesión del navegador**:
 | Rol | Puede |
 |---|---|
 | `lectura` | `GET` y las consultas que no modifican (`POST /api/verificar` sin guardar, MCP de lectura) |
-| `usuario` | Además cargar lotes, corregir, constatar y aprobar (el `operador` de antes) |
-| `admin` | Además usuarios de rol hasta admin, claves de API, los clientes de los canales y la auditoría |
-| `superadmin` | Todo, incluida la configuración y los superadmin |
+| `usuario` | Además cargar lotes, corregir, constatar y aprobar (el `operador` de antes); borrar comprobantes, cambiar el cliente de un lote, ver la papelera y restaurar |
+| `admin` | Además borrar lotes enteros, usuarios de rol hasta admin, claves de API, los clientes de los canales y la auditoría |
+| `superadmin` | Todo, incluida la configuración, los superadmin y, con sesión, el borrado definitivo a mano (vaciar la papelera) |
 
 Sin clave ni sesión, o con una clave inválida, vencida o revocada, la respuesta es `401`. Con un rol que no alcanza, `403`. Con la contraseña temporal sin cambiar, todo da `403 { "debe_cambiar": true }` salvo `GET /api/sesion` y `POST /api/sesion/clave`. `/healthz`, `/api/novedades` y `GET /api/arranque` no piden nada.
 
@@ -29,6 +29,7 @@ Una persona o una clave puede tener `cuits`: la lista de CUITs de cliente que pu
 - Un comprobante, lote, documento o página de otro cliente da `404`; lo mismo `PATCH` y `constatar`.
 - `POST /api/lotes` con un `cliente_cuit` ajeno da `403`; sin `cliente_cuit`, si tiene un solo CUIT se usa ese, y si tiene varios, `400`.
 - `POST /api/verificar` con un `cuit_consultante` ajeno da `403`.
+- Borrar, restaurar y cambiar el cliente: solo lo de esos clientes (lo demás da `404`); el cliente nuevo de un lote también tiene que ser uno de esos (`403`).
 - MCP: las mismas reglas en todas las herramientas.
 - `/metrics` es de toda la instalación: con restricción, `403`.
 
@@ -130,8 +131,15 @@ La respuesta es `202 { "ok": true, "lote": Lote }`. El procesamiento corre en se
 Lote = { "id": 12, "nombre": "Noviembre", "cliente_cuit": "20222222223", "origen": "web|telegram|whatsapp|webhook|correo|mcp|arcanum",
          "creado": "2026-11-25T12:00:00Z", "estado": "procesando|terminado",
          "documentos": 120, "procesados": 87, "con_error": 1,
-         "comprobantes": { "ok": 80, "revisar": 5, "error": 2, "aprobado": 0 } }
+         "comprobantes": { "ok": 80, "revisar": 5, "error": 2, "aprobado": 0 },
+         "constatacion_pendiente": false, "constatado": true }
 ```
+
+Los números cuentan solo lo vivo: lo que está en la [papelera](#papelera) no se cuenta. `constatacion_pendiente`: el lote se constata y le falta algún comprobante; `constatado`: alguno ya se constató.
+
+`DELETE /api/lotes/{id}` (admin o más) manda el lote entero a la papelera, con sus documentos y comprobantes. Devuelve `{ ok, borrado: { documentos, comprobantes, trabajos_cancelados }, dias }`. Si todavía se está procesando, en la misma transacción se cancelan sus trabajos de la cola (lo que espera y lo que está corriendo); si un documento termina de leerse justo después, su resultado no se guarda. Al restaurarlo, lo que quedó sin procesar vuelve a la cola. Un lote que no existe, ya está en la papelera o es de otro cliente: `404`.
+
+`PATCH /api/lotes/{id}` (usuario o más) `{ "cliente_cuit": "30-71111111-1" }` cambia el cliente del lote y de todos sus comprobantes (también los que están en la papelera). No borra nada. El CUIT tiene que ser válido (dígito verificador; si no, `400`) y estar entre los clientes de quien pide (`403`). Lo que ya se constató con el CUIT consultante del cliente viejo pierde esa constatación, queda con el aviso `reconstatar` y se vuelve a constatar con el nuevo: el lote entero si se constata al terminar (si todavía se está procesando, lo hace el cierre del lote) o solo esos comprobantes si se habían constatado de a uno. Sin Arcanum, quedan sin constatar con el aviso. Devuelve `{ ok, lote, cambio: { antes, despues, comprobantes, reconstatar, constatacion_encolada } }`.
 
 ## Comprobantes
 
@@ -165,6 +173,8 @@ Quién corrige: con sesión, el email de la persona (se ignora `usuario`); con u
 Cada campo cambiado queda en `correcciones` (antes, después, quién y cuándo) y pasa a tener origen `manual`. Los controles se recalculan. Con `aprobar: true`, el estado pasa a `aprobado`. La respuesta es `{ ok, comprobante: Cbte }`.
 
 Además de los campos de importe, fecha y emisor, se pueden corregir `hora` (`HH:MM` o `HH:MM:SS`) y `rubro` (uno de la lista de abajo; otro valor da `400`).
+
+`POST /api/comprobantes/borrar` (usuario o más) `{ "ids": [12, 13] }` manda esos comprobantes a la papelera (hasta 5.000 por pedido). Si a un documento no le queda ningún comprobante vivo, se va con ellos. Si alguno no existe, ya está en la papelera o es de otro cliente, no se borra ninguno: `404` con los ids. Devuelve `{ ok, borrado: { documentos, comprobantes }, dias }`.
 
 ### Rubro
 
@@ -280,6 +290,30 @@ Reglas:
 - `GET /api/correo/google/callback` → canjea el código, guarda el refresh token cifrado y la cuenta, y vuelve a `/?google=ok#configuracion` (o `?google=error&detalle=...`). Solo con la sesión del mismo superadmin que lo pidió.
 - `POST /api/correo/google/desconectar` → revoca el permiso en Google y lo borra.
 
+## Papelera
+
+Borrar no borra nada de verdad: marca (`borrado_en`, `borrado_por`) el lote o los comprobantes y sus documentos. Todo lo que lista, cuenta, resume o exporta lo ignora: `GET /api/lotes`, `/api/comprobantes` (y la bandeja de Revisar), `/api/resumen`, las exportaciones, `/api/panel`, `/metrics`, `/api/rubros`, MCP, las respuestas de los chats, los avisos y el resumen semanal por mail, la detección de duplicados y la de archivos repetidos. Un comprobante, lote o documento de la papelera da `404` (también al corregirlo o constatarlo).
+
+**Volver a subir.** Un archivo cuyo SHA-256 está solo en la papelera no es «repetido»: se procesa de nuevo como nuevo. El viejo sigue en la papelera hasta que vence o se vacía.
+
+- `GET /api/papelera?limite=100&offset=0` (usuario o más, lo de sus clientes) → `{ ok, items, total, dias }`. Cada item:
+
+```json
+{ "tipo": "lote|comprobante", "id": 12, "lote_id": 12, "lote_nombre": "Noviembre", "lote_borrado": false, "cliente_cuit": "20222222223",
+  "borrado_en": "2026-11-27T12:00:00Z", "borrado_por": "ana@estudio.com.ar", "vence": "2026-12-27T12:00:00Z", "dias_restantes": 30,
+  "documentos": 3, "comprobantes": 4,
+  "archivo": "a.pdf", "cbte_tipo": 1, "punto_venta": 2, "numero": 1543, "fecha": "2026-11-02", "emisor": "ACME SA", "cuit_emisor": "30711111111", "total": "121000.00", "estado": "ok" }
+```
+
+  Un lote trae `documentos` y `comprobantes` (lo que se fue con él); un comprobante borrado suelto, sus datos y, si su lote también está en la papelera, `lote_borrado: true`. Lo que se fue con su lote no aparece suelto: vuelve con el lote.
+- `POST /api/papelera/restaurar` (usuario o más) `{ "items": [ { "tipo": "lote", "id": 12 }, { "tipo": "comprobante", "id": 40 } ] }` → `{ ok, restaurados, rechazados: [ { tipo, id, error } ] }`. Vuelve todo como estaba: estados, correcciones, aprobaciones y constatación. Un comprobante cuyo documento está en la papelera vuelve con su documento. Se rechaza (cada uno por separado) si su lote también está en la papelera («restaurá primero el lote») o si, mientras tanto, se volvió a subir el mismo archivo y se procesó: no puede haber dos documentos vivos con el mismo archivo («ya hay uno igual cargado después; borrá ese primero»). Si no se restauró nada: `409` (o `404`) con `error` y `rechazados`.
+- `DELETE /api/papelera` (superadmin, **solo con sesión**) `{ "confirmacion": "borrar" }` → `{ ok, borrado: { lotes, documentos, comprobantes, archivos } }`: vacía la papelera (lo de sus clientes).
+- `POST /api/papelera/borrar` (superadmin, **solo con sesión**) `{ "items": [...], "confirmacion": "borrar" }`: Borrar ya, de a uno o varios.
+
+Una clave de API no puede vaciar ni borrar para siempre (`403`): un error o una integración desbocada se arreglan restaurando.
+
+**Borrado definitivo.** Cada hora, un trabajo de la cola (`purgar_papelera`, cola `mantenimiento`) borra lo que lleva en la papelera más de `papelera.dias` (por defecto 30): las filas (lotes con todo lo suyo, comprobantes con sus correcciones, documentos que se quedaron sin comprobantes y lotes que se quedaron sin documentos) y después los archivos del almacén (el original y el resultado, en el disco y en R2) que ya no usa ningún documento, vivo o en la papelera. Los archivos se direccionan por su SHA-256: el mismo PDF subido en dos lotes es un solo archivo y se borra recién cuando no queda ninguno. La carga y el borrado comparten un candado de Postgres por archivo: no se puede borrar un archivo que se está volviendo a subir. Mientras corre el pase a R2 o la liberación del disco, los archivos esperan a la próxima pasada. Queda en la auditoría como `papelera.purgar`.
+
 ## MCP
 
 `POST /mcp` es Streamable HTTP, sin estado. Solo con clave de API (no acepta la cookie del navegador). Cada clave ve sus clientes y, con rol lectura, no tiene `procesar_factura`.
@@ -294,7 +328,7 @@ Reglas:
 | `resumen` | Mismos filtros que `/api/resumen` | lectura |
 | `estado_lote` | `{ id }` | lectura |
 
-Las respuestas son datos JSON, recortados por debajo de 20.000 caracteres.
+Las respuestas son datos JSON, recortados por debajo de 20.000 caracteres. Lo que está en la papelera no aparece en ninguna herramienta, y por MCP no se puede borrar nada.
 
 ## Arranque y sesión
 
@@ -350,7 +384,7 @@ Reglas: nadie da un rol mayor al suyo ni CUITs que no tiene; un admin no toca su
 
 ## Configuración (con sesión)
 
-- `GET /api/configuracion` (admin) → `{ campos, secciones, canales, url_publica, webhook_entrada }`. Un superadmin ve todas las secciones (`general`, `arcanum`, `lockatus`, `telegram`, `whatsapp`, `webhook`, `correo_entrada`, `correo_salida`, `avisos`, `ia`, `r2`, `copias`, `clientes`) y además `correo: { urls, estado, smtp, google: { conectado, cuenta, fijado } }` (las URLs para cada servicio, sin tokens) y `lockatus: { redirect, listo, solo, login_local, sesion_lockatus }` (la Redirect URI para registrar en Lockatus, si se puede entrar, si solo se entra así, si está la salida de emergencia y si la sesión de quien mira se abrió con Lockatus); un admin, solo `clientes`. Los campos de tipo `opcion` traen `opciones: [ { valor, etiqueta } ]` y los `entero`, `min` y `max`. Cada campo: `{ clave, seccion, etiqueta, tipo, env, ayuda, ejemplo, valor, configurado, ultimos, bloqueado, origen, actualizado_por, actualizado }`. Un secreto nunca trae `valor`: solo `configurado` y, si es largo, `ultimos` (los últimos 4 caracteres).
+- `GET /api/configuracion` (admin) → `{ campos, secciones, canales, url_publica, webhook_entrada }`. Un superadmin ve todas las secciones (`general`, `arcanum`, `lockatus`, `telegram`, `whatsapp`, `webhook`, `correo_entrada`, `correo_salida`, `avisos`, `ia`, `r2`, `copias`, `papelera`, `clientes`) y además `correo: { urls, estado, smtp, google: { conectado, cuenta, fijado } }` (las URLs para cada servicio, sin tokens) y `lockatus: { redirect, listo, solo, login_local, sesion_lockatus }` (la Redirect URI para registrar en Lockatus, si se puede entrar, si solo se entra así, si está la salida de emergencia y si la sesión de quien mira se abrió con Lockatus); un admin, solo `clientes`. Los campos de tipo `opcion` traen `opciones: [ { valor, etiqueta } ]` y los `entero`, `min` y `max`. Cada campo: `{ clave, seccion, etiqueta, tipo, env, ayuda, ejemplo, valor, configurado, ultimos, bloqueado, origen, actualizado_por, actualizado }`. Un secreto nunca trae `valor`: solo `configurado` y, si es largo, `ultimos` (los últimos 4 caracteres).
 - `PUT /api/configuracion` `{ cambios: { "telegram.token": "...", "telegram.permitidos": ["1","2"], "general.url_publica": null } }` → la vista nueva más `cambiadas`. `null` borra lo guardado (vuelve al entorno o al valor de fábrica); un secreto `""` no se toca. Un campo fijado por una variable de entorno da `409`; un valor inválido, `400`. Al guardar se reconfiguran sin reiniciar Arcanum, Lockatus, el modelo de visión, el almacén y los canales. Prender `lockatus.solo` desde una sesión que no se abrió con Lockatus da `409` (para no quedar afuera).
 - `POST /api/configuracion/probar/{seccion}` (superadmin) `{ cambios }` → `{ exito, mensaje }`. Prueba con lo que está en pantalla, sin guardar: `general` (la URL pública responde), `arcanum` (`/api/health` y `/api/tenants`), `lockatus` (lee el discovery del emisor, controla que tenga los endpoints de autorización, token y claves, PKCE S256 y RS256 o ES256, y lee el JWKS), `telegram` (`getMe`), `webhook` (un aviso firmado a la URL de salida), `ia` (`/models` y que esté el modelo), `r2` (pone y borra un objeto), `correo_entrada` (IMAP: entra y cuenta los mensajes de la carpeta; Gmail: la cuenta y la etiqueta; Cloudflare y proveedores: que la URL pública responda y el secreto esté) y `correo_salida` (con `destino` en el cuerpo, manda un mail de prueba; sin él, solo entra).
 
@@ -366,6 +400,7 @@ Reglas: nadie da un rol mayor al suyo ni CUITs que no tiene; un admin no toca su
 | `ia.url`, `ia.modelo`, `ia.api_key` | `LLM_API_BASE_URL`, `LLM_MODEL`, `LLM_API_KEY` | URL, texto, secreto |
 | `r2.endpoint`, `r2.bucket`, `r2.access_key`, `r2.secret_key`, `r2.prefijo` | `FACTORUM_R2_*` | URL, texto, secreto, secreto, texto |
 | `copias.activo`, `copias.hora`, `copias.diarias`, `copias.mensuales` | `FACTORUM_COPIAS`, `FACTORUM_COPIAS_HORA`, `FACTORUM_COPIAS_DIARIAS`, `FACTORUM_COPIAS_MENSUALES` | sí/no (por defecto sí), hora `HH:MM` de Buenos Aires (03:30), entero 1 a 366 (14), entero 0 a 120 (12) |
+| `papelera.dias` | `FACTORUM_PAPELERA_DIAS` | entero 1 a 365 (30): días que queda lo borrado antes del borrado definitivo |
 | `clientes.canales` | `FACTORUM_CANAL_CLIENTES` | remitente → CUIT (`{ "5491155550000": "20222222223" }` o `"5491155550000 = 20-22222222-3"` por renglón). El remitente puede ser un email o `@dominio` |
 | `correo.forma`, `correo.permitidos`, `correo.max_mb`, `correo.contestar` | `FACTORUM_CORREO_FORMA`, `FACTORUM_CORREO_PERMITIDOS`, `FACTORUM_CORREO_MAX_MB`, `FACTORUM_CORREO_CONTESTAR` | opción (`imap`, `cloudflare`, `proveedor`, `gmail`, `apagado`), emails o `@dominio`, entero (1 a 100), sí/no |
 | `imap.host`, `imap.puerto`, `imap.tls`, `imap.usuario`, `imap.clave`, `imap.carpeta`, `imap.intervalo`, `imap.procesado`, `imap.carpeta_procesado` | `FACTORUM_IMAP_*` | texto, entero, opción (`implicito`, `starttls`, `ninguno`), texto, secreto, texto, entero (15 a 3600), opción (`leido`, `mover`), texto |
@@ -416,7 +451,7 @@ Para avisar por otro medio cuando una copia falla, `copias.Servicio.AlTerminar(f
 
 `GET /api/auditoria?desde=AAAA-MM-DD&hasta=AAAA-MM-DD&persona=texto&accion=sesion.&limite=50&offset=0` → `{ eventos: [ { id, creado, actor, actor_tipo, usuario_id, accion, objeto, detalle, ip } ], total, acciones }`. Las fechas van en hora argentina; `accion` terminada en punto filtra por grupo.
 
-Acciones: `sesion.entrar`, `sesion.fallida`, `sesion.salir`, `sesion.entrar_lockatus` (con `cuenta_creada` y `rol`), `sesion.rechazo_lockatus` (con el `motivo`: state inválido, sin email verificado, desactivada, sin cuenta, la firma, el emisor, la audiencia, el vencimiento o el nonce del `id_token`...), `usuario.crear`, `usuario.editar`, `usuario.desactivar`, `usuario.reactivar`, `usuario.restablecer`, `usuario.cambiar_clave`, `clave.crear`, `clave.revocar`, `config.cambiar` (qué claves, nunca los valores), `config.whatsapp_desvincular`, `lote.crear`, `comprobante.corregir`, `comprobante.aprobar`, `exportar`, `suite.pase_emitido`, `suite.pase_usado`, `suite.pase_rechazado`, `suite.abrir`, `suite.abrir_fallido`, `correo.recibido`, `correo.retenido`, `correo.ignorado` (sin adjuntos útiles, muy grande o ilegible), `correo.aceptar`, `correo.descartar`, `config.google_conectar`, `config.google_desconectar`, `usuario.pedir_restablecer`, `usuario.restablecer_por_mail`, `usuario.aceptar_invitacion`, `usuario.link_por_mail`, `r2.migrar_inicio`, `r2.migrar_pausa`, `r2.migrar_seguir`, `r2.migrar_fin`, `r2.liberar_inicio`, `r2.liberar_fin`, `copia.pedir`, `copia.ok`, `copia.error`, `copia.descargar`, `copia.restaurar`. Del correo, quién lo mandó, la forma y cuántos adjuntos; nunca el texto ni el asunto. Nunca lleva contraseñas, claves, tokens ni pases.
+Acciones: `sesion.entrar`, `sesion.fallida`, `sesion.salir`, `sesion.entrar_lockatus` (con `cuenta_creada` y `rol`), `sesion.rechazo_lockatus` (con el `motivo`: state inválido, sin email verificado, desactivada, sin cuenta, la firma, el emisor, la audiencia, el vencimiento o el nonce del `id_token`...), `usuario.crear`, `usuario.editar`, `usuario.desactivar`, `usuario.reactivar`, `usuario.restablecer`, `usuario.cambiar_clave`, `clave.crear`, `clave.revocar`, `config.cambiar` (qué claves, nunca los valores), `config.whatsapp_desvincular`, `lote.crear`, `comprobante.corregir`, `comprobante.aprobar`, `exportar`, `suite.pase_emitido`, `suite.pase_usado`, `suite.pase_rechazado`, `suite.abrir`, `suite.abrir_fallido`, `correo.recibido`, `correo.retenido`, `correo.ignorado` (sin adjuntos útiles, muy grande o ilegible), `correo.aceptar`, `correo.descartar`, `config.google_conectar`, `config.google_desconectar`, `usuario.pedir_restablecer`, `usuario.restablecer_por_mail`, `usuario.aceptar_invitacion`, `usuario.link_por_mail`, `r2.migrar_inicio`, `r2.migrar_pausa`, `r2.migrar_seguir`, `r2.migrar_fin`, `r2.liberar_inicio`, `r2.liberar_fin`, `copia.pedir`, `copia.ok`, `copia.error`, `copia.descargar`, `copia.restaurar`, `lote.borrar` (con nombre, cliente, documentos, comprobantes y si estaba en proceso), `comprobante.borrar` (con los ids), `lote.cambiar_cliente` (antes y después), `papelera.restaurar`, `papelera.vaciar`, `papelera.borrar_ya` y `papelera.purgar` (el automático, actor Factorum). Del correo, quién lo mandó, la forma y cuántos adjuntos; nunca el texto ni el asunto. Nunca lleva contraseñas, claves, tokens ni pases.
 
 ## Suite Escriba: el pase entre apps
 

@@ -2,6 +2,27 @@
 
 Cada versión publicada tiene su sección. La imagen Docker toma la versión de la primera.
 
+## [0.7.0] - 2026-11-27
+
+### Borrar lo que se cargó mal
+
+- **Borrar un lote entero** (admin o superadmin): en Lotes, o arriba de sus comprobantes, el botón **Borrar**. Para confirmar hay que escribir el nombre del lote. Si todavía se está procesando, lo que falta se cancela.
+- **Borrar comprobantes sueltos** (usuario o más, de tus clientes): en Comprobantes hay casillas para elegir varios (y «elegir todos los de esta página») y una barra con **Borrar (N)**. También hay un botón **Borrar** en la revisión de cada comprobante. Si a un archivo no le queda ningún comprobante, se va con ellos.
+- **Cambiar el cliente de un lote**: si lo cargaste al cliente equivocado, **Cambiar cliente** lo pasa al CUIT correcto con todos sus comprobantes, sin borrar nada. Lo que ya se había constatado con ARCA usando el CUIT del cliente viejo se vuelve a constatar con el nuevo.
+
+### Papelera
+
+- Lo que se borra va a la **Papelera** (menú Datos): qué es, cuándo y quién lo borró, de qué lote y cliente, y cuántos días faltan para que se borre para siempre. Cada uno ve lo de sus clientes.
+- **Restaurar** lo deja tal cual estaba: estados, correcciones, aprobaciones y constatación. Lo que había quedado sin procesar se termina de procesar.
+- Mientras está en la papelera no aparece en ningún lado: Comprobantes, Revisar, Resumen, Inicio, exportaciones, MCP, los chats, los avisos por mail ni la detección de duplicados.
+- **Volver a subir** un archivo que está en la papelera funciona: ya no dice «repetido» y se procesa como nuevo. Si después querés restaurar el viejo, Factorum te avisa que ya hay uno igual cargado: borrá ese primero.
+- A los **30 días** (se cambia en Configuración, **Papelera**, de 1 a 365) se borra para siempre, con los archivos del disco y de R2 que no use ningún otro lote. Un superadmin puede **Vaciar la papelera** o **Borrar ya** algo, escribiendo «borrar».
+- Las copias de seguridad llevan lo que está en la papelera, y todo (borrar, restaurar, vaciar, cambiar el cliente y el borrado automático) queda en la auditoría.
+
+### API
+
+- `DELETE /api/lotes/{id}`, `PATCH /api/lotes/{id}` con `cliente_cuit`, `POST /api/comprobantes/borrar`, `GET /api/papelera`, `POST /api/papelera/restaurar` y, solo con la sesión de un superadmin, `DELETE /api/papelera` y `POST /api/papelera/borrar`. MCP no puede borrar nada.
+
 ## [0.5.0] - 2026-11-27
 
 ### Entrar con Lockatus

@@ -24,7 +24,7 @@ Esto ya lo explica la presentación [Facturas e IA](https://github.com/diegoparr
 
 ## La solución
 
-Factorum hace el "camino C" de esa presentación (código, no IA) a escala. A la IA la deja como último recurso, opcional y local.
+Factorum hace el "camino C" de esa presentación (código, no IA) a escala. A la IA la deja como último recurso y opcional: local, o externa si aceptás el aviso de qué pasa con los datos ([Elegir la IA](#elegir-la-ia)).
 
 ```
  Entradas                       Factorum (Go)                          Salidas
@@ -34,7 +34,7 @@ Factorum hace el "camino C" de esa presentación (código, no IA) a escala. A la
 │ WhatsApp      │───▶│   1. QR de ARCA (dato oficial)   │───▶│ Excel / CSV          │
 │ Telegram      │    │   2. Texto del PDF               │    │ Resumen por alícuota │
 │ Webhook       │    │   3. OCR (Tesseract)             │    │ API REST             │
-│ MCP / Arcanum │    │   4. Visión local (Ollama), opc. │    │ MCP                  │
+│ MCP / Arcanum │    │   4. Visión (IA), opcional       │    │ MCP                  │
 └───────────────┘    │   Controles + WSCDC (Arcanum)    │    │ Avisos por el chat   │
                      └──────────────────────────────────┘    └──────────────────────┘
 ```
@@ -149,9 +149,10 @@ Con un modelo de visión local:
 
 ```bash
 docker compose --profile ia up -d
-docker compose exec ollama ollama pull qwen2.5vl:7b
-# en .env: LLM_API_BASE_URL=http://ollama:11434/v1 y LLM_MODEL=qwen2.5vl:7b
+docker compose exec ollama ollama pull qwen3-vl:4b-instruct
 ```
+
+Después, en Configuración, **IA (visión)**, elegí «Ollama (en tu servidor)» y el modelo de la lista (ver [Elegir la IA](#elegir-la-ia)).
 
 Como **módulo de Arcanum**, usá el `docker-compose.factorum.yml` del repo de Arcanum (ver su DESPLIEGUE.md). Arcanum suma la pestaña "Facturas recibidas", las herramientas MCP y la constatación.
 
@@ -187,7 +188,7 @@ Si una variable de configuración está puesta, **gana**: en la pantalla el camp
 | `FACTORUM_R2_*` | R2 o cualquier S3. Sin esto, guarda en disco (`/data`) |
 | `FACTORUM_COPIAS`, `FACTORUM_COPIAS_HORA`, `FACTORUM_COPIAS_DIARIAS`, `FACTORUM_COPIAS_MENSUALES` | Copia diaria de la base (por defecto sí, a las 03:30, 14 diarias y 12 mensuales) |
 | `FACTORUM_PAPELERA_DIAS` | Días que queda lo borrado en la papelera antes del borrado definitivo (1 a 365, por defecto 30) |
-| `LLM_API_BASE_URL`, `LLM_MODEL`, `LLM_API_KEY` | Modelo de visión compatible con OpenAI (Ollama, LM Studio, vLLM, OpenAI, Anthropic, Gemini...). Una IA externa no se usa hasta que un superadmin acepta su aviso en la pantalla |
+| `FACTORUM_IA_PROVEEDOR`, `LLM_API_BASE_URL`, `LLM_MODEL`, `LLM_API_KEY` | Modelo de visión compatible con OpenAI. Mejor elegirlo en la pantalla, de una lista (ver [Elegir la IA](#elegir-la-ia)). El proveedor es `ollama`, `openai`, `anthropic`, `gemini`, `openrouter` u `otro`; sin él, sale de la URL. Una IA externa no se usa hasta que un superadmin acepta su aviso en la pantalla |
 | `ARCANUM_URL`, `ARCANUM_URL_PUBLICA`, `ARCANUM_API_KEY`, `ARCANUM_CUIT_CONSULTANTE` | Constatación, apócrifos, padrón y el pase de la suite |
 | `FACTORUM_TELEGRAM_TOKEN`, `FACTORUM_TELEGRAM_PERMITIDOS` | Bot de Telegram |
 | `FACTORUM_WHATSAPP`, `FACTORUM_WHATSAPP_PERMITIDOS` | WhatsApp como dispositivo vinculado |
@@ -382,6 +383,30 @@ Reglas para todas:
 
 Ver [docs/API.md](docs/API.md).
 
+## Elegir la IA
+
+La IA es opcional: sin ella, Factorum lee con el QR, el texto del PDF y el OCR, y lo que no pueda leer queda para completar a mano. Si querés que complete lo que falta, en Configuración, **IA (visión)**:
+
+1. **Proveedor**: Ollama (en tu servidor), OpenAI, Anthropic (Claude), Google Gemini, OpenRouter u otro compatible con OpenAI (LM Studio, vLLM, un gateway). La URL se completa sola; se cambia solo en Ollama (si corre en otra máquina) y en «Otro». Con OpenAI elegís también la región, si usás su residencia de datos (hay que habilitarla en el proyecto de OpenAI).
+2. **Clave**, si el proveedor la pide (Ollama no). Al lado está el link a dónde se saca.
+3. **Modelo**: Factorum le pide la lista al proveedor (desde el servidor, sin guardar nada) y deja los que leen imágenes. Arriba, los **probados por Factorum**. Si el tuyo no está, «Otro modelo…».
+4. **Probar** le manda un ticket de prueba con lo que está en pantalla y te dice qué leyó y cuánto tardó. **Guardar** lo aplica sin reiniciar.
+
+**Local o externa.** Una IA **local** (Ollama en tu servidor) no saca los comprobantes de tu servidor, pero sin GPU es lenta y lee menos. Una **externa** es rápida y lee mejor, pero los comprobantes que necesitan IA salen de tu servidor: antes de usarla tenés que aceptar el aviso de qué pasa con los datos (ver [IA y privacidad](#ia-y-privacidad)).
+
+Lo que midió Factorum (prueba chica del 27/11/2026: 8 tickets de compra, 4 limpios y 4 fotos movidas, con el mismo pedido que hace Factorum; Ollama en un servidor de 4 núcleos sin GPU):
+
+| Modelo | Proveedor | Campos bien leídos | Por imagen |
+|---|---|---|---|
+| `gpt-6.1-terra` | OpenAI | 56 de 56 (100 %) | ~7 s |
+| `gpt-6-luna` | OpenAI | 53 de 56 (95 %) | ~4 s |
+| `qwen3-vl:4b-instruct` | Ollama | 44 de 56 (79 %) | ~73 s |
+| `gemma4:e4b` | Ollama | 17 de 28 (61 %), en la mitad de la prueba | ~3 min 45 s |
+
+Es una prueba chica: sirve para elegir por dónde empezar, no para prometer un resultado. Con GPU, Ollama tarda mucho menos. La tabla está en `internal/iaproveedor/recomendados.go`.
+
+Las configuraciones de antes (solo con la URL) siguen andando: el proveedor se deduce de la URL. La clave guardada nunca viaja a otro host: si cambiás de proveedor sin escribir una nueva, se borra.
+
 ## IA y privacidad
 
 Por defecto **ninguna IA ve los comprobantes**. La IA (visión) es opcional y es el último recurso: solo se usa cuando el QR, el texto del PDF y el OCR no pudieron leer un comprobante completo, y solo si se pide («Usar IA si hace falta» en Verificar o Cargar; en los chats, el correo y MCP, según `FACTORUM_IA_POR_DEFECTO`).
@@ -396,6 +421,7 @@ Por defecto **ninguna IA ve los comprobantes**. La IA (visión) es opcional y es
 | `api.openai.com` y los regionales (`eu.api.openai.com`, `us.`, `au.`, `jp.`, `in.`, `ae.`, `ca.`, `sg.`, `kr.`, `gb.`) | OpenAI (con la región, si es regional). Factorum le manda `"store": false`. |
 | `api.anthropic.com` | Anthropic |
 | `generativelanguage.googleapis.com` | Google Gemini |
+| `openrouter.ai` | OpenRouter: el aviso dice que le pasa cada pedido al proveedor del modelo elegido y que Factorum no tiene datos verificados de sus políticas |
 | Cualquier otro | Externo desconocido: el aviso dice que Factorum no conoce sus políticas |
 
 **Una IA externa no se usa sin aceptar el aviso.** Al guardarla en Configuración, IA (visión), aparece el aviso: a dónde viajan los datos, cuánto tiempo se guardan, si entrenan con ellos y qué queda en Factorum, con los datos tomados de las páginas oficiales de cada proveedor el 27/11/2026 y sus links. Para guardarla hay que tocar «Entiendo y quiero usarla»; queda registrado quién lo aceptó, cuándo y para qué host (y en la auditoría, `ia.aviso_aceptado`). Si la IA viene por variables de entorno, Factorum **no la usa** (ni en la pantalla, ni en los chats, ni por mail, ni por MCP) hasta que un superadmin la acepta desde Configuración; el log del arranque lo avisa. Si cambia el host o el texto del aviso, se pide de nuevo.

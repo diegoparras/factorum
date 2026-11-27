@@ -4,6 +4,19 @@ Cada versión publicada tiene su sección. La imagen Docker toma la versión de 
 
 ## [0.8.0] - 2026-11-27
 
+### Elegir la IA de una lista
+
+- En Configuración, **IA (visión)**, la IA se elige de una lista: primero el **proveedor** (Ollama en tu servidor, OpenAI, Anthropic, Google Gemini, OpenRouter u otro compatible con OpenAI, o **Sin IA**), y la URL se completa sola. Se puede cambiar solo donde tiene sentido: en Ollama (si corre en otra máquina) y en «Otro». Con OpenAI se elige además la **región** (global, Estados Unidos, Europa y las demás con residencia de datos), que cambia al dominio regional; ojo: la residencia de datos hay que habilitarla en el proyecto de OpenAI.
+- La **clave** aparece solo si el proveedor la pide (Ollama no), con el botón para mostrarla, «configurada, termina en ...» si ya hay una y el link a dónde se saca la de cada proveedor.
+- El **modelo** se elige de la lista que le pide Factorum al proveedor apenas hay proveedor y clave (la que escribiste o, si está vacía, la guardada), sin guardar nada. Solo quedan los que sirven para leer imágenes: de Ollama, los que tienen visión (los demás aparecen deshabilitados, «no lee imágenes»); de OpenAI, sin los de audio, voz, imágenes, embeddings, moderación, búsqueda y los que no andan con chat (pro, codex); de Gemini, los gemini; de OpenRouter, los que reciben imágenes. Si el tuyo no está, **Otro modelo…** y lo escribís.
+- **Probados por Factorum**: arriba de la lista, con su resultado en una prueba chica (8 tickets de compra, 4 limpios y 4 fotos movidas, el 27/11/2026): gpt-6.1-terra (OpenAI) 100 % y ~7 s por imagen; gpt-6-luna (OpenAI) 95 % y ~4 s; qwen3-vl:4b-instruct (Ollama) 79 % y ~73 s en 4 núcleos sin GPU; gemma4:e4b (Ollama) 61 % en la mitad de la prueba y ~3 min 45 s. Si un recomendado no está en tu Ollama, te dice el `ollama pull` para bajarlo.
+- Errores claros: «La clave no es válida para OpenAI», Ollama apagado (y cómo prenderlo), sin conexión al proveedor, lista vacía.
+- **Probar** usa lo que está en pantalla aunque no lo hayas guardado: le manda a la IA un ticket de prueba (inventado, con un CUIT y un total conocidos) y te muestra qué leyó y cuánto tardó. Si es externa y nadie aceptó el aviso para ese host, primero el aviso; si lo aceptás para probar, al guardar no te lo vuelve a pedir.
+- El sello y el aviso dicen qué proveedor elegiste: OpenRouter aparece por su nombre (y el aviso explica que le pasa cada pedido al proveedor del modelo), y un Ollama en una dirección pública, como «Ollama en <host>».
+- La clave guardada nunca viaja a otro host: si cambiás de proveedor sin escribir una clave nueva (o elegís Ollama), se borra. Entre regiones de OpenAI sirve la misma.
+- Conectar explica cómo elegir entre una IA local y una externa, con los recomendados.
+- Las configuraciones de antes siguen andando: el proveedor se deduce de la URL. `FACTORUM_IA_PROVEEDOR` lo fija desde el servidor.
+
 ### Aviso de la IA externa
 
 - Si la IA (visión) que configurás es **externa** (OpenAI, Anthropic, Google Gemini u otra), antes de guardarla Factorum te muestra **qué pasa con los datos**: a dónde viajan, cuánto tiempo se guardan, si entrenan con ellos y qué queda en Factorum. Los datos salen de las páginas oficiales de cada proveedor (leídas el 27/11/2026), con sus links. Para guardarla hay que tocar **Entiendo y quiero usarla**: queda registrado quién lo aceptó, cuándo y para qué host, también en la auditoría.
@@ -16,6 +29,8 @@ Cada versión publicada tiene su sección. La imagen Docker toma la versión de 
 
 ### API
 
+- `POST /api/ia/modelos` (solo un superadmin con sesión) con `{proveedor, url, clave}`: la lista de modelos del proveedor, filtrada y con los recomendados. La clave no vuelve ni queda en el log.
+- `POST /api/configuracion/probar/ia` manda el ticket de prueba y devuelve `leido` y `segundos`; con una IA externa sin aceptar responde 409 (`codigo: aviso_ia`) hasta que venga `aceptar_aviso_ia`. Configuración trae el campo `ia.proveedor` y la lista de proveedores y recomendados (`ia`).
 - `GET /api/ia/aviso` (el proveedor, el host, si está aceptado, si ya lo viste y el contenido del aviso), `POST /api/ia/aviso/visto` y, en `PUT /api/configuracion`, `aceptar_aviso_ia`. Verificar o cargar con `ia=true` desde la sesión de alguien que todavía no vio el aviso responde 409 (`codigo: aviso_ia`). Las claves de API no son personas: les alcanza con la aceptación del superadmin.
 
 ### Arreglos

@@ -10,10 +10,11 @@ func TestNovedades(t *testing.T) {
 	if len(n) < 2 {
 		t.Fatalf("esperaba al menos dos versiones, hay %d", len(n))
 	}
-	if n[0].Version != "0.9.0" || n[0].Fecha == "" {
-		t.Fatalf("la primera tiene que ser la 0.9.0 con fecha: %+v", n[0])
+	if n[0].Version != "0.10.0" || n[0].Fecha == "" {
+		t.Fatalf("la primera tiene que ser la 0.10.0 con fecha: %+v", n[0])
 	}
-	if !strings.Contains(n[0].Cuerpo, "### Libro IVA Digital") || strings.Contains(n[0].Cuerpo, "## [0.7.0]") || strings.Contains(n[0].Cuerpo, "### Papelera") {
+	if !strings.Contains(n[0].Cuerpo, "### Libro IVA Digital: ventas e importaciones") || !strings.Contains(n[0].Cuerpo, "### Facturas que llegan tarde") ||
+		strings.Contains(n[0].Cuerpo, "## [0.9.0]") || strings.Contains(n[0].Cuerpo, "Pantalla nueva **Libro IVA Digital**") {
 		t.Fatalf("cuerpo mal cortado: %q", n[0].Cuerpo)
 	}
 	if n[len(n)-1].Version != "0.1.0" {

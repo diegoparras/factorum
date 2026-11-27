@@ -357,30 +357,44 @@ Una clave de API no puede vaciar ni borrar para siempre (`403`): un error o una 
 
 ## Libro IVA Digital
 
-Las compras de un cliente en un mes con el formato de importación del Libro IVA Digital de ARCA (RG 4597): los archivos `LIBRO_IVA_DIGITAL_COMPRAS_CBTE` (325 posiciones) y `LIBRO_IVA_DIGITAL_COMPRAS_ALICUOTAS` (84). El diseño de registro, sus fuentes y las decisiones en los casos dudosos están en [libro-iva-digital.md](libro-iva-digital.md). Rol **usuario** o más, con el alcance por CUIT (otro cliente, `403`; con un solo cliente asignado se puede omitir).
+Un libro de un cliente en un mes con el formato de importación del Libro IVA Digital de ARCA (RG 4597): **compras** (`LIBRO_IVA_DIGITAL_COMPRAS_CBTE`, 325 posiciones, y `_ALICUOTAS`, 84), **ventas** (`LIBRO_IVA_DIGITAL_VENTAS_CBTE`, 266, y `_ALICUOTAS`, 62, con los emitidos de Mis Comprobantes que trae Arcanum 2.4.0) o **importaciones** de bienes (los despachos, tipo 066: cabecera de 325 con el número de despacho y `LIBRO_IVA_DIGITAL_IMPORTACION_BIENES_ALICUOTA`, 50). El diseño de registro, sus fuentes y las decisiones en los casos dudosos están en [libro-iva-digital.md](libro-iva-digital.md). Rol **usuario** o más, con el alcance por CUIT (otro cliente, `403`; con un solo cliente asignado se puede omitir).
 
-`GET /api/libro-iva?cliente=CUIT&periodo=AAAA-MM[&solo_aprobados=1][&conciliar=0][&registros=1]`: el resumen y los problemas, sin los archivos. El mes va por fecha de emisión. Lo que está en la papelera no cuenta.
+`GET /api/libro-iva?cliente=CUIT&periodo=AAAA-MM[&libro=compras|ventas|importaciones][&solo_aprobados=1][&conciliar=0][&registros=1]`: el resumen, los problemas y el estado de la presentación, sin los archivos. Sin `libro`, compras. Lo que está en la papelera no cuenta.
 
-- `solo_aprobados=1`: solo lo que está bien o aprobado y sin advertencias fuertes. Sin él, va todo lo que no bloquea.
-- Con Arcanum, concilia el mes con Mis Comprobantes (lo guardado de la conciliación sirve) para **avisar** lo que no figura en ARCA o tiene otros datos; nunca saca nada del archivo. `conciliar=0` no lo pide.
-- `registros=1` trae además lo que va al archivo, registro por registro.
+- **Período.** En compras e importaciones, cada comprobante va en su **período del libro**: el mes de la fecha, o el que se le asignó porque llegó después de presentar su mes, o el que eligió una persona (`periodo_iva` del comprobante, editable con `PATCH /api/comprobantes/{id}`). En ventas, el mes de la fecha de emisión.
+- `solo_aprobados=1`: solo lo que está bien o aprobado y sin advertencias fuertes. Sin él, va todo lo que no bloquea. Las ventas siempre están «bien» (vienen de ARCA).
+- En compras, con Arcanum, concilia el mes con Mis Comprobantes para **avisar** lo que no figura en ARCA o tiene otros datos; nunca saca nada del archivo. `conciliar=0` no lo pide.
+- `registros=1` trae además lo que va al archivo, registro por registro (con `clave`, `contraparte`, `doc_tipo`, `doc_nro`, `despacho`, percepciones y `de_mes_anterior`).
 
 ```json
-{ "ok": true, "cliente": "20222222223", "nombre": "GOMEZ MARIA LAURA", "periodo": "2026-11", "desde": "2026-11-01", "hasta": "2026-11-30",
+{ "ok": true, "libro": "compras", "cliente": "20222222223", "nombre": "GOMEZ MARIA LAURA", "periodo": "2026-11", "desde": "2026-11-01", "hasta": "2026-11-30",
+  "archivos": ["LIBRO_IVA_DIGITAL_COMPRAS_CBTE.txt", "LIBRO_IVA_DIGITAL_COMPRAS_ALICUOTAS.txt"],
   "solo_aprobados": false, "leidos": 18, "excluidos": 9, "cantidad_todos": 9, "cantidad_listos": 4,
-  "resumen": { "comprobantes": 9, "registros_alicuotas": 4, "notas_credito": 1, "sin_credito_fiscal": 5,
+  "resumen": { "comprobantes": 9, "registros_alicuotas": 4, "notas_credito": 1, "sin_credito_fiscal": 5, "de_meses_anteriores": 1,
     "por_alicuota": [{ "codigo": "0005", "tasa": "21", "registros": 3, "neto_gravado": 130000.00, "iva": 27300.00 }],
-    "neto_gravado": 130000.00, "no_gravado": 0.00, "exento": 0.00, "iva": 27300.00, "credito_fiscal": 27300.00, "otros_tributos": 0.00, "total": 395557.50,
+    "neto_gravado": 130000.00, "no_gravado": 0.00, "exento": 0.00, "iva": 27300.00, "credito_fiscal": 27300.00, "percepciones": 0.00, "otros_tributos": 0.00, "total": 395557.50,
     "moneda_extranjera": [{ "moneda": "DOL", "cantidad": 1, "iva": 210.00, "credito_fiscal": 210.00, "total": 1210.00 }], "por_tipo": { "Factura A": 2 } },
   "problemas": [{ "codigo": "importes_no_cierran", "nivel": "bloquea", "titulo": "Los importes no cierran", "ayuda": "...",
-    "items": [{ "id": 7, "tipo": 1, "nombre_tipo": "Factura A", "punto_venta": 5, "numero": 91, "fecha": "2026-11-15", "cuit_emisor": "30711111111",
-      "emisor": "DISTRIBUIDORA EJEMPLO S.R.L.", "total": 112100.00, "moneda": "PES", "estado": "error", "detalle": "La suma da 121.000,00 y el total es 112.100,00 (diferencia -8.900,00).", "excluido": true }] }],
+    "items": [{ "id": 7, "clave": "30711111111-1-5-91", "tipo": 1, "nombre_tipo": "Factura A", "punto_venta": 5, "numero": 91, "fecha": "2026-11-15", "cuit_emisor": "30711111111",
+      "emisor": "DISTRIBUIDORA EJEMPLO S.R.L.", "doc": "30711111111", "contraparte": "DISTRIBUIDORA EJEMPLO S.R.L.", "total": 112100.00, "moneda": "PES", "estado": "error",
+      "detalle": "La suma da 121.000,00 y el total es 112.100,00 (diferencia -8.900,00).", "excluido": true }] }],
+  "presentacion": { "estado": "presentado", "veces": 1, "cambio": true,
+    "ultima": { "id": 3, "usuario": "diego@estudio.com.ar", "creado": "2026-11-27T15:53:00-03:00", "solo_aprobados": false, "cantidad": 9,
+      "archivos": [{ "nombre": "LIBRO_IVA_DIGITAL_COMPRAS_CBTE.txt", "sha256": "...", "bytes": 2943 }, { "nombre": "LIBRO_IVA_DIGITAL_COMPRAS_ALICUOTAS.txt", "sha256": "...", "bytes": 344 }] },
+    "cambios": { "agregados": [], "quitados": [], "modificados": [{ "clave": "30711111111-1-2-1543", "id": 4, "descripcion": "Factura A 00002-00001543, DISTRIBUIDORA EJEMPLO S.A." }] },
+    "historial": [ "... las últimas 10 exportaciones ..." ] },
   "conciliacion": { "estado": "lista" }, "importar": "Al importar, elegí «Los importes están expresados en la Moneda Original del Comprobante»: ..." }
 ```
 
-En `resumen`, los importes son en pesos y las notas de crédito restan; la moneda extranjera va aparte, en su moneda. `problemas` viene agrupado por código y ordenado por `nivel`: `bloquea` (no va nunca), `fuerte` (emisor apócrifo, ARCA no lo reconoce, una A de otro comprador: va solo sin `solo_aprobados`), `advertencia` (va) e `info`. `excluido` dice si ese comprobante queda afuera con las opciones pedidas. `conciliacion.estado` es `lista`, `no_pedida` o el estado de la conciliación que no se pudo hacer (`sin_arcanum`, `sin_sincronizar`, `sin_permiso`...), con su `mensaje`. Período mal escrito o cliente que no es de 11 dígitos, `400`.
+En `resumen`, los importes son en pesos y las notas de crédito restan; la moneda extranjera va aparte, en su moneda. En ventas, `iva` es el débito fiscal y `credito_fiscal` va en 0. `problemas` viene agrupado por código y ordenado por `nivel`: `bloquea` (no va nunca), `fuerte` (emisor apócrifo, ARCA no lo reconoce, una A de otro comprador: va solo sin `solo_aprobados`), `advertencia` (va) e `info` (entre ellos `de_mes_anterior`: lo que entró de meses anteriores). `excluido` dice si ese comprobante queda afuera con las opciones pedidas. En ventas los ítems no tienen `id` (vienen de ARCA): los identifica `clave` (tipo-punto de venta-número), y `doc` y `contraparte` son el comprador.
 
-`GET /api/libro-iva/archivos.zip` con los mismos `cliente`, `periodo` y `solo_aprobados`: un ZIP con `LIBRO_IVA_DIGITAL_COMPRAS_CBTE.txt`, `LIBRO_IVA_DIGITAL_COMPRAS_ALICUOTAS.txt` (ISO 8859-1, CRLF al final de cada registro) y `resumen.csv` (para la persona: totales por alícuota, lo que va y los problemas; `;` y coma decimal). No concilia. Sin nada para exportar, `409` con el mensaje. Cada ZIP queda en la auditoría (`libro_iva.exportar`, con el cliente, el período, la opción y cuántos fueron). Al importar en ARCA, elegí «Los importes están expresados en la Moneda Original del Comprobante».
+`presentacion.estado` es `abierto` (nunca se exportó) o `presentado`: `ultima` es la última exportación y `cambios`, lo que entró, salió o cambió desde entonces, comparado con lo que se exportaría ahora con la misma opción (`solo_aprobados`) que esa vez. `conciliacion.estado` (compras) es `lista`, `no_pedida` o el estado de la conciliación que no se pudo hacer (`sin_arcanum`, `sin_sincronizar`, `sin_permiso`...), con su `mensaje`. En ventas, `fuente` dice qué trajo Arcanum: `estado` (`lista`, `sin_arcanum`, `sin_sincronizar`, `sin_permiso`, `arcanum_viejo`, `arcanum_caido`, `arcanum_error`), `mensaje`, la `cobertura`, `sin_sincronizar` (los días del mes que Arcanum no bajó), `cubre_todo`, `truncado` y `emitidos`. Período mal escrito, libro desconocido o cliente que no es de 11 dígitos, `400`.
+
+`GET /api/libro-iva/archivos.zip` con los mismos `cliente`, `periodo`, `libro` y `solo_aprobados`: un ZIP con los dos archivos del libro (ISO 8859-1, CRLF al final de cada registro) y `resumen.csv` (para la persona: totales por alícuota, lo que va y los problemas; `;` y coma decimal). Se llama `libro-iva-<libro>-<cliente>-<período>.zip`. No concilia. Sin nada para exportar, o ventas sin respuesta de Arcanum, `409` con el mensaje.
+
+**Bajar el ZIP registra la exportación:** el período de ese libro queda presentado (tabla `libro_iva_exportaciones`: cliente, período, libro, quién, cuándo, el SHA-256 de cada archivo y los comprobantes que fueron, con la huella de su registro). Se puede volver a bajar. Desde entonces, un comprobante de compra nuevo o restaurado de la papelera con fecha de ese mes va al primer período abierto posterior, con el hallazgo `llego_tarde` («Llegó después de presentar octubre de 2026: va en noviembre de 2026»); lo que fue en esa exportación se queda en su mes. Cada ZIP queda en la auditoría (`libro_iva.exportar`, con el cliente, el período, el libro, la opción, cuántos fueron, los SHA-256 y si cambió desde la presentación anterior). Al importar en ARCA, elegí «Los importes están expresados en la Moneda Original del Comprobante».
+
+**Revisar.** `PATCH /api/comprobantes/{id}` acepta además `periodo_iva` (AAAA-MM, no anterior al mes de la fecha; vacío vuelve al automático), `despacho` (16 letras y números; se guarda sin blancos ni guiones) y el detalle de los otros tributos: `percepcion_iva`, `percepcion_nacionales` (Ganancias y otros nacionales), `percepcion_iibb`, `percepcion_municipal` e `impuestos_internos` (son parte de `otros_tributos`, que sigue siendo el total). Un despacho es `tipo` 66: sin punto de venta, número ni CAE; la fecha es la de oficialización y el emisor, el proveedor del exterior (con su CUIT país). Cada cambio queda en las correcciones.
 
 ## MCP
 
@@ -395,7 +409,7 @@ En `resumen`, los importes son en pesos y las notas de crédito restan; la moned
 | `pendientes_revision` | `{ lote?, cliente? }`: lo que está en `revisar` o `error` | lectura |
 | `resumen` | Mismos filtros que `/api/resumen` | lectura |
 | `conciliar` | `{ cliente?, desde, hasta, grupo?, limite? }`: la conciliación con ARCA; totales completos y hasta `limite` comprobantes por grupo (20 por defecto, 100 como mucho) | lectura |
-| `libro_iva_resumen` | `{ cliente?, periodo, solo_aprobados?, limite? }`: el resumen del Libro IVA Digital de compras del mes y los problemas por grupo (hasta `limite` comprobantes por grupo); nunca los archivos | usuario |
+| `libro_iva_resumen` | `{ cliente?, periodo, libro?, solo_aprobados?, limite? }`: el resumen del Libro IVA Digital del mes (`libro`: compras, ventas o importaciones; compras si no va), si el período ya se presentó y si cambió, y los problemas por grupo (hasta `limite` comprobantes por grupo); nunca los archivos | usuario |
 | `estado_lote` | `{ id }` | lectura |
 
 Las respuestas son datos JSON, recortados por debajo de 20.000 caracteres. Lo que está en la papelera no aparece en ninguna herramienta, y por MCP no se puede borrar nada.

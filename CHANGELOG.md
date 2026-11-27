@@ -2,6 +2,34 @@
 
 Cada versión publicada tiene su sección. La imagen Docker toma la versión de la primera.
 
+## [0.10.0] - 2026-11-27
+
+### Libro IVA Digital: ventas e importaciones
+
+- La pantalla **Libro IVA Digital** tiene tres pestañas: **Compras**, **Ventas** e **Importaciones**. Cada una con su resumen, sus problemas y su ZIP con los dos archivos del diseño de registro oficial de ARCA.
+- **Ventas.** Salen de los comprobantes **emitidos** de Mis Comprobantes que baja Arcanum (hace falta Arcanum 2.4.0). Van con el comprador: CUIT, DNI o **consumidor final** (código 99, número 0 y «CONSUMIDOR FINAL»; los tiques agrupados, «VENTA GLOBAL DIARIA»). El detalle por alícuota sale de Mis Comprobantes o, si no lo trae, de lo que Arcanum emitió por factura electrónica (que además separa las percepciones). Si no hay detalle y el IVA es justo una alícuota del neto, va esa; si no, no va y te lo dice.
+- Si Arcanum no bajó todo el mes, la pestaña Ventas lo avisa en rojo con los días que faltan: sincronizalos en Arcanum antes de presentar.
+- Avisos de ventas: consumidor final sin identificar por **$ 10.000.000 o más** (RG 5700/2025), documento del comprador que no es válido, exportaciones (van con código X) y otros tributos que hubo que deducir del total. Las facturas C no van: el libro de ventas es de responsables inscriptos.
+- **Importaciones.** En Revisar, **Es un despacho de importación** pasa un comprobante a despacho (066): cargás el **número de despacho** (16 caracteres, como 26001IC04123456K), la fecha de oficialización, el proveedor del exterior (con su CUIT país), la base y el IVA por alícuota y las percepciones. Cada cambio queda en las correcciones.
+- Si subís el **PDF del despacho** y tiene texto, Factorum lo lee con cuidado: el número, la fecha de oficialización, la base y el IVA, el IVA adicional, la percepción de Ganancias y la de Ingresos Brutos. Lo que no puede asegurar lo deja en blanco y te avisa qué falta (siempre, el proveedor del exterior). Queda para revisar.
+- Los despachos no van en compras: van en la pestaña Importaciones, con su propio ZIP.
+
+### Facturas que llegan tarde
+
+- **Bajar el ZIP de un mes lo deja presentado.** Factorum recuerda cada exportación: quién, cuándo, la huella de cada archivo y qué comprobantes fueron. Se puede volver a bajar.
+- Cada pestaña dice si el período está **abierto** o **presentado el <fecha> por <quién>**, y si **cambió desde la presentación**: qué entró, qué salió y qué cambió, con un link a cada uno.
+- Una factura que llega (o que restaurás de la papelera) cuando su mes ya está presentado va al **primer período abierto**, con el aviso «Llegó después de presentar octubre de 2026: va en noviembre de 2026». En el archivo va con su fecha. El mes nuevo la muestra en **Entraron de meses anteriores**.
+- En Revisar, el **período del Libro IVA** se puede cambiar a mano (no puede ser anterior a la fecha; vacío vuelve al automático). Queda en las correcciones.
+- Factorum no te dice hasta cuándo se puede computar el crédito fiscal de una factura atrasada: la Ley de IVA habla del período en que se facturó y no encontramos un plazo explícito en una norma de ARCA. Consultalo con tu contador si es muy vieja.
+
+### Percepciones
+
+- En Revisar podés separar los **otros tributos** en percepción de IVA, de Ganancias, de Ingresos Brutos, municipal e impuestos internos. En el libro de compras van en su campo; lo que no separaste sigue en «Otros tributos» con el aviso.
+
+### API y MCP
+
+- `GET /api/libro-iva` y `/api/libro-iva/archivos.zip` reciben `libro=compras|ventas|importaciones` (compras si no va) y devuelven el estado de la presentación. La herramienta MCP `libro_iva_resumen` recibe `libro`.
+
 ## [0.9.0] - 2026-11-27
 
 ### Libro IVA Digital

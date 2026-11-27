@@ -112,12 +112,14 @@ Arriba ves cuándo sincronizó Arcanum por última vez y qué fechas tiene bajad
 
 ## Libro IVA Digital
 
-Las compras de un cliente en un mes, listas para «Importar archivos» en el Libro IVA Compras de ARCA (RG 4597, hoy dentro de IVA Simple). En **Libro IVA Digital** (menú Datos, o «Exportar al Libro IVA» desde Conciliación) elegís el cliente y el mes y Factorum arma los dos archivos del diseño de registro oficial: comprobantes (325 posiciones) y alícuotas (84), en ISO 8859-1.
+Las compras, las ventas y las importaciones de un cliente en un mes, listas para «Importar archivos» en el Libro IVA Digital de ARCA (RG 4597, hoy el módulo de registración de IVA Simple). En **Libro IVA Digital** (menú Datos, o «Exportar al Libro IVA» desde Conciliación) elegís la pestaña (**Compras · Ventas · Importaciones**), el cliente y el mes, y Factorum arma los dos archivos del diseño de registro oficial, en ISO 8859-1.
 
-- **Antes de bajar, los problemas:** lo que no puede ir (sin CUIT válido, sin fecha, importes que no cierran, moneda extranjera sin cotización, duplicados...), lo que no deberías computar (emisor apócrifo, ARCA no lo reconoce) y lo que conviene mirar (sin aprobar, no figura en ARCA según la conciliación, otros tributos sin detalle). Cada uno se abre en Revisar.
-- **Todos o solo los listos:** todo lo que se puede exportar con sus advertencias, o solo lo que está bien o aprobado.
-- **Cómo va cada caso:** A y M con un registro por alícuota y el crédito fiscal igual al IVA (sin prorrateo); B, C y tiques sin alícuotas y sin crédito fiscal; exento y no gravado con alícuota 0 y su código de operación; moneda extranjera en la moneda original con su cotización; los otros tributos en «Otros tributos» (Factorum no los separa: si son percepciones de IVA, pasalas a su campo).
-- El ZIP trae además un `resumen.csv` legible. Por API, `GET /api/libro-iva` y `/api/libro-iva/archivos.zip`; por MCP, `libro_iva_resumen` (sin archivos).
+- **Compras:** lo que cargaste. Comprobantes (325 posiciones) y alícuotas (84). A y M con un registro por alícuota y el crédito fiscal igual al IVA (sin prorrateo); B, C y tiques sin alícuotas y sin crédito fiscal; exento y no gravado con alícuota 0 y su código de operación; moneda extranjera en la moneda original con su cotización; las percepciones que separaste en Revisar, en su campo, y el resto en «Otros tributos».
+- **Ventas:** los emitidos de Mis Comprobantes que baja Arcanum (2.4.0 o superior). Comprobantes (266) y alícuotas (62), con el comprador (CUIT, DNI o consumidor final) y el detalle por alícuota de ARCA o de lo que Arcanum emitió. Avisa si Arcanum no bajó todo el mes.
+- **Importaciones:** los despachos (066), con su número de despacho y la fecha de oficialización. Se cargan en Revisar («Es un despacho de importación») o subiendo el PDF del despacho, que Factorum lee con cuidado.
+- **Antes de bajar, los problemas:** lo que no puede ir, lo que no deberías computar y lo que conviene mirar, cada uno con **Abrir** para corregirlo en Revisar. **Todos o solo los listos.**
+- **Presentado:** bajar el ZIP deja el mes presentado (quién, cuándo, la huella de cada archivo). La pantalla avisa si algo cambió desde entonces. Lo que llega después con fecha de un mes presentado va al primer mes abierto («Entraron de meses anteriores»); en Revisar se puede elegir otro período.
+- El ZIP trae además un `resumen.csv` legible. Por API, `GET /api/libro-iva` y `/api/libro-iva/archivos.zip` con `libro=compras|ventas|importaciones`; por MCP, `libro_iva_resumen` (sin archivos).
 
 El diseño de registro, las fuentes oficiales de ARCA y lo que no se pudo confirmar están en [docs/libro-iva-digital.md](docs/libro-iva-digital.md).
 
@@ -388,7 +390,7 @@ Reglas para todas:
 | `pendientes_revision` | Lo que tiene que mirar una persona |
 | `resumen` | Totales por alícuota |
 | `conciliar` | Lo cargado de un cliente contra lo que ARCA dice que recibió |
-| `libro_iva_resumen` | El resumen y los problemas del Libro IVA Digital de compras de un mes (solo con clave de rol usuario o más) |
+| `libro_iva_resumen` | El resumen, la presentación y los problemas del Libro IVA Digital de compras, ventas o importaciones de un mes (solo con clave de rol usuario o más) |
 | `estado_lote` | Progreso de un lote |
 
 ## API
@@ -486,7 +488,8 @@ Las facturas de prueba se generan con el modelo "ARCA" de Arcanum, que copia "Co
 | `internal/copias` | Copias de seguridad de la base: hacer, guardar, podar, programar y restaurar |
 | `internal/arcanum` | Constatación, padrón y los recibidos de Mis Comprobantes |
 | `internal/conciliar` | El cruce entre lo cargado y Mis Comprobantes (puro, en centavos) |
-| `internal/libroiva` | Los archivos de compras del Libro IVA Digital y sus problemas (puro, en centavos, con golden files) |
+| `internal/libroiva` | Los archivos de compras, ventas e importaciones del Libro IVA Digital y sus problemas (puro, en centavos, con golden files) |
+| `internal/despacho` | El lector conservador del texto de un despacho de importación |
 | `internal/auth` | Roles, identidad y alcance por CUIT, argon2id, tokens y límite de intentos |
 | `internal/oidc` | Lockatus (OIDC): discovery, Authorization Code con PKCE y la verificación del `id_token`; `oidctest` tiene un Lockatus de mentira |
 | `internal/ajustes` | La configuración desde la pantalla, con el entorno que gana y la recarga en caliente |

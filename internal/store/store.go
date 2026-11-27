@@ -60,6 +60,16 @@ func Abrir(ctx context.Context, url string, maxConns int) (*Store, error) {
 
 func (s *Store) Cerrar() { s.Pool.Close() }
 
+// Migraciones son los nombres de las migraciones que trae esta versión, en orden.
+func Migraciones() []string {
+	ents, _ := migraciones.ReadDir("migraciones")
+	res := make([]string, 0, len(ents))
+	for _, e := range ents {
+		res = append(res, e.Name())
+	}
+	return res
+}
+
 func (s *Store) migrar(ctx context.Context) error {
 	if _, err := s.Pool.Exec(ctx, `CREATE TABLE IF NOT EXISTS factorum_migraciones (nombre text PRIMARY KEY, aplicada timestamptz NOT NULL DEFAULT now())`); err != nil {
 		return err

@@ -11,6 +11,7 @@ import (
 	"github.com/riverqueue/river"
 
 	"github.com/diegoparras/factorum/internal/arca"
+	"github.com/diegoparras/factorum/internal/auth"
 	"github.com/diegoparras/factorum/internal/correo"
 	"github.com/diegoparras/factorum/internal/modelo"
 	"github.com/diegoparras/factorum/internal/store"
@@ -281,6 +282,32 @@ func (a *App) avisarLote(ctx context.Context, loteID int64) error {
 		}
 	}
 	return nil
+}
+
+// AvisarCopiaFallida manda un mail a los superadmins (y a la lista de alertas) cuando falla la copia
+// de seguridad de la base. Va con los avisos de alertas: si están apagados o no hay correo saliente,
+// no hace nada (el aviso en Inicio aparece igual). Una vez por copia y destinatario.
+func (a *App) AvisarCopiaFallida(ctx context.Context, copiaID int64, cuando time.Time, motivo string) error {
+	cfg := a.Config()
+	if !cfg.AvisoAlertas || !cfg.SMTPConfigurado() {
+		return nil
+	}
+	admins, err := a.Store.Admins(ctx)
+	if err != nil {
+		return err
+	}
+	para := slices.Clone(cfg.AvisoAlertasA)
+	for _, u := range admins {
+		if u.Rol == auth.Superadmin {
+			para = append(para, u.Email)
+		}
+	}
+	if len(para) == 0 {
+		return nil
+	}
+	hora := cuando.In(zonaAR).Format("02/01/2006 15:04")
+	m := correo.CopiaFallida(a.Marca(), hora, motivo, a.link("#configuracion"))
+	return a.mandarUnaVez(ctx, "copia:"+strconv.FormatInt(copiaID, 10), para, m)
 }
 
 func recortarItems(l []correo.ItemCbte) []correo.ItemCbte {

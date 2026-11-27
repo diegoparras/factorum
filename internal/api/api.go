@@ -26,8 +26,10 @@ import (
 	"github.com/diegoparras/factorum/internal/auth"
 	"github.com/diegoparras/factorum/internal/canal"
 	"github.com/diegoparras/factorum/internal/config"
+	"github.com/diegoparras/factorum/internal/copias"
 	"github.com/diegoparras/factorum/internal/correo"
 	"github.com/diegoparras/factorum/internal/export"
+	"github.com/diegoparras/factorum/internal/mudanza"
 	"github.com/diegoparras/factorum/internal/rubro"
 	"github.com/diegoparras/factorum/internal/store"
 )
@@ -51,6 +53,8 @@ type Server struct {
 	Probar  map[string]Prueba // pruebas de la configuración por sección (se pueden cambiar en las pruebas)
 	// EstadoCorreo dice cómo viene el correo entrante que se revisa (IMAP o Gmail); nil = sin datos.
 	EstadoCorreo func() EstadoCorreo
+	Mudanza      *mudanza.Servicio // pasar lo del disco a R2 (nil = no disponible)
+	Copias       *copias.Servicio  // copias de seguridad de la base (nil = no disponibles)
 
 	limite         *auth.Limitador
 	cupoEmail      *auth.Cupo // pedidos de «Olvidé mi contraseña» por email
@@ -151,6 +155,11 @@ func (s *Server) Handler() http.Handler {
 	m.HandleFunc("PUT /api/configuracion", s.soloSesion(adm, s.guardarConfiguracion))
 	m.HandleFunc("POST /api/configuracion/probar/{seccion}", s.soloSesion(sup, s.probarConfiguracion))
 	m.HandleFunc("GET /api/auditoria", s.soloSesion(adm, s.verAuditoria))
+	m.HandleFunc("GET /api/r2/pase", s.soloSesion(sup, s.verPaseR2))
+	m.HandleFunc("POST /api/r2/pase", s.soloSesion(sup, s.accionPaseR2))
+	m.HandleFunc("GET /api/copias", s.soloSesion(sup, s.verCopias))
+	m.HandleFunc("POST /api/copias", s.soloSesion(sup, s.hacerCopia))
+	m.HandleFunc("GET /api/copias/{id}/archivo", s.soloSesion(sup, s.descargarCopia))
 
 	// Correo: lo que entra (cada forma con su firma), lo retenido y la conexión con Google.
 	m.HandleFunc("POST "+rutaCloudflare, s.entranteCloudflare)

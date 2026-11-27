@@ -501,3 +501,9 @@ func (r registro) Debugf(string, ...any) {}
 func (r registro) Sub(modulo string) waLog.Logger {
 	return registro{log: r.log, modulo: r.modulo + "/" + modulo}
 }
+
+// PrepararTablas crea (o pone al día) las tablas whatsmeow_* de la sesión en la base, sin abrir
+// ninguna sesión. Lo usa la restauración de una copia en una base vacía.
+func PrepararTablas(ctx context.Context, db *sql.DB) error {
+	return sqlstore.NewWithDB(db, "postgres", waLog.Noop).Upgrade(ctx)
+}

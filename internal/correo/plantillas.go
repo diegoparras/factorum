@@ -257,6 +257,19 @@ func Semanal(m Marca, s ResumenSemana) Mail {
 	return Mail{Asunto: titulo, Texto: texto + pieTexto(m), HTML: html(m, titulo, cuerpo, "Ir a Revisar", s.Link, "")}
 }
 
+// CopiaFallida avisa que la copia de seguridad de la base no se pudo hacer.
+func CopiaFallida(m Marca, cuando, motivo, link string) Mail {
+	l1 := "La copia de seguridad de la base de " + m.nombre() + " del " + cuando + " no se pudo hacer."
+	l2 := "Motivo: " + motivo
+	l3 := "Mientras no haya una copia nueva, la última buena es la anterior. Revisalo en Configuración, Copias de seguridad, y tocá «Hacer una copia ahora» para probar."
+	texto := l1 + "\n\n" + l2 + "\n\n" + l3
+	if link != "" {
+		texto += "\n\n" + link
+	}
+	return Mail{Asunto: "Falló la copia de seguridad de " + m.nombre(), Texto: texto + pieTexto(m),
+		HTML: html(m, "Falló la copia de seguridad", parrafo(l1)+parrafo(l2)+parrafo(l3), "Ver las copias", link, "")}
+}
+
 // Prueba es el mail del botón «Probar» del correo saliente.
 func Prueba(m Marca) Mail {
 	t := "Si te llegó este mail, el correo saliente de " + m.nombre() + " anda: ya puede contestar a quien manda facturas, mandar los avisos y los links para restablecer contraseñas."

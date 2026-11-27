@@ -770,3 +770,33 @@ func TestCuentasSinCorreoSaliente(t *testing.T) {
 		t.Fatalf("alta con temporal: %d %v", st, m)
 	}
 }
+
+// Si falla una copia de la base, el mail va a los superadmins y a la lista de alertas, una vez.
+func TestAvisoCopiaFallida(t *testing.T) {
+	e := armarCorreo(t, func(c *config.Config) {
+		c.AvisoAlertas = true
+		c.AvisoAlertasA = []string{"socio@estudio.com"}
+	})
+	sup := e.crearSuperadmin(t)
+	_, _ = e.altaUsuario(t, sup, "ana@estudio.com", "admin", nil)
+	cuando := time.Date(2026, 11, 28, 3, 30, 0, 0, time.UTC)
+	for range 2 {
+		if err := e.app.AvisarCopiaFallida(context.Background(), 7, cuando, "no queda lugar en el disco"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r := e.smtp.Esperar(2, 10*time.Second)
+	por := map[string]string{}
+	for _, x := range r {
+		por[x.Para[0]] = decodificarQP(x.Raw)
+	}
+	if len(r) != 2 || por["diego@ejemplo.com"] == "" || por["socio@estudio.com"] == "" {
+		t.Fatalf("aviso de copia a %v", keys(por))
+	}
+	if !strings.Contains(por["socio@estudio.com"], "no queda lugar en el disco") || !strings.Contains(por["socio@estudio.com"], "28/11/2026 00:30") {
+		t.Fatalf("aviso de copia: %s", por["socio@estudio.com"])
+	}
+	if r := e.smtp.Esperar(3, time.Second); len(r) != 2 {
+		t.Fatalf("se mandó %d veces", len(r))
+	}
+}

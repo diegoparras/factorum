@@ -2,6 +2,9 @@
 //
 //	factorum serve                 servidor (API, UI, MCP, canales, cola)
 //	factorum procesar [opciones] archivos/carpetas/zips...   sin base, por consola
+//	factorum r2 migrar [--liberar] pasa a R2 lo guardado en el disco (y libera el disco)
+//	factorum copia                 hace una copia de la base ahora
+//	factorum restaurar <copia> [--confirmar]   restaura una copia de la base
 //	factorum version
 package main
 
@@ -24,16 +27,20 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/riverqueue/river"
+
 	"github.com/diegoparras/factorum/internal/ajustes"
 	"github.com/diegoparras/factorum/internal/almacen"
 	"github.com/diegoparras/factorum/internal/api"
 	"github.com/diegoparras/factorum/internal/app"
 	"github.com/diegoparras/factorum/internal/arcanum"
 	"github.com/diegoparras/factorum/internal/config"
+	"github.com/diegoparras/factorum/internal/copias"
 	"github.com/diegoparras/factorum/internal/export"
 	"github.com/diegoparras/factorum/internal/extractor"
 	"github.com/diegoparras/factorum/internal/mcpserver"
 	"github.com/diegoparras/factorum/internal/modelo"
+	"github.com/diegoparras/factorum/internal/mudanza"
 	"github.com/diegoparras/factorum/internal/pdfx"
 	"github.com/diegoparras/factorum/internal/pipeline"
 	"github.com/diegoparras/factorum/internal/store"
@@ -53,6 +60,12 @@ func main() {
 		err = procesar(os.Args[2:])
 	case "salud":
 		err = salud()
+	case "r2":
+		err = comandoR2(os.Args[2:])
+	case "copia":
+		err = comandoCopia(os.Args[2:])
+	case "restaurar":
+		err = comandoRestaurar(os.Args[2:])
 	case "version", "-v", "--version":
 		fmt.Println("factorum", config.Version)
 	default:
@@ -114,6 +127,18 @@ func uso() {
 
   factorum procesar [-xlsx salida.xlsx] [-csv salida.csv] [-json] [-ia] [-workers N] archivos...
       Procesa PDFs, imágenes, ZIPs o carpetas sin base de datos y arma un Excel o CSV.
+
+  factorum r2 migrar [--liberar]
+      Pasa a R2 lo que quedó guardado en el disco, verificando cada objeto, con el avance en texto.
+      Ctrl+C lo pausa y volver a correrlo sigue desde donde quedó. Con --liberar, borra del disco
+      solo lo que ya está verificado en R2. «factorum r2 estado» dice cómo va.
+
+  factorum copia
+      Hace una copia de seguridad de la base ahora (a R2 si está activo; si no, a FACTORUM_DATOS/copias).
+
+  factorum restaurar <archivo.copia o copias/factorum-AAAAMMDD-HHMMSS.copia> [--confirmar] [--sin-copia-previa]
+      Verifica una copia y, con --confirmar, la restaura en la base de FACTORUM_DATABASE_URL (vacía o
+      no: borra y recarga en una transacción). Necesita la misma FACTORUM_MASTER_KEY.
 
   factorum version
 `)
@@ -216,15 +241,48 @@ func servir() error {
 
 	a := &app.App{Cfg: c, Store: st, Almacen: alm, Pipeline: armarPipeline(c, log), Log: log}
 	a.SetArcanum(armarArcanum(c))
+	// El pase de lo del disco a R2 y las copias de la base: trabajos de la cola de mantenimiento.
+	mud := servicioMudanza(st, disco, alm.R2, "Factorum", log)
+	cop := servicioCopias(st, alm, a.Config, c.DirDatos, "", log)
+	a.Trabajos = func(ws *river.Workers) {
+		river.AddWorker(ws, &mudanza.Worker{S: mud})
+		river.AddWorker(ws, &copias.Worker{S: cop})
+	}
 	if err := a.IniciarCola(ctx); err != nil {
 		return err
 	}
+	mud.Encolar = func(ctx context.Context) error {
+		_, err := a.River.Insert(ctx, mudanza.Args{}, nil)
+		return err
+	}
+	cop.Encolar = func(ctx context.Context, args copias.Args, opts *river.InsertOpts) error {
+		_, err := a.River.Insert(ctx, args, opts)
+		return err
+	}
+	if err := mud.Reanudar(ctx); err != nil {
+		log.Warn("no se pudo ver si el pase a R2 había quedado a medias", "error", err)
+	}
+	// Si una copia falla, además del aviso en Inicio, un mail a los superadmins (si los avisos de
+	// alertas están prendidos y hay correo saliente). Se manda aparte para no demorar la copia.
+	cop.AlTerminar(func(ctx context.Context, cp copias.Copia) {
+		if cp.Estado != copias.Error {
+			return
+		}
+		go func() {
+			ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
+			defer cancel()
+			if err := a.AvisarCopiaFallida(ctx, cp.ID, cp.Creado, cp.Error); err != nil {
+				log.Warn("no se pudo avisar por mail que falló la copia", "error", err)
+			}
+		}()
+	})
+	go cop.Programar(ctx)
 	canales := nuevoGestor(ctx, a, st, log)
 	canales.Aplicar(c)
 	buzon := nuevoGestorCorreo(ctx, a, log)
 	buzon.Aplicar(c)
 
-	srv := &api.Server{App: a, Cfg: base, Log: log, Webhook: canales.Webhook, Ajustes: aj, EstadoCorreo: buzon.Estado}
+	srv := &api.Server{App: a, Cfg: base, Log: log, Webhook: canales.Webhook, Ajustes: aj, EstadoCorreo: buzon.Estado, Mudanza: mud, Copias: cop}
 	if sub, err := fs.Sub(web.Archivos, "."); err == nil {
 		srv.Web = sub
 	}

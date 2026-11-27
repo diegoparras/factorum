@@ -47,6 +47,9 @@ type App struct {
 	Pipeline *pipeline.Pipeline
 	River    *river.Client[pgx.Tx]
 	Log      *slog.Logger
+	// Trabajos registra los trabajos de otros paquetes (el pase a R2 y las copias de la base) antes
+	// de arrancar la cola. Van a la cola ColaMantenimiento.
+	Trabajos func(ws *river.Workers)
 
 	Reloj     func() time.Time // para las pruebas (nil = la hora de verdad)
 	TLSCorreo *tls.Config      // para las pruebas: en qué certificados confiar al hablar con el correo
@@ -135,6 +138,9 @@ func (w *notificarWorker) Work(ctx context.Context, j *river.Job[NotificarArgs])
 	return w.a.notificar(ctx, j.Args.LoteID)
 }
 
+// ColaMantenimiento es la cola del pase a R2 y de las copias de la base.
+const ColaMantenimiento = "mantenimiento"
+
 // IniciarCola migra las tablas de River, registra los trabajos y arranca los workers.
 func (a *App) IniciarCola(ctx context.Context) error {
 	drv := riverpgxv5.New(a.Store.Pool)
@@ -151,12 +157,16 @@ func (a *App) IniciarCola(ctx context.Context) error {
 	river.AddWorker(ws, &notificarWorker{a: a})
 	river.AddWorker(ws, &avisoCorreoWorker{a: a})
 	river.AddWorker(ws, &semanalWorker{a: a})
+	if a.Trabajos != nil {
+		a.Trabajos(ws)
+	}
 	a.River, err = river.NewClient(drv, &river.Config{
 		PeriodicJobs: []*river.PeriodicJob{river.NewPeriodicJob(river.PeriodicInterval(15*time.Minute),
 			func() (river.JobArgs, *river.InsertOpts) { return SemanalArgs{}, nil }, &river.PeriodicJobOpts{ID: "resumen_semanal", RunOnStart: true})},
 		Queues: map[string]river.QueueConfig{
 			river.QueueDefault: {MaxWorkers: a.Config().Workers},
 			"arcanum":          {MaxWorkers: 1}, // WSCDC no es para ráfagas
+			ColaMantenimiento:  {MaxWorkers: 2}, // el pase a R2 y las copias, sin frenar las facturas
 		},
 		Workers:     ws,
 		MaxAttempts: 5,

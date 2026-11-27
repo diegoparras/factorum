@@ -16,10 +16,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/klauspost/compress/zstd"
 	"github.com/minio/minio-go/v7"
@@ -153,14 +156,21 @@ func (a *Almacen) Guardar(ctx context.Context, clave string, datos []byte) (int,
 	return len(obj), b.Poner(ctx, clave, obj)
 }
 
-// Leer baja y abre. Si no está en el backend actual y hay respaldo, lo busca ahí.
+// Leer baja y abre. Si no está en el backend actual (o está pero no abre: llegó roto) y hay
+// respaldo, lo busca ahí. Así, durante y después del pase a R2, se lee de R2 y si no, del disco.
 func (a *Almacen) Leer(ctx context.Context, clave string) ([]byte, error) {
 	b, resp := a.backends()
 	obj, err := b.Traer(ctx, clave)
-	if err != nil && resp != nil {
-		obj, err = resp.Traer(ctx, clave)
+	if err == nil {
+		datos, err := a.Abrir(obj)
+		if err == nil || resp == nil {
+			return datos, err
+		}
 	}
-	if err != nil {
+	if resp == nil {
+		return nil, err
+	}
+	if obj, err = resp.Traer(ctx, clave); err != nil {
 		return nil, err
 	}
 	return a.Abrir(obj)
@@ -288,4 +298,133 @@ func (s *S3) Existe(ctx context.Context, clave string) (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+// Backends devuelve dónde se guarda lo nuevo y de dónde se lee lo que no está ahí (puede ser nil).
+func (a *Almacen) Backends() (actual, respaldo Backend) { return a.backends() }
+
+// R2 es el S3 donde se guarda lo nuevo (nil si se guarda en disco).
+func (a *Almacen) R2() *S3 {
+	b, _ := a.backends()
+	s, _ := b.(*S3)
+	return s
+}
+
+// ---- Disco: lo que usa el pase a R2 ----
+
+// Recorrer llama a f con cada objeto guardado en el disco (clave y tamaño), en orden alfabético de
+// la ruta. Saltea los archivos a medio escribir (.tmp).
+func (d *Disco) Recorrer(f func(clave string, tamano int64) error) error {
+	return filepath.WalkDir(d.Dir, func(ruta string, e fs.DirEntry, err error) error {
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) && ruta == d.Dir {
+				return filepath.SkipDir
+			}
+			return err
+		}
+		if e.IsDir() || strings.HasSuffix(e.Name(), ".tmp") {
+			return nil
+		}
+		rel, err := filepath.Rel(d.Dir, ruta)
+		if err != nil {
+			return err
+		}
+		info, err := e.Info()
+		if err != nil {
+			return err
+		}
+		return f(d.clave(filepath.ToSlash(rel)), info.Size())
+	})
+}
+
+// clave deshace ruta(): "originales/ab/abcd..." -> "originales/abcd...".
+func (d *Disco) clave(rel string) string {
+	dir, base := path.Split(rel)
+	dir = strings.TrimSuffix(dir, "/")
+	if len(base) >= 2 {
+		padre, sub := path.Split(dir)
+		if sub == base[:2] {
+			dir = strings.TrimSuffix(padre, "/")
+		}
+	}
+	if dir == "" {
+		return base
+	}
+	return dir + "/" + base
+}
+
+// Borrar saca un objeto del disco (no es error si ya no estaba) y la subcarpeta si quedó vacía.
+func (d *Disco) Borrar(_ context.Context, clave string) error {
+	r, err := d.ruta(clave)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(r); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if dir := filepath.Dir(r); dir != filepath.Clean(d.Dir) {
+		_ = os.Remove(dir) // solo si está vacía
+	}
+	return nil
+}
+
+// ---- S3: lo que usan el pase a R2 y las copias ----
+
+// Tamano dice el tamaño de un objeto en el bucket (ErrNoExiste si no está).
+func (s *S3) Tamano(ctx context.Context, clave string) (int64, error) {
+	info, err := s.cli.StatObject(ctx, s.bucket, s.prefijo+clave, minio.StatObjectOptions{})
+	if err != nil {
+		if minio.ToErrorResponse(err).Code == "NoSuchKey" {
+			return 0, ErrNoExiste
+		}
+		return 0, err
+	}
+	return info.Size, nil
+}
+
+// Abrir devuelve el objeto para leerlo de a poco (para las descargas grandes) y su tamaño.
+func (s *S3) Abrir(ctx context.Context, clave string) (io.ReadCloser, int64, error) {
+	o, err := s.cli.GetObject(ctx, s.bucket, s.prefijo+clave, minio.GetObjectOptions{})
+	if err != nil {
+		return nil, 0, err
+	}
+	info, err := o.Stat()
+	if err != nil {
+		o.Close()
+		if minio.ToErrorResponse(err).Code == "NoSuchKey" {
+			return nil, 0, ErrNoExiste
+		}
+		return nil, 0, err
+	}
+	return o, info.Size, nil
+}
+
+// SubirArchivo sube un archivo local (en partes, sin cargarlo entero en memoria).
+func (s *S3) SubirArchivo(ctx context.Context, clave, ruta string) error {
+	_, err := s.cli.FPutObject(ctx, s.bucket, s.prefijo+clave, ruta, minio.PutObjectOptions{ContentType: "application/octet-stream", PartSize: 16 << 20})
+	return err
+}
+
+// ObjetoS3 es lo que devuelve Listar.
+type ObjetoS3 struct {
+	Clave      string
+	Tamano     int64
+	Modificado time.Time
+}
+
+// Listar devuelve los objetos cuya clave empieza con pre (sin el prefijo de la instalación).
+func (s *S3) Listar(ctx context.Context, pre string) ([]ObjetoS3, error) {
+	var res []ObjetoS3
+	for o := range s.cli.ListObjects(ctx, s.bucket, minio.ListObjectsOptions{Prefix: s.prefijo + pre, Recursive: true}) {
+		if o.Err != nil {
+			return nil, o.Err
+		}
+		res = append(res, ObjetoS3{Clave: strings.TrimPrefix(o.Key, s.prefijo), Tamano: o.Size, Modificado: o.LastModified})
+	}
+	return res, nil
+}
+
+// Destino describe a dónde apunta (para darse cuenta si se cambió de bucket), sin credenciales.
+func (s *S3) Destino() string {
+	return s.cli.EndpointURL().Host + "/" + s.bucket + "/" + s.prefijo
 }

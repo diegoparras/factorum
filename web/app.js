@@ -2198,7 +2198,7 @@ function pintarConectar() {
         ${bloqueCodigo(`curl -H "X-API-Key: ${clave}" -F archivo=@factura.pdf "${base}/api/verificar"`, '¿Es legal esta factura?')}
       </section>
       <section class="card"><div class="card-cab"><h3>MCP para asistentes</h3></div>
-        <p class="muted">Streamable HTTP en <code>${esc(base)}/mcp</code>, con la misma clave. Herramientas: verificar_factura, buscar_comprobantes, comprobante, pendientes_revision, resumen, estado_lote y, con rol usuario, procesar_factura.</p>
+        <p class="muted">Streamable HTTP en <code>${esc(base)}/mcp</code>, con la misma clave. Herramientas: verificar_factura, buscar_comprobantes, comprobante, pendientes_revision, resumen, conciliar, estado_lote y, con rol usuario, procesar_factura.</p>
         ${bloqueCodigo(`claude mcp add --transport http factorum ${base}/mcp --header "Authorization: Bearer ${clave}"`, 'Claude Code')}
         ${bloqueCodigo(desktop, 'Claude Desktop: claude_desktop_config.json')}
         <p class="muted">En Claude Desktop: Configuración, Desarrollador, Editar configuración. Pegá el bloque, reemplazá <code>${clave}</code> por tu clave y reiniciá Claude. Hace falta Node (npx).</p>

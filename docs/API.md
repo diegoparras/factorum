@@ -217,6 +217,47 @@ Las notas de crédito restan y los comprobantes en moneda extranjera no se suman
 
 `GET /api/novedades` (sin clave) devuelve las versiones del CHANGELOG, de la más nueva a la más vieja: `{ "ok": true, "novedades": [{ "version", "fecha", "cuerpo" }] }`.
 
+## Conciliación con ARCA
+
+Cruza lo cargado de un cliente con lo que ARCA dice que ese CUIT **recibió** (Mis Comprobantes, que baja Arcanum). Necesita Arcanum 2.3.0 o superior conectado, con una clave que tenga ese CUIT (alcanza con rol lectura en Arcanum).
+
+`GET /api/conciliacion?cliente=CUIT&desde=AAAA-MM-DD&hasta=AAAA-MM-DD[&refrescar=1]` (lectura o más). El cliente tiene que estar en el alcance de quien pide (si no, `403`); con un solo cliente asignado se puede omitir. El período va por fecha de emisión y es de un año como mucho (`400` si no).
+
+- Factorum le pide a Arcanum lo recibido con **31 días de margen** a cada lado, para emparejar un comprobante cuya fecha se leyó mal; lo que queda afuera del período en los dos lados no aparece.
+- Lo que trae Arcanum se guarda **5 minutos** por CUIT y rango (`de_cache: true`); `refrescar=1` lo vuelve a pedir.
+
+```json
+{ "ok": true, "estado": "lista", "mensaje": "Arcanum no bajó todo el período: ...",
+  "cliente": "20222222223", "desde": "2026-11-01", "hasta": "2026-11-30",
+  "cobertura": { "sincronizado": true, "rangos": [{ "desde": "2026-10-15", "hasta": "2026-11-22" }],
+    "ultimaSincronizacion": { "corrida": 2, "terminada": "2026-11-23T09:18:00.000Z", "desde": "...", "hasta": "..." },
+    "ultimaCorrida": { "estado": "error", "error": "..." }, "enCurso": null, "credencial": true, "sincronizarDiaria": true },
+  "sin_sincronizar": [{ "desde": "2026-11-23", "hasta": "2026-11-30" }], "cubre_todo": false,
+  "en_factorum": 13, "en_arca": 8, "truncado": false, "sin_fecha": 0, "consultado": "...", "de_cache": false,
+  "resultado": {
+    "grupos": { "coinciden": [...], "diferencias": [...], "falta_cargar": [...], "no_figura": [...] },
+    "totales": { "coinciden": { "cantidad": 1, "pesos": 121000.00, "pesos_factorum": 121000.00, "pesos_arca": 121000.00,
+      "cantidad_moneda_extranjera": 0, "moneda_extranjera": {} }, "no_figura": { ..., "por_causa": { "tique": 3 }, "legitimas": 7, "alarmas": 1 } },
+    "duplicados": { "factorum": 2, "arca": 0 }, "incompletos": 0 } }
+```
+
+`estado` es `lista` (hay `resultado`) o, con un `mensaje` para la persona y sin `resultado`: `sin_arcanum` (Factorum no está conectado), `sin_sincronizar` (Arcanum nunca bajó Mis Comprobantes de ese CUIT), `sin_permiso` (la clave de Arcanum no tiene ese CUIT), `arcanum_viejo` (anterior a 2.3.0), `arcanum_caido` o `arcanum_error`.
+
+**Cómo empareja.** La clave es el CUIT del emisor (solo dígitos), el tipo como código de ARCA, el punto de venta y el número como enteros. Los importes se comparan en centavos, con **un centavo de tolerancia** por importe; las notas de crédito se comparan en valor absoluto y en los totales restan.
+
+| Grupo | Qué es |
+|---|---|
+| `coinciden` | Está en los dos con la misma fecha, moneda y total; y el mismo neto e IVA en las letras A y M cuando ARCA los trae (en B y C el IVA va incluido y no se compara) |
+| `diferencias` | Está en los dos pero algo no cierra: `diferencias: [{ campo, factorum, arca, diferencia \| dias }]` con `campo` `total`, `neto_gravado`, `iva`, `fecha` o `moneda` (con otra moneda no se comparan importes). `casi_igual: true` es una **sugerencia**: mismo emisor y número con otro punto de venta o tipo de la misma clase, y el mismo total o la misma fecha (típico de un error de lectura). Nunca cuenta como coincidencia |
+| `falta_cargar` | Está en ARCA y no en Factorum. `arca.emisor_apocrifo` sale de la constatación de recibidos de Arcanum |
+| `no_figura` | Está en Factorum y no en ARCA, con `causa`: `tique`, `exterior` (moneda extranjera, factura E o CUIT de país), `otro_receptor` (a nombre de otro CUIT o a consumidor final), `no_sincronizado` (fecha en un tramo que Arcanum no bajó), `nota` (crédito o débito), `incompleto` (sin CUIT, tipo o número) o `sin_explicacion`. `legitima` marca las causas que explican la ausencia; `constatar` sugiere constatarlo y `alarma`, que ya se constató y el emisor es apócrifo o ARCA no lo reconoce |
+
+Cada ítem trae `factorum` (con `id`, para abrirlo) y `arca` cuando están, `nota` con la explicación y, si el mismo comprobante está más de una vez, `duplicados_factorum` (los otros ids) y `duplicados_arca`. En `totales`, `pesos` usa el importe de ARCA cuando está; la moneda extranjera va aparte, por moneda.
+
+`GET /api/conciliacion/clientes` (lectura): los clientes que ve quien pide, con su nombre como receptor y cuántos comprobantes tienen (con clientes asignados, están todos aunque no tengan nada cargado).
+
+`GET /api/conciliacion.xlsx` y `GET /api/conciliacion.csv`, con los mismos parámetros y, opcional, `grupo=coinciden|diferencias|falta_cargar|no_figura` para bajar solo uno. El Excel trae una hoja **Resumen** (cliente, período, sincronización de Arcanum, avisos y totales) y una hoja por grupo; el CSV es una sola tabla con el grupo en la primera columna. Si el estado no es `lista`, `409` con el mensaje. Cada exportación queda en la auditoría (`conciliacion.exportar`).
+
 ## Canales
 
 WhatsApp, Telegram y el webhook se configuran en **Configuración** (o por variables de entorno). Vincular y desvincular WhatsApp es de superadmin, con sesión.
@@ -292,6 +333,7 @@ Reglas:
 | `comprobante` | `{ id }` | lectura |
 | `pendientes_revision` | `{ lote?, cliente? }`: lo que está en `revisar` o `error` | lectura |
 | `resumen` | Mismos filtros que `/api/resumen` | lectura |
+| `conciliar` | `{ cliente?, desde, hasta, grupo?, limite? }`: la conciliación con ARCA; totales completos y hasta `limite` comprobantes por grupo (20 por defecto, 100 como mucho) | lectura |
 | `estado_lote` | `{ id }` | lectura |
 
 Las respuestas son datos JSON, recortados por debajo de 20.000 caracteres.

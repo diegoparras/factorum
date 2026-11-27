@@ -99,6 +99,17 @@ Además de facturas, Factorum lee los **tickets de controlador fiscal**: el tiqu
 
 Con el filtro `clase=tickets` se ven solo los tickets; el resumen trae cuántos hay, cuánto suman y el total por rubro.
 
+## Conciliación con ARCA
+
+Lo que el cliente te mandó contra lo que ARCA dice que recibió. En **Conciliación** (menú Datos) elegís el cliente y el período (mes pasado, este mes, últimos 3 meses o las fechas que quieras) y Factorum le pide a [Arcanum](https://github.com/diegoparras/arcanum) los comprobantes **recibidos** de Mis Comprobantes para cruzarlos con lo cargado:
+
+- **Coinciden:** mismo emisor, tipo, punto de venta, número, fecha y total (y neto e IVA en las facturas A cuando ARCA los trae), con un centavo de tolerancia.
+- **Con diferencias:** te dice qué no cierra y cuánto. Si el emisor y el número coinciden pero no el punto de venta o el tipo, lo marca como **casi igual**: suele ser un error de lectura y lo corregís en Revisar.
+- **Falta cargar:** está en ARCA y no en Factorum. Copiás la lista o bajás un Excel para pedírsela al cliente.
+- **No figura en ARCA:** separa las causas legítimas (tiques de controlador fiscal, moneda extranjera o exterior, a nombre de otro CUIT o consumidor final, período que Arcanum todavía no bajó, notas de crédito y débito) del resto, que conviene constatar; si ya se constató y el emisor es apócrifo, lo marca en rojo.
+
+Arriba ves cuándo sincronizó Arcanum por última vez y qué fechas tiene bajadas, con un aviso si el período no está completo. Totales por grupo (las notas de crédito restan; la moneda extranjera va aparte), Excel con una hoja por grupo, CSV, la API (`GET /api/conciliacion`) y la herramienta MCP `conciliar`. Necesita Arcanum 2.3.0 o superior con Mis Comprobantes sincronizado para ese CUIT, y que la clave de Arcanum que usa Factorum incluya al cliente.
+
 ## Velocidad
 
 Medido en 4 núcleos, sin IA:
@@ -347,6 +358,7 @@ Reglas para todas:
 | `comprobante` | Un comprobante con todos sus datos |
 | `pendientes_revision` | Lo que tiene que mirar una persona |
 | `resumen` | Totales por alícuota |
+| `conciliar` | Lo cargado de un cliente contra lo que ARCA dice que recibió |
 | `estado_lote` | Progreso de un lote |
 
 ## API
@@ -389,7 +401,8 @@ Las facturas de prueba se generan con el modelo "ARCA" de Arcanum, que copia "Co
 | `internal/almacen` | Disco o R2, con zstd y AES-GCM (también en flujo, para las copias) |
 | `internal/mudanza` | El pase de lo del disco a R2: verificado, reanudable y sin borrar nada solo |
 | `internal/copias` | Copias de seguridad de la base: hacer, guardar, podar, programar y restaurar |
-| `internal/arcanum` | Constatación y padrón |
+| `internal/arcanum` | Constatación, padrón y los recibidos de Mis Comprobantes |
+| `internal/conciliar` | El cruce entre lo cargado y Mis Comprobantes (puro, en centavos) |
 | `internal/auth` | Roles, identidad y alcance por CUIT, argon2id, tokens y límite de intentos |
 | `internal/oidc` | Lockatus (OIDC): discovery, Authorization Code con PKCE y la verificación del `id_token`; `oidctest` tiene un Lockatus de mentira |
 | `internal/ajustes` | La configuración desde la pantalla, con el entorno que gana y la recarga en caliente |

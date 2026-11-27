@@ -2,6 +2,25 @@
 
 Cada versión publicada tiene su sección. La imagen Docker toma la versión de la primera.
 
+## [0.6.0] - 2026-11-27
+
+### Conciliación con ARCA
+
+- Pantalla nueva **Conciliación** (menú Datos, para todos los roles): elegís el cliente y el período y Factorum compara las facturas de compra que cargaste con lo que ARCA dice que ese cliente **recibió** (Mis Comprobantes, que baja Arcanum). Atajos para el mes pasado, este mes y los últimos 3 meses. Si ves un solo cliente, ya viene elegido.
+- Cuatro grupos, cada uno con su tarjeta de totales y su pestaña con la tabla (ordenable tocando el encabezado):
+  - **Coinciden**: el mismo comprobante en los dos lados, con la misma fecha y el mismo total (y neto e IVA en las A cuando ARCA los trae), con un centavo de tolerancia.
+  - **Con diferencias**: está en los dos pero algo no cierra; te dice qué campo y cuánto. Si coinciden el emisor y el número pero no el punto de venta o el tipo, aparece como **casi igual**: suele ser un error de lectura. Es una sugerencia, nunca una coincidencia.
+  - **Falta cargar**: está en ARCA y no en Factorum. **Copiar la lista** arma el texto para mandárselo al cliente, y **Excel para el cliente** baja solo esos.
+  - **No figura en ARCA**: lo cargaste y ARCA no lo tiene. Las causas legítimas van aparte (tiques de controlador fiscal, moneda extranjera o exterior, a nombre de otro CUIT o de consumidor final, fechas que Arcanum todavía no bajó, notas de crédito y débito); para el resto, **Constatar** (si tu rol lo permite) y, si ya se constató, el resultado. Un emisor apócrifo queda marcado en rojo.
+- Cada comprobante que está en Factorum se abre en **Revisar**; al cerrar volvés a la conciliación.
+- Arriba, el estado de Mis Comprobantes en Arcanum: la última sincronización, qué fechas tiene bajadas y si la última corrida falló. Si el período no está completo, un aviso dice qué días faltan y que lo que cae ahí puede aparecer como «Falta cargar» o «No figura en ARCA» sin serlo.
+- Los comprobantes cargados dos veces (o repetidos en ARCA) se muestran como tales y no se cuentan dos veces.
+- Totales por grupo con las notas de crédito restando y la moneda extranjera aparte.
+- **Excel** con un resumen y una hoja por grupo, y **CSV**. Cada exportación queda en la auditoría.
+- Si Factorum no está conectado con Arcanum, si Arcanum todavía no bajó Mis Comprobantes de ese cliente o si la clave de Arcanum no lo incluye, la pantalla te dice qué pasa y qué hacer.
+- Por API, `GET /api/conciliacion`, `GET /api/conciliacion.xlsx` y `.csv`; por MCP, la herramienta `conciliar`. Lo que trae Arcanum se guarda unos minutos (**Actualizar** lo vuelve a pedir).
+- Necesita **Arcanum 2.3.0** o superior, con Mis Comprobantes sincronizado para ese cliente y una clave que lo incluya (alcanza con rol lectura).
+
 ## [0.5.0] - 2026-11-27
 
 ### Entrar con Lockatus

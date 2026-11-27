@@ -347,6 +347,11 @@ func TestGuardarProveedorIA(t *testing.T) {
 	if st, _ := sup.pedir("PUT", "/api/configuracion", map[string]any{"cambios": map[string]any{"ia.proveedor": "ollama", "ia.url": "http://ollama:11434/v1", "ia.modelo": "qwen3-vl:4b-instruct"}}); st != 200 || e.app.Config().LLMAPIKey != "" {
 		t.Fatalf("Ollama sin clave: %d %q", st, e.app.Config().LLMAPIKey)
 	}
+	// Un Ollama en una dirección pública es externo: pide el aviso, que lo nombra como Ollama.
+	st, m := sup.pedir("PUT", "/api/configuracion", map[string]any{"cambios": map[string]any{"ia.url": "https://ollama.ejemplo.com/v1"}})
+	if a, _ := m["aviso_ia"].(map[string]any); st != 409 || a["nombre"] != "Ollama en ollama.ejemplo.com" || avisoDe(a)["sello"] != "IA externa: Ollama en ollama.ejemplo.com" {
+		t.Errorf("Ollama público: %d %v", st, m)
+	}
 
 	// El proveedor del entorno gana y bloquea el campo.
 	e.fijadas.Store("FACTORUM_IA_PROVEEDOR", "ollama")

@@ -16,17 +16,33 @@
 <body>
 
 <div id="login" class="login-overlay hidden">
-  <form class="login-card" id="loginForm" autocomplete="off">
+  <form class="login-card" id="loginForm">
     <img class="login-logo" src="logo.svg" alt="" width="64" height="64">
-    <h2>Factorum</h2>
+    <h2 class="nombre-inst">Factorum</h2>
     <p class="login-sub">Lector de facturas de ARCA</p>
+    <div class="login-aviso hidden" id="loginAviso" role="status"></div>
+    <input id="loginEmail" type="email" placeholder="Email" required autocomplete="username" aria-label="Email">
     <div class="pass-wrap">
-      <input id="clave" type="password" placeholder="Clave de API" required aria-label="Clave de API">
-      <button type="button" class="pass-toggle" data-accion="ojo" data-para="clave" aria-label="Mostrar u ocultar la clave"></button>
+      <input id="loginClave" type="password" placeholder="Contraseña" required autocomplete="current-password" aria-label="Contraseña">
+      <button type="button" class="pass-toggle" data-accion="ojo" data-para="loginClave" aria-label="Mostrar u ocultar la contraseña"></button>
     </div>
-    <label class="chk"><input type="checkbox" id="recordar"> Recordar en este navegador</label>
     <button type="submit">Entrar</button>
     <div class="login-err hidden" id="loginErr"></div>
+    <p class="login-foot">Si te olvidaste la contraseña, pedile a un admin que te la restablezca.<br>Parte de la suite Escriba</p>
+  </form>
+  <form class="login-card hidden" id="arranqueForm">
+    <img class="login-logo" src="logo.svg" alt="" width="64" height="64">
+    <h2>Crear el primer superadmin</h2>
+    <p class="login-sub">Factorum todavía no tiene usuarios. El código de un solo uso está en el log del servidor (o corré <code>factorum salud</code> en el contenedor).</p>
+    <input id="arrCodigo" placeholder="Código de arranque" required autocomplete="one-time-code" aria-label="Código de arranque" spellcheck="false">
+    <input id="arrNombre" placeholder="Tu nombre" autocomplete="name" aria-label="Nombre">
+    <input id="arrEmail" type="email" placeholder="Email" required autocomplete="username" aria-label="Email">
+    <div class="pass-wrap">
+      <input id="arrClave" type="password" placeholder="Contraseña (10 caracteres o más)" required minlength="10" autocomplete="new-password" aria-label="Contraseña">
+      <button type="button" class="pass-toggle" data-accion="ojo" data-para="arrClave" aria-label="Mostrar u ocultar la contraseña"></button>
+    </div>
+    <button type="submit">Crear y entrar</button>
+    <div class="login-err hidden" id="arranqueErr"></div>
     <p class="login-foot">Parte de la suite Escriba</p>
   </form>
 </div>
@@ -35,10 +51,16 @@
   <button class="icon-btn plano" id="navBtn" type="button" data-accion="nav" aria-label="Mostrar u ocultar el menú de secciones" aria-controls="sidenav">
     <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
   </button>
-  <a class="logo-link" data-accion="ir" data-vista="inicio"><img class="logo-img" src="logo.svg" alt="" width="30" height="30"><h1>Factorum</h1></a>
+  <a class="logo-link" data-accion="ir" data-vista="inicio"><img class="logo-img" src="logo.svg" alt="" width="30" height="30"><h1 class="nombre-inst">Factorum</h1></a>
   <span class="crumb" id="crumb"></span>
   <span class="sp"></span>
   <span class="estado-chip" id="saludChip"></span>
+  <div class="menu-wrap hidden" id="suiteWrap">
+    <button class="icon-btn plano" type="button" data-accion="suite" aria-label="Otras apps de la suite" aria-haspopup="true" title="Suite Escriba">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><rect x="4" y="4" width="4" height="4" rx="1"/><rect x="10" y="4" width="4" height="4" rx="1"/><rect x="16" y="4" width="4" height="4" rx="1"/><rect x="4" y="10" width="4" height="4" rx="1"/><rect x="10" y="10" width="4" height="4" rx="1"/><rect x="16" y="10" width="4" height="4" rx="1"/><rect x="4" y="16" width="4" height="4" rx="1"/><rect x="10" y="16" width="4" height="4" rx="1"/><rect x="16" y="16" width="4" height="4" rx="1"/></svg>
+    </button>
+    <div class="menu menu-right hidden" id="suiteMenu"></div>
+  </div>
   <div class="menu-wrap">
     <button class="icon-btn plano" type="button" data-accion="menu" aria-label="Menú" aria-haspopup="true">
       <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="19" r="1.7"/></svg>
@@ -55,13 +77,13 @@
     <!-- Inicio -->
     <section class="vista" id="v-inicio">
       <div class="cabecera"><div><h2>Inicio</h2><p class="sub" id="inicioSub">Cómo viene todo, de un vistazo.</p></div>
-        <div class="acciones"><button type="button" class="ghost" data-accion="ir" data-vista="verificar">Verificar una factura</button><button type="button" data-accion="ir" data-vista="subir">Cargar facturas</button></div></div>
+        <div class="acciones"><button type="button" class="ghost" data-accion="ir" data-vista="verificar">Verificar una factura</button><button type="button" class="solo-carga" data-accion="ir" data-vista="subir">Cargar facturas</button></div></div>
       <div id="inicio"></div>
     </section>
 
     <!-- Revisar -->
     <section class="vista hidden" id="v-revisar">
-      <div class="cabecera"><div><h2>Revisar</h2><p class="sub">Lo que Factorum no pudo dar por bueno solo. Abrí uno y usá el teclado: <kbd>A</kbd> aprobar y seguir, <kbd>J</kbd> siguiente, <kbd>K</kbd> anterior, <kbd>Esc</kbd> cerrar.</p></div></div>
+      <div class="cabecera"><div><h2>Revisar</h2><p class="sub">Lo que Factorum no pudo dar por bueno solo. Abrí uno y usá el teclado: <span class="solo-carga"><kbd>A</kbd> aprobar y seguir, </span><kbd>J</kbd> siguiente, <kbd>K</kbd> anterior, <kbd>Esc</kbd> cerrar.</p></div></div>
       <div class="tabs" role="tablist" id="bandejaTabs">
         <button type="button" role="tab" data-accion="bandeja" data-estado="error" class="on">Con errores <span class="cnt" id="cntError">0</span></button>
         <button type="button" role="tab" data-accion="bandeja" data-estado="revisar">Para revisar <span class="cnt" id="cntRevisar">0</span></button>
@@ -151,11 +173,47 @@
       <div id="resumen"></div>
     </section>
 
-    <!-- Canales -->
-    <section class="vista hidden" id="v-canales">
-      <h2>Canales</h2>
-      <p class="sub">Las facturas también llegan por mensajería. Solo responden a los números y usuarios habilitados en la configuración.</p>
-      <div id="canales"></div>
+    <!-- Configuración -->
+    <section class="vista hidden" id="v-configuracion">
+      <div class="cabecera"><div><h2>Configuración</h2><p class="sub" id="confSub">Todo lo que antes iba en variables de entorno. Lo que fija el servidor gana y aparece bloqueado. Al guardar, se aplica sin reiniciar.</p></div></div>
+      <nav class="saltos" id="confSaltos" aria-label="Secciones de la configuración"></nav>
+      <div id="configuracion"></div>
+    </section>
+
+    <!-- Usuarios -->
+    <section class="vista hidden" id="v-usuarios">
+      <div class="cabecera"><div><h2>Usuarios</h2><p class="sub">Quién entra a Factorum, con qué rol y a qué clientes. Al crear a alguien o restablecerle la contraseña, Factorum genera una temporal que se muestra una sola vez y que obliga a cambiarla al entrar.</p></div>
+        <div class="acciones"><button type="button" data-accion="nuevoUsuario">Nueva persona</button></div></div>
+      <div id="usuarios"></div>
+    </section>
+
+    <!-- Claves de API -->
+    <section class="vista hidden" id="v-claves">
+      <div class="cabecera"><div><h2>Claves de API</h2><p class="sub">Para la API REST, MCP (asistentes) y las otras apps de la suite. La clave se muestra una sola vez: guardala en un lugar seguro.</p></div>
+        <div class="acciones"><button type="button" class="ghost" data-accion="ir" data-vista="conectar">Cómo conectar</button><button type="button" data-accion="nuevaClave">Nueva clave</button></div></div>
+      <div id="claves"></div>
+    </section>
+
+    <!-- Conectar -->
+    <section class="vista hidden" id="v-conectar">
+      <h2>Conectar</h2>
+      <p class="sub">Factorum se puede usar desde otros programas: la API REST para integraciones y MCP para asistentes como Claude.</p>
+      <div id="conectar"></div>
+    </section>
+
+    <!-- Auditoría -->
+    <section class="vista hidden" id="v-auditoria">
+      <h2>Auditoría</h2>
+      <p class="sub">Quién hizo qué y cuándo: entradas, usuarios, claves, configuración, correcciones, aprobaciones, exportaciones y pases de la suite. Nunca guarda contraseñas, claves ni tokens.</p>
+      <form id="fAuditoria" class="filtros">
+        <input id="audDesde" type="date" aria-label="Desde">
+        <input id="audHasta" type="date" aria-label="Hasta">
+        <input id="audPersona" placeholder="Persona (email o clave)">
+        <select id="audAccion" aria-label="Acción"><option value="">Todas las acciones</option></select>
+        <button type="submit" class="ghost">Filtrar</button>
+      </form>
+      <div id="auditoria"></div>
+      <div class="pager" id="audPager"></div>
     </section>
   </main>
 </div>
@@ -175,7 +233,7 @@
     <div class="rev-datos">
       <div id="revHallazgos"></div>
       <form id="revForm"></form>
-      <div class="rev-acciones">
+      <div class="rev-acciones solo-carga">
         <button class="ghost" data-accion="revGuardar">Guardar</button>
         <button class="ghost" data-accion="revConstatar" id="btnConstatar">Constatar con ARCA</button>
         <button data-accion="revAprobar" title="Aprobar y seguir (A)">Está bien, siguiente</button>
@@ -186,13 +244,13 @@
   </div>
 </div>
 
-<!-- Ventana (Novedades, Acerca de) -->
+<!-- Ventana (Novedades, Acerca de, formularios) -->
 <div class="modal-back hidden" id="modal" data-accion="modalFondo">
   <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modalTit">
-    <button type="button" class="modal-x" data-accion="modalCerrar" aria-label="Cerrar">&times;</button>
+    <button type="button" class="modal-x" id="modalX" data-accion="modalCerrar" aria-label="Cerrar">&times;</button>
     <h3 class="modal-tit" id="modalTit"></h3>
     <div class="modal-cuerpo" id="modalCuerpo"></div>
-    <div class="modal-acciones"><button type="button" data-accion="modalCerrar">Entendido</button></div>
+    <div class="modal-acciones" id="modalAcciones"><button type="button" data-accion="modalCerrar">Entendido</button></div>
   </div>
 </div>
 

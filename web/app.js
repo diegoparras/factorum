@@ -28,18 +28,32 @@ const I = {
   cruz: svg('<path d="M7 7l10 10M17 7L7 17"/>'),
   alerta: svg('<path d="M12 4l9 16H3z"/><path d="M12 10v4M12 17h.01"/>'),
   doc: svg('<path d="M7 3h7l4 4v14H7z"/><path d="M14 3v4h4"/><path d="M10 12h5M10 16h5"/>'),
+  configuracion: svg('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>'),
+  usuarios: svg('<circle cx="9" cy="8" r="3.2"/><path d="M3 20c.6-3.4 3-5.5 6-5.5s5.4 2.1 6 5.5"/><path d="M16 5.2a3 3 0 0 1 0 5.6M18 14.8c1.6.8 2.7 2.6 3 5.2"/>'),
+  claves: svg('<circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M17 6l3 3M14 9l2 2"/>'),
+  conectar: svg('<path d="M9 7V3M15 7V3"/><path d="M6 7h12v4a6 6 0 0 1-12 0z"/><path d="M12 17v4"/>'),
+  auditoria: svg('<path d="M9 4h6M9 4a2 2 0 0 0-2 2H5v15h14V6h-2a2 2 0 0 0-2-2"/><path d="M8.5 12l2 2 4-4M8.5 17h7"/>'),
+  llave: svg('<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>'),
+  copiar: svg('<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/>'),
+  persona: svg('<circle cx="12" cy="8" r="3.5"/><path d="M5 20c.8-3.7 3.6-6 7-6s6.2 2.3 7 6"/>'),
+  externo: svg('<path d="M14 4h6v6M20 4l-9 9"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>'),
 };
 
-const NAV = [
-  ['Trabajo', [['inicio', 'Inicio'], ['revisar', 'Revisar'], ['verificar', 'Verificar'], ['subir', 'Cargar facturas']]],
+// Cada sección dice qué permiso hace falta para verla (el servidor lo hace cumplir igual).
+const NAV_TODO = [
+  ['Trabajo', [['inicio', 'Inicio'], ['revisar', 'Revisar'], ['verificar', 'Verificar'], ['subir', 'Cargar facturas', 'cargar']]],
   ['Datos', [['lotes', 'Lotes'], ['comprobantes', 'Comprobantes'], ['resumen', 'Resumen']]],
-  ['Configuración', [['canales', 'Canales']]],
+  ['Configuración', [['configuracion', 'Configuración', 'clientes'], ['usuarios', 'Usuarios', 'usuarios'], ['claves', 'Claves de API', 'claves'],
+    ['conectar', 'Conectar'], ['auditoria', 'Auditoría', 'auditoria']]],
 ];
-const VISTAS = NAV.flatMap((g) => g[1]);
+const VISTAS = NAV_TODO.flatMap((g) => g[1]);
+const puede = (p) => !p || !!(YO && YO.permisos && YO.permisos[p]);
+const navVisible = () => NAV_TODO.map(([g, items]) => [g, items.filter((it) => puede(it[2]))]).filter(([, items]) => items.length);
+const vistaPermitida = (v) => VISTAS.some((it) => it[0] === v && puede(it[2]));
 const PENDIENTES = { error: 0, revisar: 0 };
 
 // ---------- Estado ----------
-let CLAVE = '';
+let YO = null; // { identidad, permisos, instalacion }
 let SALUD = null;
 let vista = 'inicio';
 const filtro = { estado: '', clase: '', rubro: '', q: '', cliente: '', desde: '', hasta: '', lote: '', offset: 0, limite: 100 };
@@ -48,35 +62,27 @@ let rev = null; // { idx, cbte, original }
 let timerLotes = null;
 let timerCanales = null;
 
-function leerClave() {
-  try { return sessionStorage.getItem('factorum.clave') || localStorage.getItem('factorum.clave') || ''; } catch { return ''; }
-}
-function guardarClave(c, recordar) {
-  try {
-    sessionStorage.setItem('factorum.clave', c);
-    if (recordar) localStorage.setItem('factorum.clave', c); else localStorage.removeItem('factorum.clave');
-  } catch { /* sin almacenamiento */ }
-}
-function borrarClave() {
-  try { sessionStorage.removeItem('factorum.clave'); localStorage.removeItem('factorum.clave'); } catch { /* nada */ }
-}
-
 // ---------- API ----------
+// La sesión va en una cookie HttpOnly; X-Factorum es la cabecera que el servidor pide en lo que
+// modifica (CSRF).
 async function api(ruta, opts = {}) {
-  const h = Object.assign({ 'X-API-Key': CLAVE }, opts.headers || {});
+  const h = Object.assign({ 'X-Factorum': '1' }, opts.headers || {});
   if (opts.json !== undefined) { h['Content-Type'] = 'application/json'; opts.body = JSON.stringify(opts.json); }
-  const r = await fetch(ruta, { method: opts.method || 'GET', headers: h, body: opts.body });
-  if (r.status === 401) { salir(); throw new Error('La clave no es válida'); }
+  const r = await fetch(ruta, { method: opts.method || 'GET', headers: h, body: opts.body, credentials: 'same-origin' });
+  if (r.status === 401 && !opts.sinRedirigir) { sinSesion(); throw new Error('Tu sesión venció: entrá de nuevo'); }
   if (opts.binario) {
     if (!r.ok) throw new Error(`Error ${r.status}`);
     return r.blob();
   }
   const d = await r.json().catch(() => ({}));
-  if (!r.ok || d.ok === false) throw new Error(d.error || `Error ${r.status}`);
+  if (r.status === 403 && d.debe_cambiar) { pedirCambioClave(true); const e = new Error(d.error); e.silencioso = true; throw e; }
+  if (!r.ok || d.ok === false) { const e = new Error(d.error || `Error ${r.status}`); e.status = r.status; throw e; }
   return d;
 }
 
 function toast(msg, err) {
+  if (msg && msg.silencioso) return;
+  if (msg instanceof Error) msg = msg.message;
   const t = $('#toast');
   t.textContent = msg;
   t.className = 'toast' + (err ? ' err' : '');
@@ -116,7 +122,7 @@ function hallazgosHTML(h) {
 // ---------- Navegación ----------
 function pintarNav() {
   const pend = PENDIENTES.error + PENDIENTES.revisar;
-  $('#nav').innerHTML = NAV.map(([grupo, items]) => `<div class="nav-g">${grupo}</div>` + items.map(([id, t]) => {
+  $('#nav').innerHTML = navVisible().map(([grupo, items]) => `<div class="nav-g">${grupo}</div>` + items.map(([id, t]) => {
     const badge = id === 'revisar' && pend ? `<span class="nav-badge${PENDIENTES.error ? ' err' : ''}" aria-label="${pend} pendientes">${pend > 999 ? '999+' : pend}</span>` : '';
     return `<button type="button" class="nav-it${id === vista ? ' active' : ''}" data-accion="ir" data-vista="${id}" title="${t}" aria-label="${t}"${id === vista ? ' aria-current="page"' : ''}>${I[id]}<span>${t}</span>${badge}</button>`;
   }).join('')).join('');
@@ -133,6 +139,8 @@ async function actualizarPendientes() {
 }
 
 function ir(v) {
+  if (v === 'canales') v = 'configuracion'; // la pantalla Canales pasó a Configuración
+  if (!vistaPermitida(v)) v = 'inicio';
   vista = v;
   $$('.vista').forEach((s) => s.classList.toggle('hidden', s.id !== 'v-' + v));
   pintarNav();
@@ -141,7 +149,11 @@ function ir(v) {
   if (v === 'lotes') { cargarLotes(); timerLotes = setInterval(cargarLotes, 3000); }
   if (v === 'comprobantes') cargarCbtes();
   if (v === 'resumen') cargarResumen();
-  if (v === 'canales') { cargarCanales(); timerCanales = setInterval(cargarCanales, 5000); }
+  if (v === 'configuracion') { cargarConfiguracion(); timerCanales = setInterval(refrescarWhatsApp, 5000); }
+  if (v === 'usuarios') cargarUsuarios();
+  if (v === 'claves') cargarClaves();
+  if (v === 'conectar') pintarConectar();
+  if (v === 'auditoria') { audOffset = 0; cargarAuditoria(); }
   if (v === 'inicio') cargarInicio();
   if (v === 'revisar') cargarBandeja();
   const nom = (VISTAS.find(([id]) => id === v) || [])[1] || '';
@@ -161,12 +173,19 @@ function toggleNav() {
   try { localStorage.setItem('factorum.nav', min ? '' : 'min'); } catch { /* nada */ }
 }
 
+const ROLES = { lectura: 'Lectura', usuario: 'Usuario', admin: 'Admin', superadmin: 'Superadmin' };
+const ORDEN_ROL = ['lectura', 'usuario', 'admin', 'superadmin'];
+const rolChip = (r) => `<span class="rol-chip r-${esc(r)}">${esc(ROLES[r] || r)}</span>`;
+
 function pintarMenu() {
   const dark = document.documentElement.getAttribute('data-theme') === 'dark';
   const s = SALUD || {};
+  const id = (YO && YO.identidad) || {};
+  const quien = id.nombre || id.email || (id.clave ? 'Clave ' + id.clave : 'Factorum');
   $('#menu').innerHTML = `
-    <div class="menu-user">Factorum ${esc(s.version || '')}</div>
+    <div class="menu-yo"><span class="avatar" aria-hidden="true">${esc(iniciales(quien))}</span><span><strong>${esc(quien)}</strong>${id.email && id.nombre ? `<br><span class="muted">${esc(id.email)}</span>` : ''}<br>${rolChip(id.rol)}${id.origen && id.origen.startsWith('suite:') ? ' <span class="muted">desde ' + esc(id.origen.slice(6)) + '</span>' : ''}</span></div>
     <div class="menu-sep"></div>
+    ${id.tipo === 'sesion' ? `<button class="menu-item" data-accion="miClave">${I.llave}<span>Cambiar mi contraseña</span></button>` : ''}
     <button class="menu-item" data-accion="tema">${dark ? I.sol : I.luna}<span>${dark ? 'Tema claro' : 'Tema oscuro'}</span></button>
     <button class="menu-item" data-accion="novedades">${I.novedades}<span>Novedades</span></button>
     <button class="menu-item" data-accion="acerca">${I.info}<span>Acerca de Factorum</span></button>
@@ -182,41 +201,169 @@ async function cargarSalud() {
     chip.textContent = SALUD.base ? '' : 'Sin conexión con la base';
     chip.classList.toggle('mal', !SALUD.base);
     $('#loteConstatar').closest('label').classList.toggle('hidden', !SALUD.arcanum);
+    $('#loteConstatar').checked = SALUD.constatar_por_defecto !== false;
+    $('#loteIA').checked = $('#iaVerificar').checked = SALUD.ia_por_defecto !== false;
+    if (SALUD.nombre) $$('.nombre-inst').forEach((e) => { e.textContent = SALUD.nombre; });
     $('#loteIA').closest('label').classList.toggle('hidden', !(SALUD.ia && SALUD.ia.habilitada));
     $('#iaVerificar').closest('label').classList.toggle('hidden', !(SALUD.ia && SALUD.ia.habilitada));
   } catch { /* se reintenta en la próxima acción */ }
 }
 
-// ---------- Login ----------
-function mostrarLogin(err) {
+// ---------- Sesión ----------
+const iniciales = (t) => String(t || '?').replace(/@.*/, '').split(/[\s._-]+/).filter(Boolean).slice(0, 2).map((x) => x[0].toUpperCase()).join('') || '?';
+
+function mostrarLogin(err, aviso) {
   $('#login').classList.remove('hidden');
+  $('#loginForm').classList.remove('hidden');
+  $('#arranqueForm').classList.add('hidden');
   $('#loginErr').textContent = err || '';
   $('#loginErr').classList.toggle('hidden', !err);
-  setTimeout(() => $('#clave').focus(), 50);
+  $('#loginAviso').textContent = aviso || '';
+  $('#loginAviso').classList.toggle('hidden', !aviso);
+  setTimeout(() => ($('#loginEmail').value ? $('#loginClave') : $('#loginEmail')).focus(), 50);
 }
 
-async function entrar(c, recordar) {
-  CLAVE = c;
+function mostrarArranque() {
+  $('#login').classList.remove('hidden');
+  $('#loginForm').classList.add('hidden');
+  $('#arranqueForm').classList.remove('hidden');
+  setTimeout(() => $('#arrCodigo').focus(), 50);
+}
+
+// sinSesion: la cookie venció o no hay. Si Factorum está por estrenar, la pantalla de arranque.
+async function sinSesion(aviso) {
+  YO = null;
+  cerrarModal(true);
+  $('#menu').classList.add('hidden');
+  clearInterval(timerLotes); clearInterval(timerCanales);
+  $('#suiteWrap').classList.add('hidden');
   try {
-    await api('/api/lotes?limite=1');
-    guardarClave(c, recordar);
-    $('#login').classList.add('hidden');
-    await cargarSalud();
-    const pedida = location.hash.slice(1);
-    ir(VISTAS.some(([id]) => id === pedida) ? pedida : 'inicio');
-    actualizarPendientes();
-    verNovedades(false);
+    const a = await fetch('/api/arranque').then((r) => r.json());
+    if (a.nombre) $$('.nombre-inst').forEach((e) => { e.textContent = a.nombre; });
+    if (a.necesita) { mostrarArranque(); return; }
+  } catch { /* sin conexión: login */ }
+  mostrarLogin('', aviso);
+}
+
+async function arrancar() {
+  // Al volver de otra app con un pase que no sirvió, el servidor manda acá con ?aviso=pase.
+  const q = new URLSearchParams(location.search);
+  const aviso = q.get('aviso') === 'pase' ? 'El pase para entrar venció o ya se usó. Volvé a tocar el botón en la otra app.' : '';
+  if (q.has('aviso')) { try { history.replaceState(null, '', location.pathname + location.hash); } catch { /* nada */ } }
+  try {
+    YO = await api('/api/sesion', { sinRedirigir: true });
+  } catch { sinSesion(aviso); return; }
+  iniciarApp();
+}
+
+async function iniciarApp() {
+  $('#login').classList.add('hidden');
+  const id = YO.identidad || {};
+  document.documentElement.setAttribute('data-puede-cargar', puede('cargar') ? 'si' : 'no');
+  // Con clientes asignados, la carga sugiere los propios.
+  const dl = $('#misCuits') || Object.assign(document.createElement('datalist'), { id: 'misCuits' });
+  dl.innerHTML = (id.cuits || []).map((c) => `<option value="${esc(cuit(c))}">`).join('');
+  document.body.append(dl);
+  for (const sel of ['#loteCliente', '#cuitConsultante']) {
+    const i = $(sel);
+    i.setAttribute('list', 'misCuits');
+    if (id.cuits && id.cuits.length) i.placeholder = id.cuits.length === 1 ? cuit(id.cuits[0]) : 'Elegí uno de tus clientes';
+  }
+  $('#loteCliente').closest('label').firstChild.textContent = id.cuits && id.cuits.length > 1 ? 'CUIT del cliente' : 'CUIT del cliente (opcional)';
+  await cargarSalud();
+  pintarNav();
+  // Con la contraseña temporal no se carga nada más hasta que la cambie (el servidor tampoco deja).
+  if (id.debe_cambiar) { pedirCambioClave(true); return; }
+  ir(location.hash.slice(1) || 'inicio');
+  actualizarPendientes();
+  cargarSuite();
+  verNovedades(false);
+}
+
+async function entrar(email, clave) {
+  const btn = $('#loginForm button[type=submit]');
+  btn.disabled = true;
+  try {
+    await api('/api/sesion', { method: 'POST', json: { email, clave }, sinRedirigir: true });
+    $('#loginClave').value = '';
+    YO = await api('/api/sesion');
+    iniciarApp();
   } catch (e) {
-    CLAVE = '';
     mostrarLogin(e.message);
+  } finally { btn.disabled = false; }
+}
+
+async function crearPrimerSuperadmin() {
+  const err = $('#arranqueErr');
+  err.classList.add('hidden');
+  try {
+    await api('/api/arranque', { method: 'POST', sinRedirigir: true,
+      json: { codigo: $('#arrCodigo').value.trim(), nombre: $('#arrNombre').value.trim(), email: $('#arrEmail').value.trim(), clave: $('#arrClave').value } });
+    $('#arrClave').value = '';
+    YO = await api('/api/sesion');
+    iniciarApp();
+    toast('Listo: sos el superadmin. Ahora completá la configuración.');
+  } catch (e) {
+    err.textContent = e.message; err.classList.remove('hidden');
   }
 }
 
-function salir() {
-  CLAVE = '';
-  borrarClave();
-  clearInterval(timerLotes); clearInterval(timerCanales);
-  mostrarLogin();
+async function salir() {
+  try { await api('/api/sesion', { method: 'DELETE', sinRedirigir: true }); } catch { /* ya no había sesión */ }
+  sinSesion();
+}
+
+// campoClave arma un campo de contraseña o secreto con su ojito (regla de la suite).
+function campoClave(id, attrs = '') {
+  return `<div class="pass-wrap"><input id="${id}" type="password" ${attrs}><button type="button" class="pass-toggle" data-accion="ojo" data-para="${id}" aria-label="Mostrar u ocultar">${I.ojo}</button></div>`;
+}
+
+// pedirCambioClave: la contraseña temporal obliga (fijo: no se puede cerrar).
+function pedirCambioClave(fijo) {
+  if (fijo && !$('#modal').classList.contains('hidden') && $('#fClaveMia')) return;
+  abrirModal(fijo ? 'Elegí tu contraseña' : 'Cambiar mi contraseña', `<form id="fClaveMia" class="form-modal">
+      ${fijo ? '<p>Entraste con una contraseña temporal. Para seguir, elegí una tuya de 10 caracteres o más.</p>' : ''}
+      <label>Contraseña actual${campoClave('cmActual', 'required autocomplete="current-password"')}</label>
+      <label>Contraseña nueva${campoClave('cmNueva', 'required minlength="10" autocomplete="new-password"')}</label>
+      <label>Repetila${campoClave('cmRepetir', 'required minlength="10" autocomplete="new-password"')}</label>
+      <div class="login-err hidden" id="cmErr"></div>
+    </form>`, { fijo, acciones: `${fijo ? '<button type="button" class="ghost" data-accion="salir">Salir</button>' : '<button type="button" class="ghost" data-accion="modalCerrar">Cancelar</button>'}<button type="submit" form="fClaveMia">Guardar</button>` });
+  setTimeout(() => $('#cmActual') && $('#cmActual').focus(), 50);
+}
+
+async function cambiarMiClave() {
+  const err = $('#cmErr');
+  const nueva = $('#cmNueva').value;
+  if (nueva !== $('#cmRepetir').value) { err.textContent = 'Las dos contraseñas nuevas no coinciden'; err.classList.remove('hidden'); return; }
+  try {
+    await api('/api/sesion/clave', { method: 'POST', json: { actual: $('#cmActual').value, nueva } });
+    const eraFija = MODAL_FIJO;
+    cerrarModal(true);
+    toast('Contraseña cambiada. Se cerraron tus otras sesiones.');
+    YO = await api('/api/sesion');
+    if (eraFija) iniciarApp();
+  } catch (e) { err.textContent = e.message; err.classList.remove('hidden'); }
+}
+
+// ---------- Suite Escriba ----------
+let SUITE = [];
+async function cargarSuite() {
+  try {
+    if (!YO || YO.identidad.tipo !== 'sesion') return;
+    ({ apps: SUITE } = await api('/api/suite/apps'));
+    $('#suiteWrap').classList.toggle('hidden', !SUITE.length);
+  } catch { $('#suiteWrap').classList.add('hidden'); }
+}
+function pintarSuite() {
+  $('#suiteMenu').innerHTML = `<div class="menu-user">Suite Escriba</div>` + SUITE.map((a) =>
+    `<button class="menu-item" data-accion="abrirApp" data-app="${esc(a.app)}">${I.externo}<span>${esc(a.nombre)}</span><span class="mi-sub"><span class="punto ${a.disponible ? 'ok' : 'mal'}"></span>${a.disponible ? 'disponible' : 'no responde'}</span></button>`).join('');
+}
+async function abrirApp(app, btn) {
+  if (btn) btn.disabled = true;
+  try {
+    const { url } = await api('/api/suite/abrir/' + encodeURIComponent(app), { method: 'POST' });
+    location.href = url;
+  } catch (e) { toast(e, true); if (btn) btn.disabled = false; }
 }
 
 // ---------- Verificar ----------
@@ -234,7 +381,7 @@ async function verificar(ev) {
     const r = await api('/api/verificar', { method: 'POST', body: fd });
     pintarVerificacion(r);
   } catch (e) {
-    toast(e.message, true);
+    toast(e, true);
   } finally {
     btn.disabled = false; btn.textContent = 'Verificar';
   }
@@ -285,7 +432,7 @@ async function subir(ev) {
   // XHR para tener el progreso de la subida (fetch no lo da).
   const xhr = new XMLHttpRequest();
   xhr.open('POST', '/api/lotes');
-  xhr.setRequestHeader('X-API-Key', CLAVE);
+  xhr.setRequestHeader('X-Factorum', '1');
   xhr.upload.onprogress = (e) => { if (e.lengthComputable) prog.firstElementChild.style.width = `${Math.round((e.loaded / e.total) * 100)}%`; };
   xhr.onload = () => {
     btn.disabled = false;
@@ -293,6 +440,7 @@ async function subir(ev) {
     prog.firstElementChild.style.width = '0';
     let d = {};
     try { d = JSON.parse(xhr.responseText); } catch { /* nada */ }
+    if (xhr.status === 401) { sinSesion(); return; }
     if (xhr.status >= 300 || !d.ok) { toast(d.error || `Error ${xhr.status}`, true); return; }
     let msg = `Lote ${d.lote.id}: ${d.recibidos} archivo(s) recibidos.`;
     if (d.repetidos) msg += ` ${d.repetidos} ya estaban cargados.`;
@@ -320,7 +468,7 @@ async function cargarLotes() {
           <td class="num">${(c.ok || 0) + (c.aprobado || 0)}</td><td class="num">${c.revisar || 0}</td><td class="num">${c.error || 0}</td>
           <td><button class="ghost mini" data-accion="exportarLote" data-id="${l.id}">Excel</button></td></tr>`;
       }).join('')}</tbody></table></div>`;
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { toast(e, true); }
 }
 
 // ---------- Comprobantes ----------
@@ -366,7 +514,7 @@ async function cargarCbtes() {
     $('#pager').innerHTML = `<span>${desde} a ${hasta} de ${total}</span>
       ${filtro.offset > 0 ? '<button class="ghost mini" data-accion="pagina" data-dir="-1">Anteriores</button>' : ''}
       ${hasta < total ? '<button class="ghost mini" data-accion="pagina" data-dir="1">Siguientes</button>' : ''}`;
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { toast(e, true); }
 }
 
 async function descargar(ruta, nombre) {
@@ -377,7 +525,7 @@ async function descargar(ruta, nombre) {
     a.href = u; a.download = nombre;
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(u), 10000);
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { toast(e, true); }
 }
 
 // ---------- Revisión ----------
@@ -402,7 +550,7 @@ function camposTicketHTML(c) {
   const hora = c.es_tique || c.hora ? `<label><span class="et"><span>Hora</span>${(c.origenes || {}).hora ? `<span class="origen ${esc(c.origenes.hora)}">${esc(ORIGEN[c.origenes.hora] || c.origenes.hora)}</span>` : ''}</span>
       <input name="hora" value="${esc((c.hora || '').slice(0, 5))}" data-orig="${esc((c.hora || '').slice(0, 5))}" type="time"></label>` : '';
   return `<label class="${hora ? '' : 'ancho'}"><span class="et"><span>Rubro</span>${o ? `<span class="origen ${esc(o)}">${esc(ORIGEN[o] || o)}</span>` : ''}</span>
-      <select name="rubro" data-orig="${esc(r)}">${r ? '' : '<option value="" selected>Sin rubro</option>'}${ops}</select>
+      <select name="rubro" data-orig="${esc(r)}"${puede('corregir') ? '' : ' disabled'}>${r ? '' : '<option value="" selected>Sin rubro</option>'}${ops}</select>
       <span class="ayuda">${ayuda}</span></label>${hora}`;
 }
 
@@ -421,7 +569,7 @@ async function abrirRevision(idx) {
       const o = (c.origenes || {})[k];
       const v = tipo === 'm' ? (Number(c[k] || 0) ? Number(c[k]).toFixed(2) : '') : (c[k] ?? '');
       return `<label class="${ancho ? 'ancho' : ''}"><span class="et"><span>${t}</span>${o ? `<span class="origen ${esc(o)}" title="Origen del dato">${esc(ORIGEN[o] || o)}</span>` : ''}</span>
-        <input name="${k}" value="${esc(v === 0 ? '' : v)}" data-orig="${esc(v === 0 ? '' : v)}" ${tipo === 'date' ? 'type="date"' : ''} class="${tipo === 'm' ? 'num' : ''}" inputmode="${tipo === 'm' ? 'decimal' : 'text'}"></label>`;
+        <input name="${k}" value="${esc(v === 0 ? '' : v)}" data-orig="${esc(v === 0 ? '' : v)}" ${tipo === 'date' ? 'type="date"' : ''} class="${tipo === 'm' ? 'num' : ''}" inputmode="${tipo === 'm' ? 'decimal' : 'text'}"${puede('corregir') ? '' : ' readonly'}></label>`;
     }).join('');
     $('#btnConstatar').classList.toggle('hidden', !(SALUD && SALUD.arcanum));
     const k = c.constatacion;
@@ -442,7 +590,7 @@ async function abrirRevision(idx) {
     $('#revDoc').innerHTML = `<div class="rev-doc-barra"><span class="muted">${esc(c.archivo)}${(c.paginas || []).length ? ', página ' + pag : ''}</span>
       <button class="ghost mini" data-accion="abrirOriginal" data-doc="${c.documento_id}">Abrir el original</button></div>
       <div class="rev-doc-img"><img src="${rev.url}" alt="Comprobante original"></div>`;
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { toast(e, true); }
 }
 
 function cerrarRevision() {
@@ -459,11 +607,11 @@ function cambiosRevision() {
 }
 
 async function guardarRevision(aprobar) {
-  if (!rev) return;
+  if (!rev || !puede('corregir')) return;
   const campos = cambiosRevision();
   if (!aprobar && !Object.keys(campos).length) { toast('No hay cambios'); return; }
   try {
-    const { comprobante } = await api('/api/comprobantes/' + rev.cbte.id, { method: 'PATCH', json: { campos, aprobar, usuario: 'panel' } });
+    const { comprobante } = await api('/api/comprobantes/' + rev.cbte.id, { method: 'PATCH', json: { campos, aprobar } });
     listado[rev.idx] = comprobante;
     actualizarPendientes();
     if (aprobar) {
@@ -473,7 +621,7 @@ async function guardarRevision(aprobar) {
       toast('Guardado');
       abrirRevision(rev.idx);
     }
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { toast(e, true); }
 }
 
 async function constatarRevision() {
@@ -482,7 +630,7 @@ async function constatarRevision() {
     await api(`/api/comprobantes/${rev.cbte.id}/constatar`, { method: 'POST' });
     toast('Constatado');
     abrirRevision(rev.idx);
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { toast(e, true); }
 }
 
 // ---------- Resumen ----------
@@ -513,38 +661,12 @@ async function cargarResumen() {
         ${porRubroHTML(r)}
         <div class="fila"><button class="ghost" data-accion="exportar" data-formato="xlsx">Descargar Excel</button><button class="ghost" data-accion="exportar" data-formato="csv">Descargar CSV</button></div>
       </div></div>`;
-  } catch (e) { toast(e.message, true); }
-}
-
-// ---------- Canales ----------
-async function cargarCanales() {
-  try {
-    const { canales } = await api('/api/canales');
-    const NOM = { telegram: 'Telegram', whatsapp: 'WhatsApp', webhook: 'Webhook (secretaria, Evolution API, n8n)' };
-    const html = canales.map((c) => {
-      let extra = '';
-      if (c.canal === 'whatsapp' && c.habilitado && !c.conectado) {
-        extra = c.qr ? `<div><p>Escaneá este código desde WhatsApp: Dispositivos vinculados, Vincular un dispositivo.</p><img class="qr" id="qrWa" alt="Código QR de vinculación"></div>`
-          : '<p class="muted">Esperando el código de vinculación...</p>';
-        extra += `<form class="fila" id="fVincular"><label>O vinculá con un código de 8 letras<input id="telVincular" placeholder="Teléfono con código de país, ej. 5491155550000" inputmode="numeric"></label><button class="ghost" type="submit">Pedir código</button></form>`;
-      }
-      if (c.canal === 'whatsapp' && c.conectado) extra = '<button class="ghost mini" data-accion="desvincularWa">Desvincular</button>';
-      return `<div class="card"><div class="fila" style="justify-content:space-between"><strong>${NOM[c.canal] || esc(c.canal)}</strong>
-        ${!c.habilitado ? '<span class="est">Sin configurar</span>' : c.conectado ? '<span class="est ok">Conectado</span>' : '<span class="est revisar">Desconectado</span>'}</div>
-        ${c.detalle ? `<p class="muted">${esc(c.detalle)}</p>` : ''}${extra}</div>`;
-    }).join('');
-    // No repintar mientras se escribe el teléfono.
-    if (document.activeElement && document.activeElement.id === 'telVincular') return;
-    $('#canales').innerHTML = html;
-    if ($('#qrWa')) {
-      const b = await api('/api/canales/whatsapp/qr.png', { binario: true }).catch(() => null);
-      if (b && $('#qrWa')) $('#qrWa').src = URL.createObjectURL(b);
-    }
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { toast(e, true); }
 }
 
 // ---------- Estado vacío ----------
 function vacio(ico, titulo, texto, vistaBoton, textoBoton) {
+  if (vistaBoton && !vistaPermitida(vistaBoton)) vistaBoton = '';
   return `<div class="vacio"><div class="ico">${I[ico] || I.doc}</div><h3>${esc(titulo)}</h3><p>${esc(texto)}</p>${vistaBoton ? `<button type="button" data-accion="ir" data-vista="${vistaBoton}">${esc(textoBoton)}</button>` : ''}</div>`;
 }
 
@@ -559,8 +681,8 @@ async function cargarInicio() {
         <p>Lee facturas de ARCA por QR y texto, controla que todo cierre y, con Arcanum, te dice si son legales.</p>
         <div class="pasos">
           <div class="paso"><span class="n">1</span><strong>Verificá una factura</strong><span class="muted">Subí un PDF o una foto y mirá qué lee y qué controla. No se guarda.</span><button type="button" class="ghost" data-accion="ir" data-vista="verificar">Verificar</button></div>
-          <div class="paso"><span class="n">2</span><strong>Cargá un lote</strong><span class="muted">PDFs sueltos o un ZIP con cientos: se procesan en segundo plano.</span><button type="button" class="ghost" data-accion="ir" data-vista="subir">Cargar facturas</button></div>
-          <div class="paso"><span class="n">3</span><strong>Conectá el chat</strong><span class="muted">WhatsApp o Telegram: tus clientes mandan la foto y queda cargada.</span><button type="button" class="ghost" data-accion="ir" data-vista="canales">Canales</button></div>
+          ${puede('cargar') ? '<div class="paso"><span class="n">2</span><strong>Cargá un lote</strong><span class="muted">PDFs sueltos o un ZIP con cientos: se procesan en segundo plano.</span><button type="button" class="ghost" data-accion="ir" data-vista="subir">Cargar facturas</button></div>' : ''}
+          ${puede('configuracion') ? '<div class="paso"><span class="n">3</span><strong>Conectá el chat</strong><span class="muted">WhatsApp o Telegram: tus clientes mandan la foto y queda cargada.</span><button type="button" class="ghost" data-accion="ir" data-vista="configuracion">Configuración</button></div>' : ''}
         </div></div>`;
       return;
     }
@@ -597,7 +719,7 @@ async function cargarInicio() {
           <div><div class="barras">${barras}</div><div class="ejes">${ejes}</div></div></div>
         <div class="card"><div class="card-cab"><h3>Últimos lotes</h3><button type="button" class="ghost mini" data-accion="ir" data-vista="lotes">Ver todos</button></div><div class="lista">${lotes}</div></div>
       </div>`;
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { toast(e, true); }
 }
 
 // ---------- Bandeja de revisión ----------
@@ -620,16 +742,26 @@ async function cargarBandeja() {
         <span class="t2">${esc(motivo ? motivo.mensaje : '')}</span></span>
         <span class="monto">$ ${pesos(c.total)}</span></button>`;
     }).join('')}</div>${total > comprobantes.length ? `<p class="muted">Se muestran ${comprobantes.length} de ${total}.</p>` : ''}`;
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { toast(e, true); }
 }
 
 // ---------- Ventana: Novedades y Acerca de ----------
-function abrirModal(titulo, html) {
+let MODAL_FIJO = false;
+// abrirModal(titulo, html, { acciones, fijo, ancho }): fijo no se cierra con Esc, la X ni el fondo.
+function abrirModal(titulo, html, opts = {}) {
+  MODAL_FIJO = !!opts.fijo;
   $('#modalTit').textContent = titulo;
   $('#modalCuerpo').innerHTML = html;
+  $('#modalAcciones').innerHTML = opts.acciones || '<button type="button" data-accion="modalCerrar">Entendido</button>';
+  $('#modalX').classList.toggle('hidden', MODAL_FIJO);
+  $('#modal').querySelector('.modal-card').classList.toggle('ancho', !!opts.ancho);
   $('#modal').classList.remove('hidden');
 }
-function cerrarModal() { $('#modal').classList.add('hidden'); }
+function cerrarModal(forzar) {
+  if (MODAL_FIJO && !forzar) return;
+  MODAL_FIJO = false;
+  $('#modal').classList.add('hidden');
+}
 
 // Markdown mínimo del CHANGELOG: ### títulos, - viñetas (con continuación), **negrita** y `código`.
 function mdMini(md) {
@@ -681,19 +813,474 @@ function acercaDe() {
     <p style="margin-top:12px"><a class="link" href="https://github.com/diegoparras/factorum" target="_blank" rel="noopener">Código y documentación</a></p>`);
 }
 
+// ---------- Fechas en hora argentina ----------
+const TZ = 'America/Argentina/Buenos_Aires';
+const fechaHora = (s) => (s ? new Date(s).toLocaleString('es-AR', { timeZone: TZ, dateStyle: 'short', timeStyle: 'short' }) : '');
+const fechaCorta = (s) => (s ? new Date(s).toLocaleDateString('es-AR', { timeZone: TZ }) : '');
+const cuitsHTML = (l) => (l && l.length ? l.map((c) => `<span class="cuit-chip mono">${esc(cuit(c))}</span>`).join(' ') : '<span class="muted">Todos</span>');
+const cuitsTexto = (l) => (l || []).map(cuit).join(', ');
+const rolesHasta = (max, actual) => ORDEN_ROL.filter((r) => ORDEN_ROL.indexOf(r) <= ORDEN_ROL.indexOf(max))
+  .map((r) => `<option value="${r}"${r === actual ? ' selected' : ''}>${ROLES[r]}</option>`).join('');
+const miRol = () => (YO && YO.identidad && YO.identidad.rol) || 'lectura';
+
+// copiar al portapapeles (con plan B para navegadores sin permiso).
+async function copiar(texto) {
+  try { await navigator.clipboard.writeText(texto); toast('Copiado'); return; } catch { /* plan B */ }
+  const t = document.createElement('textarea');
+  t.value = texto; t.setAttribute('readonly', ''); t.style.position = 'fixed'; t.style.opacity = '0';
+  document.body.append(t); t.select();
+  try { document.execCommand('copy'); toast('Copiado'); } catch { toast('No se pudo copiar: seleccionalo a mano', true); }
+  t.remove();
+}
+const bloqueCodigo = (texto, etiqueta) => `<div class="codigo"><div class="codigo-cab"><span>${esc(etiqueta || '')}</span><button type="button" class="ghost mini" data-accion="copiar" data-texto="${esc(texto)}">${I.copiar}<span>Copiar</span></button></div><pre>${esc(texto)}</pre></div>`;
+
+// secretoUnaVez: lo que se muestra una sola vez (contraseña temporal, clave de API).
+function secretoUnaVez(titulo, intro, valor, pie) {
+  abrirModal(titulo, `<p>${intro}</p>
+    <div class="una-vez"><div class="pass-wrap"><input id="unaVez" class="mono" type="text" readonly value="${esc(valor)}" aria-label="${esc(titulo)}"><button type="button" class="pass-toggle" data-accion="ojo" data-para="unaVez" aria-label="Mostrar u ocultar">${I.ojoNo}</button></div><button type="button" class="ghost mini" data-accion="copiar" data-texto="${esc(valor)}">${I.copiar}<span>Copiar</span></button></div>
+    <p class="muted">${pie}</p>`, { fijo: true, acciones: '<button type="button" data-accion="modalCerrarFijo">Ya la guardé</button>' });
+}
+
+// tarjetas: en el celular cada fila se ve como una tarjeta con la etiqueta de cada dato.
+function tarjetas(sel) {
+  const t = $(sel + ' table.t');
+  if (!t) return;
+  t.classList.add('tarjetas');
+  const et = $$('thead th', t).map((th) => th.textContent.trim());
+  $$('tbody tr', t).forEach((tr) => [...tr.children].forEach((td, i) => { if (et[i]) td.dataset.et = et[i]; }));
+}
+
+// ---------- Configuración ----------
+const SECCIONES = {
+  general: { t: 'General', d: 'Nombre, URL pública y lo que viene marcado al cargar.', probar: true, clave: ['general.url_publica'],
+    como: ['Poné la dirección con la que entrás desde el navegador, con https (por ejemplo https://factorum.estudio.com.ar), sin la barra final.',
+      'Si Factorum está detrás de EasyPanel, Traefik o Caddy, es el dominio que configuraste ahí.',
+      'Tocá Probar: Factorum se llama a sí mismo por esa URL desde el servidor.',
+      'Con https, la cookie de sesión sale marcada como segura. La URL pública hace falta para entrar desde Arcanum sin volver a loguearte.'] },
+  arcanum: { t: 'Arcanum', d: 'Constatación con ARCA (WSCDC), apócrifos y padrón; y el pase para abrir Arcanum desde acá.', probar: true, clave: ['arcanum.url', 'arcanum.api_key'],
+    como: ['En Arcanum, entrá a Claves de API y creá una clave nueva. Para constatar alcanza con rol lectura; limitala a los CUITs que consultan.',
+      'Para abrir Arcanum desde acá sin volver a loguearte, marcá en esa clave «Puede abrir sesiones de la suite».',
+      'URL interna: cómo llega este servidor a Arcanum. En el mismo docker compose, http://arcanum:8094.',
+      'URL pública: la que ves en el navegador cuando usás Arcanum.',
+      'Pegá la clave, guardá y tocá Probar: Factorum consulta /api/health y una lista de solo lectura.',
+      'Para el camino inverso (de Arcanum a Factorum), creá acá en Claves de API una clave con «Puede abrir sesiones de la suite» y cargala en Arcanum como FACTORUM_TOKEN.'] },
+  telegram: { t: 'Telegram', d: 'Un bot que recibe PDFs y fotos y contesta cuando termina.', probar: true, clave: ['telegram.token'],
+    como: ['En Telegram, abrí @BotFather y mandale /newbot.', 'Elegí un nombre y un usuario que termine en «bot».',
+      'Copiá el token que te da (algo como 123456789:AA...) y pegalo acá.', 'Guardá: el bot arranca solo, sin reiniciar. Probar confirma el token con getMe.',
+      'Escribile al bot desde tu cuenta: te contesta tu id. Agregalo a «Usuarios o chats permitidos» y guardá.'] },
+  whatsapp: { t: 'WhatsApp', d: 'Como dispositivo vinculado de un número: tus clientes mandan la foto y queda cargada.', clave: ['whatsapp.activo'],
+    como: ['Usá un número que no sea el personal: no es la API oficial y WhatsApp lo puede bloquear.', 'Activá WhatsApp y guardá.',
+      'En el teléfono: WhatsApp, Dispositivos vinculados, Vincular un dispositivo, y escaneá el código que aparece acá (o pedí un código de 8 letras).',
+      'Agregá los números de quienes pueden mandar facturas, con código de país y sin el 0 ni el 15 (5491155550000).',
+      'Para pedirle algo sin archivo, el mensaje empieza con «factorum» (por ejemplo «factorum estado»).'] },
+  webhook: { t: 'Webhook', d: 'Para tu propio bot (la secretaria, Evolution API, n8n).', probar: true, clave: ['webhook.token'],
+    como: ['Tocá Generar para crear el token de entrada y guardá.', 'Tu bot manda un POST a la URL de entrada (abajo) con la cabecera X-Factorum-Token.',
+      'El cuerpo: {"chat", "remitente", "texto", "archivos": [{"nombre", "mime", "contenido_base64"}]}. La respuesta trae el texto para contestar.',
+      'Si querés el aviso de fin de lote, poné la URL de salida: llega un POST {chat, texto} firmado con HMAC-SHA256 en X-Factorum-Firma.',
+      'Probar manda un aviso de prueba firmado a la URL de salida.'] },
+  ia: { t: 'IA (visión)', d: 'Último recurso: solo completa lo que el QR, el texto y el OCR no pudieron leer.', probar: true, clave: ['ia.url', 'ia.modelo'],
+    como: ['Con Ollama en el mismo compose: docker compose --profile ia up -d y después docker compose exec ollama ollama pull qwen2.5vl:7b.',
+      'Endpoint: http://ollama:11434/v1. Modelo: qwen2.5vl:7b. Sin clave.',
+      'Con otro proveedor compatible con OpenAI, poné su endpoint (terminado en /v1), el modelo y la clave. Ojo: los comprobantes que necesiten IA van a salir del servidor.',
+      'Probar lista los modelos del endpoint y controla que esté el elegido.'] },
+  r2: { t: 'Almacenamiento R2', d: 'Dónde se guardan los archivos. Sin R2, en el disco del servidor. Siempre comprimidos y cifrados.', probar: true, clave: ['r2.endpoint', 'r2.bucket', 'r2.access_key', 'r2.secret_key'],
+    como: ['En Cloudflare, R2, creá un bucket (por ejemplo factorum).', 'En «Administrar tokens de la API de R2», creá un token de lectura y escritura sobre ese bucket.',
+      'Copiá el endpoint de S3 (https://<cuenta>.r2.cloudflarestorage.com), la access key y la secret key.', 'Probar guarda y borra un objeto de prueba.',
+      'Al guardar, lo nuevo va a R2; lo que ya estaba en disco se sigue leyendo de ahí. Pasar lo viejo a R2 llega en una próxima versión.'] },
+  clientes: { t: 'Clientes y canales', d: 'Qué cliente es cada remitente de chat: lo que mande se carga para ese CUIT.', clave: ['clientes.canales'],
+    como: ['Una línea por remitente: el número de WhatsApp (con código de país), el id de Telegram o el chat del webhook, un igual y el CUIT del cliente.',
+      'Ejemplo: 5491155550000 = 20-22222222-3.', 'Lo que mande ese remitente se carga para ese cliente y se constata con su certificado en Arcanum.'] },
+};
+let CONF = null; // respuesta de /api/configuracion
+
+async function cargarConfiguracion() {
+  try {
+    CONF = await api('/api/configuracion');
+    pintarConfiguracion();
+  } catch (e) { $('#configuracion').innerHTML = vacio('configuracion', 'No se pudo cargar la configuración', e.message); }
+}
+
+const idCampo = (k) => 'cf-' + k.replace(/\./g, '-');
+
+function valorCampoTexto(c) {
+  if (c.tipo === 'lista') return (c.valor || []).join('\n');
+  if (c.tipo === 'clientes') return Object.entries(c.valor || {}).map(([k, v]) => `${k} = ${cuit(v)}`).join('\n');
+  if (c.tipo === 'cuit') return c.valor ? cuit(c.valor) : '';
+  return c.valor ?? '';
+}
+
+function campoConfHTML(c) {
+  const id = idCampo(c.clave);
+  const bloq = c.bloqueado ? ' disabled' : '';
+  const nota = c.bloqueado ? `<span class="fijado">${I.llave}Fijado por el servidor (variable ${esc(c.env)})</span>`
+    : c.origen === 'pantalla' && c.actualizado_por ? `<span class="muted">Cambiado por ${esc(c.actualizado_por)}, ${fechaHora(c.actualizado)}</span>` : '';
+  let ayuda = c.ayuda ? `<span class="ayuda">${esc(c.ayuda)}</span>` : '';
+  if (c.tipo === 'secreto' && c.configurado) ayuda = `<span class="ayuda"><strong>Configurado${c.ultimos ? ', termina en ' + esc(c.ultimos) : ''}.</strong> Escribí para reemplazarlo. ${esc(c.ayuda || '')}</span>`;
+  if (c.tipo === 'bool') {
+    return `<div class="campo-conf"><label class="chk"><input type="checkbox" id="${id}" data-clave="${c.clave}" data-orig="${c.valor ? '1' : ''}"${c.valor ? ' checked' : ''}${bloq}> ${esc(c.etiqueta)}</label>${ayuda}${nota}</div>`;
+  }
+  let control;
+  if (c.tipo === 'secreto') {
+    const ph = c.configurado ? 'Configurado' : 'Sin configurar';
+    control = `<div class="fila-secreto">${campoClave(id, `data-clave="${c.clave}" data-orig="" autocomplete="off" spellcheck="false" placeholder="${esc(ph)}"${bloq}`)}
+      ${c.clave === 'webhook.token' && !c.bloqueado ? `<button type="button" class="ghost mini" data-accion="generarToken" data-para="${id}">Generar</button>` : ''}
+      ${c.configurado && !c.bloqueado && c.origen === 'pantalla' ? `<button type="button" class="ghost mini" data-accion="borrarSecreto" data-clave="${c.clave}">Borrar</button>` : ''}</div>`;
+  } else if (c.tipo === 'lista' || c.tipo === 'clientes') {
+    const v = valorCampoTexto(c);
+    control = `<textarea id="${id}" data-clave="${c.clave}" data-orig="${esc(v)}" rows="${c.tipo === 'clientes' ? 4 : 3}" placeholder="${c.ejemplo ? 'Por ejemplo: ' + esc(c.ejemplo) : ''}" spellcheck="false"${bloq}>${esc(v)}</textarea>`;
+  } else {
+    const v = valorCampoTexto(c);
+    control = `<input id="${id}" data-clave="${c.clave}" data-orig="${esc(v)}" value="${esc(v)}" placeholder="${c.ejemplo ? 'Por ejemplo: ' + esc(c.ejemplo) : ''}" ${c.tipo === 'url' ? 'inputmode="url"' : ''} spellcheck="false"${bloq}>`;
+  }
+  return `<label class="campo-conf${c.tipo === 'lista' || c.tipo === 'clientes' ? ' ancho' : ''}"><span class="et">${esc(c.etiqueta)}</span>${control}${ayuda}${nota}</label>`;
+}
+
+function estadoSeccion(sec, campos) {
+  const cfg = SECCIONES[sec];
+  const porClave = Object.fromEntries(campos.map((c) => [c.clave, c]));
+  const todos = campos.length && campos.every((c) => c.bloqueado);
+  const ok = cfg.clave.every((k) => porClave[k] && porClave[k].configurado && (porClave[k].tipo !== 'bool' || porClave[k].valor));
+  const canal = (CONF.canales || []).find((x) => x.canal === sec);
+  if (canal && canal.habilitado) return canal.conectado ? '<span class="est ok">Conectado</span>' : `<span class="est revisar">${esc(canal.detalle || 'Desconectado')}</span>`;
+  if (todos) return '<span class="est">Fijado por el servidor</span>';
+  return ok ? '<span class="est ok">Configurado</span>' : '<span class="est">Sin configurar</span>';
+}
+
+function pintarConfiguracion() {
+  const secs = CONF.secciones || [];
+  $('#confSub').textContent = puede('configuracion')
+    ? 'Todo lo que antes iba en variables de entorno. Lo que fija el servidor gana y aparece bloqueado. Al guardar, se aplica sin reiniciar.'
+    : 'Como admin podés cambiar qué cliente es cada remitente de chat. El resto de la configuración lo maneja un superadmin.';
+  $('#confSaltos').innerHTML = secs.length > 1 ? secs.map((s) => `<a class="salto" href="#conf-${s}" data-accion="saltar" data-sec="${s}">${esc(SECCIONES[s].t)}</a>`).join('') : '';
+  $('#configuracion').innerHTML = secs.map((sec) => {
+    const cfg = SECCIONES[sec];
+    const campos = CONF.campos.filter((c) => c.seccion === sec);
+    const extra = sec === 'webhook' ? `<div class="dato-fijo"><span class="et">URL de entrada</span>${CONF.webhook_entrada
+      ? `<div class="fila-copia"><code class="mono">${esc(CONF.webhook_entrada)}</code><button type="button" class="ghost mini" data-accion="copiar" data-texto="${esc(CONF.webhook_entrada)}">${I.copiar}<span>Copiar</span></button></div>`
+      : '<span class="muted">Completá la URL pública en General para verla acá.</span>'}</div>` : sec === 'whatsapp' ? '<div id="waEstado" class="wa-estado"></div>' : '';
+    const editables = campos.some((c) => !c.bloqueado);
+    return `<section class="card conf" id="conf-${sec}" data-sec="${sec}">
+      <div class="card-cab"><div><h3>${esc(cfg.t)}</h3><p class="muted conf-d">${esc(cfg.d)}</p></div>${estadoSeccion(sec, campos)}</div>
+      <div class="conf-campos">${campos.map(campoConfHTML).join('')}</div>
+      ${extra}
+      <details class="como"><summary>Cómo se configura</summary><ol>${cfg.como.map((p) => `<li>${esc(p)}</li>`).join('')}</ol></details>
+      <div class="prueba hidden"></div>
+      <div class="fila pie-conf">
+        ${cfg.probar ? `<button type="button" class="ghost" data-accion="probarConf" data-sec="${sec}">Probar</button>` : ''}
+        <span class="sp"></span>
+        ${editables ? `<button type="button" data-accion="guardarConf" data-sec="${sec}">Guardar</button>` : ''}
+      </div></section>`;
+  }).join('');
+  refrescarWhatsApp();
+}
+
+// cambiosDe junta lo que cambió en una sección (o todo lo escrito, para Probar).
+function cambiosDe(sec, todo) {
+  const out = {};
+  $$(`#conf-${sec} [data-clave]`).forEach((el) => {
+    if (el.disabled) return;
+    const c = CONF.campos.find((x) => x.clave === el.dataset.clave);
+    if (!c) return;
+    if (el.type === 'checkbox') {
+      if (todo || (el.checked ? '1' : '') !== el.dataset.orig) out[c.clave] = el.checked;
+      return;
+    }
+    const v = el.value;
+    if (c.tipo === 'secreto') { if (v) out[c.clave] = v; return; }
+    if (!todo && v === el.dataset.orig) return;
+    out[c.clave] = v;
+  });
+  return out;
+}
+
+async function guardarConf(sec, cambios, btn) {
+  cambios = cambios || cambiosDe(sec, false);
+  if (!Object.keys(cambios).length) { toast('No hay cambios'); return; }
+  if (btn) btn.disabled = true;
+  try {
+    CONF = await api('/api/configuracion', { method: 'PUT', json: { cambios } });
+    pintarConfiguracion();
+    cargarSalud(); cargarSuite();
+    toast((CONF.cambiadas || []).length ? 'Guardado: ya se está usando, sin reiniciar.' : 'No había cambios');
+    document.getElementById('conf-' + sec)?.scrollIntoView({ block: 'nearest' });
+  } catch (e) { toast(e, true); } finally { if (btn) btn.disabled = false; }
+}
+
+async function probarConf(sec, btn) {
+  const caja = $(`#conf-${sec} .prueba`);
+  btn.disabled = true; btn.textContent = 'Probando...';
+  caja.className = 'prueba'; caja.textContent = 'Probando...';
+  try {
+    const r = await api('/api/configuracion/probar/' + sec, { method: 'POST', json: { cambios: cambiosDe(sec, true) } });
+    caja.className = 'prueba ' + (r.exito ? 'bien' : 'mal');
+    caja.innerHTML = `${r.exito ? I.check : I.alerta}<span>${esc(r.mensaje)}</span>`;
+  } catch (e) { caja.className = 'prueba mal'; caja.innerHTML = `${I.alerta}<span>${esc(e.message)}</span>`; }
+  finally { btn.disabled = false; btn.textContent = 'Probar'; }
+}
+
+// WhatsApp: estado, QR y vinculación (lo que antes estaba en Canales).
+async function refrescarWhatsApp() {
+  const caja = $('#waEstado');
+  if (!caja || !puede('configuracion')) return;
+  try {
+    const { canales } = await api('/api/canales');
+    const c = canales.find((x) => x.canal === 'whatsapp') || {};
+    if (document.activeElement && document.activeElement.id === 'telVincular') return; // no repintar mientras se escribe
+    let html;
+    if (!c.habilitado) html = '<p class="muted">Activalo y guardá para vincular un teléfono.</p>';
+    else if (c.conectado) html = `<div class="fila"><span class="est ok">${esc(c.detalle || 'Vinculado')}</span><span class="sp"></span><button type="button" class="ghost mini" data-accion="desvincularWa">Desvincular</button></div>`;
+    else {
+      html = `<div class="wa-vincular">${c.qr ? '<img class="qr" id="qrWa" alt="Código QR de vinculación">' : '<p class="muted">Esperando el código de vinculación...</p>'}
+        <div><p>Escaneá el código desde WhatsApp: Dispositivos vinculados, Vincular un dispositivo.</p>
+        <form class="fila" id="fVincular"><label>O vinculá con un código de 8 letras<input id="telVincular" placeholder="Teléfono con código de país, ej. 5491155550000" inputmode="numeric"></label><button class="ghost" type="submit">Pedir código</button></form></div></div>`;
+    }
+    caja.innerHTML = html;
+    if ($('#qrWa')) {
+      const b = await api('/api/canales/whatsapp/qr.png', { binario: true }).catch(() => null);
+      if (b && $('#qrWa')) $('#qrWa').src = URL.createObjectURL(b);
+    }
+  } catch { /* se reintenta */ }
+}
+
+// ---------- Usuarios ----------
+let USUARIOS = [];
+async function cargarUsuarios() {
+  try {
+    ({ usuarios: USUARIOS } = await api('/api/usuarios'));
+    const yo = YO.identidad;
+    const ORIGEN_U = { local: 'Factorum', arcanum: 'Arcanum', lockatus: 'Lockatus' };
+    $('#usuarios').innerHTML = `<div class="tabla-scroll"><table class="t"><thead><tr><th>Persona</th><th>Rol</th><th>Clientes</th><th>Origen</th><th>Último ingreso</th><th>Estado</th><th></th></tr></thead><tbody>
+      ${USUARIOS.map((u) => {
+        const tocable = ORDEN_ROL.indexOf(u.rol) <= ORDEN_ROL.indexOf(yo.rol);
+        return `<tr class="${u.activo ? '' : 'apagado'}"><td><div class="persona"><span class="avatar chico" aria-hidden="true">${esc(iniciales(u.nombre || u.email))}</span><span><strong>${esc(u.nombre)}</strong>${u.id === yo.usuario_id ? ' <span class="muted">(vos)</span>' : ''}<br><span class="muted">${esc(u.email)}</span></span></div></td>
+          <td>${rolChip(u.rol)}</td><td>${cuitsHTML(u.cuits)}</td><td>${esc(ORIGEN_U[u.origen] || u.origen)}</td>
+          <td>${u.ultimo_ingreso ? fechaHora(u.ultimo_ingreso) : '<span class="muted">Nunca</span>'}${u.debe_cambiar ? '<br><span class="est revisar">Contraseña temporal</span>' : ''}</td>
+          <td>${u.activo ? '<span class="est ok">Activa</span>' : '<span class="est">Desactivada</span>'}</td>
+          <td class="acciones-fila">${tocable ? `<button type="button" class="ghost mini" data-accion="editarUsuario" data-id="${u.id}">Editar</button>
+            <button type="button" class="ghost mini" data-accion="restablecer" data-id="${u.id}">Restablecer contraseña</button>
+            ${u.id !== yo.usuario_id ? `<button type="button" class="ghost mini" data-accion="activarUsuario" data-id="${u.id}" data-activo="${u.activo ? '' : '1'}">${u.activo ? 'Desactivar' : 'Reactivar'}</button>` : ''}` : '<span class="muted">Solo un superadmin</span>'}</td></tr>`;
+      }).join('')}</tbody></table></div>`;
+    tarjetas('#usuarios');
+  } catch (e) { toast(e, true); }
+}
+
+function formUsuario(u) {
+  const yo = YO.identidad;
+  const restr = yo.cuits && yo.cuits.length;
+  abrirModal(u ? 'Editar a ' + (u.nombre || u.email) : 'Nueva persona', `<form id="fUsuario" class="form-modal" data-id="${u ? u.id : ''}">
+    ${u ? `<p class="muted">${esc(u.email)}</p>` : '<label>Email<input id="usEmail" type="email" required autocomplete="off"></label>'}
+    <label>Nombre<input id="usNombre" value="${esc(u ? u.nombre : '')}" autocomplete="off"></label>
+    <label>Rol<select id="usRol">${rolesHasta(yo.rol, u ? u.rol : 'usuario')}</select>
+      <span class="ayuda">Lectura solo mira. Usuario carga, revisa, corrige y aprueba. Admin además maneja personas, claves y clientes. Superadmin, todo.</span></label>
+    <label>Clientes (CUITs)<textarea id="usCuits" rows="2" placeholder="${restr ? 'Uno o más de tus clientes' : 'Vacío: todos los clientes'}">${esc(cuitsTexto(u ? u.cuits : (restr ? yo.cuits : [])))}</textarea>
+      <span class="ayuda">Separados por coma. Vacío: ve a todos los clientes.</span></label>
+    <div class="login-err hidden" id="usErr"></div></form>`,
+  { acciones: `<button type="button" class="ghost" data-accion="modalCerrar">Cancelar</button><button type="submit" form="fUsuario">${u ? 'Guardar' : 'Crear'}</button>` });
+}
+
+async function guardarUsuario(f) {
+  const id = f.dataset.id;
+  const cuerpo = { nombre: $('#usNombre').value.trim(), rol: $('#usRol').value, cuits: $('#usCuits').value };
+  try {
+    if (id) {
+      await api('/api/usuarios/' + id, { method: 'PATCH', json: cuerpo });
+      cerrarModal(); toast('Guardado'); cargarUsuarios();
+    } else {
+      cuerpo.email = $('#usEmail').value.trim();
+      const r = await api('/api/usuarios', { method: 'POST', json: cuerpo });
+      cargarUsuarios();
+      secretoUnaVez('Persona creada', `Pasale a <strong>${esc(r.usuario.email)}</strong> esta contraseña temporal. Al entrar, Factorum le pide que elija una propia.`,
+        r.clave_temporal, 'Se muestra una sola vez: si la perdés, restablecela.');
+    }
+  } catch (e) { const er = $('#usErr'); er.textContent = e.message; er.classList.remove('hidden'); }
+}
+
+async function restablecer(id) {
+  const u = USUARIOS.find((x) => String(x.id) === String(id));
+  if (!u || !confirm(`¿Restablecer la contraseña de ${u.nombre || u.email}? Se cierran sus sesiones y va a tener que entrar con una temporal.`)) return;
+  try {
+    const r = await api(`/api/usuarios/${id}/restablecer`, { method: 'POST' });
+    cargarUsuarios();
+    secretoUnaVez('Contraseña restablecida', `Pasale a <strong>${esc(u.email)}</strong> esta contraseña temporal.`, r.clave_temporal, 'Se muestra una sola vez.');
+  } catch (e) { toast(e, true); }
+}
+
+async function activarUsuario(id, activo) {
+  const u = USUARIOS.find((x) => String(x.id) === String(id));
+  if (!activo && !confirm(`¿Desactivar a ${u ? u.nombre || u.email : 'esta persona'}? No va a poder entrar y sus claves de API dejan de andar.`)) return;
+  try { await api('/api/usuarios/' + id, { method: 'PATCH', json: { activo } }); toast(activo ? 'Reactivada' : 'Desactivada'); cargarUsuarios(); }
+  catch (e) { toast(e, true); }
+}
+
+// ---------- Claves de API ----------
+let CLAVES = [];
+async function cargarClaves() {
+  try {
+    ({ claves: CLAVES } = await api('/api/claves'));
+    if (!CLAVES.length) {
+      $('#claves').innerHTML = vacio('claves', 'Todavía no hay claves', 'Creá una para conectar un asistente por MCP, una integración por la API REST o Arcanum.');
+      return;
+    }
+    const yo = YO.identidad;
+    $('#claves').innerHTML = `<div class="tabla-scroll"><table class="t"><thead><tr><th>Nombre</th><th>Clave</th><th>Rol</th><th>Clientes</th><th>Suite</th><th>Creada por</th><th>Último uso</th><th>Vence</th><th>Estado</th><th></th></tr></thead><tbody>
+      ${CLAVES.map((k) => {
+        const vencida = k.vence && new Date(k.vence) < new Date();
+        const estadoK = k.revocada ? '<span class="est">Revocada</span>' : vencida ? '<span class="est revisar">Vencida</span>' : '<span class="est ok">Vigente</span>';
+        const max = ORDEN_ROL.indexOf(k.suite ? (ORDEN_ROL.indexOf(k.suite_tope) > ORDEN_ROL.indexOf(k.rol) ? k.suite_tope : k.rol) : k.rol);
+        return `<tr class="${k.revocada ? 'apagado' : ''}"><td><strong>${esc(k.nombre)}</strong><br><span class="muted">${fechaCorta(k.creado)}</span></td><td class="mono">${esc(k.prefijo)}...</td>
+          <td>${rolChip(k.rol)}</td><td>${cuitsHTML(k.cuits)}</td><td>${k.suite ? 'Sí, hasta ' + rolChip(k.suite_tope) : '<span class="muted">No</span>'}</td>
+          <td>${esc(k.dueno || '')}</td><td>${k.ultimo_uso ? fechaHora(k.ultimo_uso) : '<span class="muted">Nunca</span>'}</td><td>${k.vence ? fechaCorta(new Date(new Date(k.vence) - 1)) : '<span class="muted">No vence</span>'}</td>
+          <td>${estadoK}</td><td>${!k.revocada && max <= ORDEN_ROL.indexOf(yo.rol) ? `<button type="button" class="ghost mini" data-accion="revocarClave" data-id="${k.id}">Revocar</button>` : ''}</td></tr>`;
+      }).join('')}</tbody></table></div>`;
+    tarjetas('#claves');
+  } catch (e) { toast(e, true); }
+}
+
+function formClave() {
+  const yo = YO.identidad;
+  const restr = yo.cuits && yo.cuits.length;
+  const topes = ORDEN_ROL.filter((r) => ORDEN_ROL.indexOf(r) <= ORDEN_ROL.indexOf(yo.rol) && (yo.rol === 'superadmin' || ORDEN_ROL.indexOf(r) <= ORDEN_ROL.indexOf('usuario')));
+  abrirModal('Nueva clave de API', `<form id="fClave" class="form-modal">
+    <label>Nombre<input id="ckNombre" required placeholder="Para qué es: «Claude de Diego», «Arcanum», «n8n»" autocomplete="off"></label>
+    <label>Rol<select id="ckRol">${rolesHasta(yo.rol, 'lectura')}</select><span class="ayuda">Para un asistente (MCP), lectura: puede buscar y verificar, pero no cargar ni corregir.</span></label>
+    <label>Clientes (CUITs)<textarea id="ckCuits" rows="2" placeholder="${restr ? 'Uno o más de tus clientes' : 'Vacío: todos los clientes'}">${esc(cuitsTexto(restr ? yo.cuits : []))}</textarea></label>
+    <label>Vence<input id="ckVence" type="date"><span class="ayuda">Vacío: no vence. Vence al terminar ese día.</span></label>
+    <label class="chk"><input type="checkbox" id="ckSuite"> Puede abrir sesiones de la suite</label>
+    <label id="ckTopeWrap" class="hidden">Rol tope de la suite<select id="ckTope">${topes.map((r) => `<option value="${r}"${r === 'usuario' ? ' selected' : ''}>${ROLES[r]}</option>`).join('')}</select>
+      <span class="ayuda">Quien entre desde otra app (Arcanum) con esta clave no pasa de este rol, aunque allá tenga uno mayor.${yo.rol === 'superadmin' ? '' : ' Admin y superadmin solo los pone un superadmin.'}</span></label>
+    <div class="login-err hidden" id="ckErr"></div></form>`,
+  { acciones: '<button type="button" class="ghost" data-accion="modalCerrar">Cancelar</button><button type="submit" form="fClave">Crear</button>' });
+}
+
+async function crearClave() {
+  const suite = $('#ckSuite').checked;
+  try {
+    const r = await api('/api/claves', { method: 'POST', json: { nombre: $('#ckNombre').value.trim(), rol: $('#ckRol').value, cuits: $('#ckCuits').value,
+      vence: $('#ckVence').value, suite, suite_tope: suite ? $('#ckTope').value : '' } });
+    cargarClaves();
+    secretoUnaVez('Clave creada', `Esta es la clave <strong>${esc(r.datos.nombre)}</strong>. Va en la cabecera <code>X-API-Key</code> o <code>Authorization: Bearer</code>.`,
+      r.clave, 'Se muestra una sola vez: Factorum guarda solo su huella. Si la perdés, revocala y creá otra.');
+  } catch (e) { const er = $('#ckErr'); er.textContent = e.message; er.classList.remove('hidden'); }
+}
+
+async function revocarClave(id) {
+  const k = CLAVES.find((x) => String(x.id) === String(id));
+  if (!confirm(`¿Revocar la clave «${k ? k.nombre : id}»? Lo que la use deja de andar en el momento.`)) return;
+  try { await api('/api/claves/' + id, { method: 'DELETE' }); toast('Revocada'); cargarClaves(); } catch (e) { toast(e, true); }
+}
+
+// ---------- Conectar ----------
+function pintarConectar() {
+  const base = location.origin;
+  const clave = 'fct_...';
+  const desktop = JSON.stringify({ mcpServers: { factorum: { command: 'npx', args: ['-y', 'mcp-remote', base + '/mcp', '--header', 'Authorization:${FACTORUM_AUTH}'],
+    env: { FACTORUM_AUTH: 'Bearer ' + clave } } } }, null, 2);
+  const crearClaveBtn = puede('claves') ? '<button type="button" data-accion="ir" data-vista="claves">Crear una clave</button>' : '<span class="muted">Pedile a un admin que te cree una clave.</span>';
+  $('#conectar').innerHTML = `
+    <div class="aviso-card">${I.llave}<div><strong>Para un asistente, una clave de rol lectura.</strong> Puede buscar, resumir y verificar, pero no cargar, corregir ni aprobar. Limitala a los clientes que necesita.</div>${crearClaveBtn}</div>
+    <div class="dos parejo">
+      <section class="card"><div class="card-cab"><h3>API REST</h3><a class="link" href="https://github.com/diegoparras/factorum/blob/main/docs/API.md" target="_blank" rel="noopener">Documentación${I.externo}</a></div>
+        <p class="muted">JSON sobre HTTPS. La clave va en <code>X-API-Key</code> o en <code>Authorization: Bearer</code>. Cada clave ve solo sus clientes.</p>
+        ${bloqueCodigo(`curl -H "X-API-Key: ${clave}" "${base}/api/comprobantes?estado=revisar"`, 'Lo que hay para revisar')}
+        ${bloqueCodigo(`curl -H "X-API-Key: ${clave}" -F archivo=@factura.pdf "${base}/api/verificar"`, '¿Es legal esta factura?')}
+      </section>
+      <section class="card"><div class="card-cab"><h3>MCP para asistentes</h3></div>
+        <p class="muted">Streamable HTTP en <code>${esc(base)}/mcp</code>, con la misma clave. Herramientas: verificar_factura, buscar_comprobantes, comprobante, pendientes_revision, resumen, estado_lote y, con rol usuario, procesar_factura.</p>
+        ${bloqueCodigo(`claude mcp add --transport http factorum ${base}/mcp --header "Authorization: Bearer ${clave}"`, 'Claude Code')}
+        ${bloqueCodigo(desktop, 'Claude Desktop: claude_desktop_config.json')}
+        <p class="muted">En Claude Desktop: Configuración, Desarrollador, Editar configuración. Pegá el bloque, reemplazá <code>${clave}</code> por tu clave y reiniciá Claude. Hace falta Node (npx).</p>
+      </section>
+    </div>`;
+}
+
+// ---------- Auditoría ----------
+const ACCIONES = {
+  'sesion.entrar': 'Entró', 'sesion.fallida': 'Intento de entrada fallido', 'sesion.salir': 'Salió',
+  'usuario.crear': 'Alta de persona', 'usuario.editar': 'Cambio de persona', 'usuario.desactivar': 'Desactivó a una persona',
+  'usuario.reactivar': 'Reactivó a una persona', 'usuario.restablecer': 'Restableció una contraseña', 'usuario.cambiar_clave': 'Cambió su contraseña',
+  'clave.crear': 'Creó una clave de API', 'clave.revocar': 'Revocó una clave de API', 'config.cambiar': 'Cambió la configuración',
+  'config.whatsapp_desvincular': 'Desvinculó WhatsApp', 'comprobante.corregir': 'Corrigió un comprobante', 'comprobante.aprobar': 'Aprobó un comprobante',
+  'exportar': 'Exportó', 'lote.crear': 'Cargó un lote', 'suite.pase_emitido': 'Pase de la suite emitido', 'suite.pase_usado': 'Entró con un pase de la suite',
+  'suite.pase_rechazado': 'Pase de la suite rechazado', 'suite.abrir': 'Abrió otra app de la suite', 'suite.abrir_fallido': 'No pudo abrir otra app',
+};
+let audOffset = 0;
+const AUD_LIM = 50;
+function detalleHTML(d) {
+  if (!d) return '';
+  return Object.entries(d).filter(([, v]) => v !== null && v !== '' && !(Array.isArray(v) && !v.length)).map(([k, v]) => {
+    let t;
+    if (Array.isArray(v)) t = (k === 'cuits' ? v.map(cuit) : v).join(', ');
+    else if (v && typeof v === 'object') t = 'antes' in v ? `${v.antes} → ${v.despues}` : JSON.stringify(v);
+    else if (typeof v === 'boolean') t = v ? 'sí' : 'no';
+    else t = String(v);
+    return `<span class="det"><span class="muted">${esc(k.replace(/_/g, ' '))}:</span> ${esc(t)}</span>`;
+  }).join(' ');
+}
+async function cargarAuditoria() {
+  const p = new URLSearchParams({ limite: AUD_LIM, offset: audOffset });
+  for (const [k, sel] of [['desde', '#audDesde'], ['hasta', '#audHasta'], ['persona', '#audPersona'], ['accion', '#audAccion']]) if ($(sel).value.trim()) p.set(k, $(sel).value.trim());
+  try {
+    const { eventos, total, acciones } = await api('/api/auditoria?' + p);
+    const sel = $('#audAccion');
+    const elegida = sel.value;
+    const grupos = [...new Set(acciones.map((a) => a.split('.')[0] + '.'))].filter((g) => acciones.filter((a) => a.startsWith(g)).length > 1);
+    sel.innerHTML = '<option value="">Todas las acciones</option>' + grupos.map((g) => `<option value="${g}">${esc({ 'sesion.': 'Entradas y salidas', 'usuario.': 'Personas', 'clave.': 'Claves de API', 'config.': 'Configuración', 'comprobante.': 'Comprobantes', 'suite.': 'Suite' }[g] || g)} (todas)</option>`).join('')
+      + acciones.map((a) => `<option value="${esc(a)}">${esc(ACCIONES[a] || a)}</option>`).join('');
+    sel.value = elegida;
+    if (!eventos.length) { $('#auditoria').innerHTML = vacio('auditoria', 'No hay movimientos con estos filtros', 'Probá con otras fechas o sacando la persona.'); $('#audPager').innerHTML = ''; return; }
+    $('#auditoria').innerHTML = `<div class="tabla-scroll"><table class="t"><thead><tr><th>Cuándo</th><th>Quién</th><th>Qué</th><th>Sobre</th><th>Detalle</th><th>IP</th></tr></thead><tbody>
+      ${eventos.map((ev) => `<tr><td class="nowrap">${fechaHora(ev.creado)}</td><td>${esc(ev.actor || '')}</td>
+        <td><span class="accion ${esc(ev.accion.split('.')[0])}${ev.accion.endsWith('fallida') || ev.accion.endsWith('rechazado') || ev.accion.endsWith('fallido') ? ' mal' : ''}">${esc(ACCIONES[ev.accion] || ev.accion)}</span></td>
+        <td>${esc(ev.objeto || '')}</td><td class="detalle">${detalleHTML(ev.detalle)}</td><td class="mono muted">${esc(ev.ip || '')}</td></tr>`).join('')}</tbody></table></div>`;
+    tarjetas('#auditoria');
+    const hasta = audOffset + eventos.length;
+    $('#audPager').innerHTML = `<span>${audOffset + 1} a ${hasta} de ${total}</span>
+      ${audOffset > 0 ? '<button class="ghost mini" data-accion="audPagina" data-dir="-1">Anteriores</button>' : ''}
+      ${hasta < total ? '<button class="ghost mini" data-accion="audPagina" data-dir="1">Siguientes</button>' : ''}`;
+  } catch (e) { toast(e, true); }
+}
+
 // ---------- Eventos ----------
 document.addEventListener('click', (ev) => {
   const el = ev.target.closest('[data-accion]');
-  if (!el) {
-    if (!ev.target.closest('.menu-wrap')) $('#menu').classList.add('hidden');
-    return;
+  if (!el || !el.closest('.menu-wrap')) {
+    if (!ev.target.closest('.menu-wrap')) { $('#menu').classList.add('hidden'); $('#suiteMenu').classList.add('hidden'); }
+    if (!el) return;
   }
   const a = el.dataset.accion;
   switch (a) {
     case 'ir': ir(el.dataset.vista); break;
     case 'nav': toggleNav(); break;
     case 'cerrarNav': document.documentElement.removeAttribute('data-nav-movil'); break;
-    case 'menu': pintarMenu(); $('#menu').classList.toggle('hidden'); break;
+    case 'menu': pintarMenu(); $('#suiteMenu').classList.add('hidden'); $('#menu').classList.toggle('hidden'); break;
+    case 'suite': pintarSuite(); $('#menu').classList.add('hidden'); $('#suiteMenu').classList.toggle('hidden'); break;
+    case 'abrirApp': abrirApp(el.dataset.app, el); break;
+    case 'miClave': $('#menu').classList.add('hidden'); pedirCambioClave(false); break;
+    case 'copiar': copiar(el.dataset.texto); break;
+    case 'modalCerrarFijo': cerrarModal(true); break;
+    case 'saltar': ev.preventDefault(); document.getElementById('conf-' + el.dataset.sec)?.scrollIntoView({ behavior: 'smooth', block: 'start' }); break;
+    case 'guardarConf': guardarConf(el.dataset.sec, null, el); break;
+    case 'probarConf': probarConf(el.dataset.sec, el); break;
+    case 'generarToken': {
+      const b = new Uint8Array(24); crypto.getRandomValues(b);
+      const i = document.getElementById(el.dataset.para);
+      i.value = [...b].map((x) => x.toString(16).padStart(2, '0')).join(''); i.type = 'text';
+      const t = i.parentElement.querySelector('.pass-toggle'); if (t) t.innerHTML = I.ojoNo;
+      toast('Token generado: guardá para usarlo y pasáselo a tu bot');
+      break;
+    }
+    case 'borrarSecreto': {
+      const c = CONF.campos.find((x) => x.clave === el.dataset.clave);
+      if (c && confirm(`¿Borrar «${c.etiqueta}»? Vuelve al valor del servidor, si hay uno.`)) guardarConf(c.seccion, { [c.clave]: null });
+      break;
+    }
+    case 'nuevoUsuario': formUsuario(null); break;
+    case 'editarUsuario': formUsuario(USUARIOS.find((u) => String(u.id) === el.dataset.id)); break;
+    case 'restablecer': restablecer(el.dataset.id); break;
+    case 'activarUsuario': activarUsuario(el.dataset.id, !!el.dataset.activo); break;
+    case 'nuevaClave': formClave(); break;
+    case 'revocarClave': revocarClave(el.dataset.id); break;
+    case 'audPagina': audOffset = Math.max(0, audOffset + Number(el.dataset.dir) * AUD_LIM); cargarAuditoria(); break;
     case 'tema': {
       const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
       document.documentElement.setAttribute('data-theme', next);
@@ -728,13 +1315,13 @@ document.addEventListener('click', (ev) => {
     case 'abrirOriginal':
       api(`/api/documentos/${el.dataset.doc}/archivo`, { binario: true }).then((b) => {
         const u = URL.createObjectURL(b); window.open(u, '_blank', 'noopener'); setTimeout(() => URL.revokeObjectURL(u), 60000);
-      }).catch((e) => toast(e.message, true));
+      }).catch((e) => toast(e, true));
       break;
     case 'revGuardar': guardarRevision(false); break;
     case 'revAprobar': guardarRevision(true); break;
     case 'revConstatar': constatarRevision(); break;
     case 'desvincularWa':
-      if (confirm('¿Desvincular WhatsApp? Vas a tener que escanear el código otra vez.')) api('/api/canales/whatsapp/desvincular', { method: 'POST' }).then(cargarCanales).catch((e) => toast(e.message, true));
+      if (confirm('¿Desvincular WhatsApp? Vas a tener que escanear el código otra vez.')) api('/api/canales/whatsapp/desvincular', { method: 'POST' }).then(refrescarWhatsApp).catch((e) => toast(e, true));
       break;
     default: break;
   }
@@ -742,7 +1329,12 @@ document.addEventListener('click', (ev) => {
 
 document.addEventListener('submit', (ev) => {
   const f = ev.target;
-  if (f.id === 'loginForm') { ev.preventDefault(); entrar($('#clave').value.trim(), $('#recordar').checked); }
+  if (f.id === 'loginForm') { ev.preventDefault(); entrar($('#loginEmail').value.trim(), $('#loginClave').value); }
+  else if (f.id === 'arranqueForm') { ev.preventDefault(); crearPrimerSuperadmin(); }
+  else if (f.id === 'fClaveMia') { ev.preventDefault(); cambiarMiClave(); }
+  else if (f.id === 'fUsuario') { ev.preventDefault(); guardarUsuario(f); }
+  else if (f.id === 'fClave') { ev.preventDefault(); crearClave(); }
+  else if (f.id === 'fAuditoria') { ev.preventDefault(); audOffset = 0; cargarAuditoria(); }
   else if (f.id === 'fVerificar') verificar(ev);
   else if (f.id === 'fSubir') subir(ev);
   else if (f.id === 'fFiltro') { ev.preventDefault(); leerFiltro(); filtro.offset = 0; cargarCbtes(); }
@@ -751,8 +1343,12 @@ document.addEventListener('submit', (ev) => {
     ev.preventDefault();
     api('/api/canales/whatsapp/vincular', { method: 'POST', json: { telefono: soloDig($('#telVincular').value) } })
       .then((r) => toast(`Código: ${r.codigo}. Ingresalo en WhatsApp, Dispositivos vinculados, Vincular con número de teléfono.`))
-      .catch((e) => toast(e.message, true));
+      .catch((e) => toast(e, true));
   }
+});
+
+document.addEventListener('change', (ev) => {
+  if (ev.target.id === 'ckSuite') $('#ckTopeWrap').classList.toggle('hidden', !ev.target.checked);
 });
 
 document.addEventListener('input', (ev) => {
@@ -761,6 +1357,7 @@ document.addEventListener('input', (ev) => {
 
 document.addEventListener('keydown', (ev) => {
   if (ev.key === 'Escape' && !$('#modal').classList.contains('hidden')) { cerrarModal(); return; }
+  if (ev.key === 'Escape') { $('#menu').classList.add('hidden'); $('#suiteMenu').classList.add('hidden'); }
   if (!rev || $('#revision').classList.contains('hidden')) return;
   if (ev.key === 'Escape') cerrarRevision();
   const escribiendo = ev.target.closest && ev.target.closest('input, textarea, select');
@@ -768,7 +1365,7 @@ document.addEventListener('keydown', (ev) => {
     const k = ev.key.toLowerCase();
     if (k === 'j') { ev.preventDefault(); abrirRevision(rev.idx + 1); return; }
     if (k === 'k') { ev.preventDefault(); abrirRevision(rev.idx - 1); return; }
-    if (k === 'a') { ev.preventDefault(); guardarRevision(true); return; }
+    if (k === 'a' && puede('corregir')) { ev.preventDefault(); guardarRevision(true); return; }
     if (k === 'e') { ev.preventDefault(); const i = $('#revForm input'); if (i) i.focus(); return; }
   }
   if (ev.altKey && ev.key === 'ArrowRight') abrirRevision(rev.idx + 1);
@@ -828,8 +1425,5 @@ for (const [zona, sel] of [['#zonaVerificar', '#archVerificar'], ['#zonaSubir', 
 }
 
 // ---------- Arranque ----------
-$('.pass-toggle').innerHTML = I.ojo;
-pintarNav();
-const guardada = leerClave();
-if (guardada) entrar(guardada, !!(() => { try { return localStorage.getItem('factorum.clave'); } catch { return ''; } })());
-else mostrarLogin();
+$$('.pass-toggle').forEach((b) => { b.innerHTML = I.ojo; });
+arrancar();

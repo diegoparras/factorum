@@ -127,7 +127,7 @@ La respuesta es `202 { "ok": true, "lote": Lote }`. El procesamiento corre en se
 `GET /api/lotes/{id}` devuelve `{ ok, lote: Lote }`.
 
 ```json
-Lote = { "id": 12, "nombre": "Noviembre", "cliente_cuit": "20222222223", "origen": "web|telegram|whatsapp|webhook|mcp|arcanum",
+Lote = { "id": 12, "nombre": "Noviembre", "cliente_cuit": "20222222223", "origen": "web|telegram|whatsapp|webhook|correo|mcp|arcanum",
          "creado": "2026-11-25T12:00:00Z", "estado": "procesando|terminado",
          "documentos": 120, "procesados": 87, "con_error": 1,
          "comprobantes": { "ok": 80, "revisar": 5, "error": 2, "aprobado": 0 } }
@@ -236,6 +236,50 @@ Las respuestas que vienen después (cuando termina el lote) se mandan con un `PO
 - **Cuerpo:** `{ chat, texto }`.
 - **Cabecera:** `X-Factorum-Firma`, un HMAC-SHA256 del cuerpo con `FACTORUM_WEBHOOK_TOKEN`.
 
+## Correo
+
+### Entrada
+
+Solo atiende la forma elegida en Configuración (`correo.forma`); las demás contestan `404`. Todas terminan en lo mismo: un mail con adjuntos útiles genera un lote de origen `correo`. Del mail se toman el remitente, los destinatarios, el asunto, la fecha, el `Message-ID`, `References` y los adjuntos (PDF, JPG, PNG, WEBP, ZIP y lo que haya dentro de un `.eml` adjunto); el texto no se lee. Un `Message-ID` que ya llegó no hace nada.
+
+`POST /api/correo/entrante/cloudflare` (Email Worker de Cloudflare)
+
+- Cuerpo: el mail crudo (RFC 822), `Content-Type: message/rfc822`, hasta el tope por mail (`correo.max_mb`, 25 MB).
+- `X-Factorum-Para`: el destinatario del sobre (`message.to`).
+- `X-Factorum-Firma: t=<unix>,v1=<hex>`, con `v1 = HMAC-SHA256(secreto, "<t>.<para>." + mail)`. Con la hora corrida más de 5 minutos, `401`; un pedido repetido, `409`.
+- Respuestas: `200 { ok, estado: "procesado|retenido|ignorado|repetido", motivo, lote }`; `401` firma mal o vencida; `413` muy grande; `422` ilegible; `503` falla pasajera. Con un error, el Worker rechaza el mail (`message.setReject`) y quien lo mandó recibe el rebote.
+
+`POST /api/correo/entrante/{mailgun|postmark|sendgrid}`
+
+| Proveedor | Autenticación | Formato |
+|---|---|---|
+| `mailgun` | La firma de Mailgun: `signature = HMAC-SHA256(signing key, timestamp + token)`, con `timestamp` de menos de 5 minutos y `token` que no se repite (`406` si se repite) | `multipart/form-data` de una ruta «Forward» (`from`, `recipient`, `subject`, `message-headers`, `attachment-N`) o con `body-mime` |
+| `postmark` | El token de la URL: `https://factorum:<token>@host/...` (autenticación básica) o `?token=` | El JSON de Inbound (`FromFull`, `OriginalRecipient`, `Headers`, `Attachments` en base64; o `RawEmail`) |
+| `sendgrid` | Igual que Postmark | Inbound Parse: con «POST the raw, full MIME message», el campo `email`; si no, `from`, `to`, `headers`, `envelope`, `attachment-info` y `attachmentN` |
+
+Sin autenticación válida, `401`. Un mail que no se puede leer contesta `200 { estado: "ignorado" }` (si no, el proveedor reintenta por días); una falla pasajera, `503` (el proveedor reintenta).
+
+IMAP y Gmail no tienen endpoint: el servidor revisa la casilla o la etiqueta cada tanto (`imap.intervalo`, `gmail.intervalo`).
+
+Reglas:
+
+- **Permitidos** (`correo.permitidos`: emails o `@dominio`). Lo de los demás queda retenido. Sin lista, todo.
+- **Cliente**: un destinatario `algo+CUIT@dominio` con CUIT válido; si no, el remitente (email exacto o `@dominio`) en `clientes.canales`; si no, sin cliente.
+- **Respuesta** (`correo.contestar` y correo saliente configurado): cuando termina el lote (y se constata), un mail al remitente en el mismo hilo (`In-Reply-To` y `References`). Solo si el remitente está permitido en ese momento: a un retenido nunca.
+
+### Correo retenido (admin, con sesión)
+
+- `GET /api/correo/retenido?limite&offset` → `{ retenidos: [ { id, message_id, forma, remitente, nombre, destinatario, asunto, fecha, tamano, adjuntos: [ { nombre, mime, tamano } ], descartados, cliente_cuit, estado, motivo, creado } ], total, permitidos, permitidos_fijados }`. Con alcance por CUIT, solo los retenidos de esos clientes (los que no tienen cliente no se ven).
+- `POST /api/correo/retenido/{id}/aceptar` `{ permitir }` → `{ lote, permitido?, aviso? }`: lo procesa y, con `permitir`, suma al remitente a `correo.permitidos`. Si ya se resolvió, `409`.
+- `POST /api/correo/retenido/{id}/descartar` → borra los adjuntos y lo deja descartado.
+- Los retenidos se borran a los 30 días.
+
+### Gmail con permiso de Google (superadmin, con sesión)
+
+- `POST /api/correo/google/conectar` → `{ url }`: la pantalla de consentimiento de Google (Authorization Code con PKCE, permiso `gmail.modify`, redirect `<URL pública>/api/correo/google/callback`). Hace falta guardar antes el client ID y el secret. El pedido vale 10 minutos.
+- `GET /api/correo/google/callback` → canjea el código, guarda el refresh token cifrado y la cuenta, y vuelve a `/?google=ok#configuracion` (o `?google=error&detalle=...`). Solo con la sesión del mismo superadmin que lo pidió.
+- `POST /api/correo/google/desconectar` → revoca el permiso en Google y lo borra.
+
 ## MCP
 
 `POST /mcp` es Streamable HTTP, sin estado. Solo con clave de API (no acepta la cookie del navegador). Cada clave ve sus clientes y, con rol lectura, no tiene `procesar_factura`.
@@ -260,6 +304,10 @@ Las respuestas son datos JSON, recortados por debajo de 20.000 caracteres.
 - `GET /api/sesion` (sesión o clave) → `{ ok, identidad: { tipo, usuario_id, email, nombre, rol, cuits, debe_cambiar, origen, clave }, permisos: { cargar, corregir, usuarios, claves, auditoria, clientes, configuracion }, instalacion }`.
 - `DELETE /api/sesion` → cierra la sesión.
 - `POST /api/sesion/clave` `{ actual, nueva }` → cambia la contraseña propia (10 caracteres o más) y cierra las otras sesiones.
+- `GET /api/arranque` trae además `olvide: true` si hay correo saliente y URL pública (el login muestra «Olvidé mi contraseña»), y `GET /api/sesion`, `correo_saliente`.
+- `POST /api/sesion/olvide` `{ email }` → siempre `200 { mensaje }`, exista o no la cuenta (el mail sale aparte). Manda a `<URL pública>/#restablecer?t=<token>` un link de un solo uso que vence en 30 minutos. Tope: 3 pedidos por email y 10 por IP por hora (`429` el de la IP; el del email no se nota). Sin correo saliente, `409`.
+- `POST /api/sesion/link` `{ token }` → `{ tipo: "restablecer|invitacion", email, nombre }` sin usarlo; vencido o usado, `410`.
+- `POST /api/sesion/restablecer` `{ token, clave }` → pone la contraseña, cierra todas las sesiones de esa persona, invalida sus otros links y abre una sesión nueva. Vencido o usado, `410`. El token se guarda por su SHA-256 (32 bytes al azar).
 
 ## Usuarios (admin, con sesión)
 
@@ -267,6 +315,8 @@ Las respuestas son datos JSON, recortados por debajo de 20.000 caracteres.
 - `POST /api/usuarios` `{ email, nombre, rol, cuits }` → `201 { usuario, clave_temporal }`. La contraseña temporal se devuelve **una sola vez** y obliga a cambiarla al entrar.
 - `PATCH /api/usuarios/{id}` `{ nombre?, rol?, cuits?, activo? }`. Desactivar o cambiar rol o CUITs cierra sus sesiones.
 - `POST /api/usuarios/{id}/restablecer` → `{ usuario, clave_temporal }` (una sola vez); cierra sus sesiones.
+- `POST /api/usuarios` con `invitar: true` → `201 { usuario, invitado }`: sin contraseña temporal; le llega un mail con un link para elegir la suya (vence en 72 horas). Si el mail no sale, la persona queda creada y viene `aviso`. Sin correo saliente o sin URL pública, `409`.
+- `POST /api/usuarios/{id}/link` → `{ tipo }`: le manda por mail la invitación otra vez (si todavía no eligió contraseña) o un link para restablecerla (30 minutos).
 
 Reglas: nadie da un rol mayor al suyo ni CUITs que no tiene; un admin no toca superadmins; siempre queda un superadmin activo (`409`); nadie se desactiva a sí mismo. `cuits` acepta una lista o un texto separado por comas; vacío o `null` = todos.
 
@@ -278,9 +328,9 @@ Reglas: nadie da un rol mayor al suyo ni CUITs que no tiene; un admin no toca su
 
 ## Configuración (con sesión)
 
-- `GET /api/configuracion` (admin) → `{ campos, secciones, canales, url_publica, webhook_entrada }`. Un superadmin ve todas las secciones (`general`, `arcanum`, `telegram`, `whatsapp`, `webhook`, `ia`, `r2`, `clientes`); un admin, solo `clientes`. Cada campo: `{ clave, seccion, etiqueta, tipo, env, ayuda, ejemplo, valor, configurado, ultimos, bloqueado, origen, actualizado_por, actualizado }`. Un secreto nunca trae `valor`: solo `configurado` y, si es largo, `ultimos` (los últimos 4 caracteres).
+- `GET /api/configuracion` (admin) → `{ campos, secciones, canales, url_publica, webhook_entrada }`. Un superadmin ve todas las secciones (`general`, `arcanum`, `telegram`, `whatsapp`, `webhook`, `correo_entrada`, `correo_salida`, `avisos`, `ia`, `r2`, `clientes`) y además `correo: { urls, estado, smtp, google: { conectado, cuenta, fijado } }` (las URLs para cada servicio, sin tokens); un admin, solo `clientes`. Los campos de tipo `opcion` traen `opciones: [ { valor, etiqueta } ]` y los `entero`, `min` y `max`. Cada campo: `{ clave, seccion, etiqueta, tipo, env, ayuda, ejemplo, valor, configurado, ultimos, bloqueado, origen, actualizado_por, actualizado }`. Un secreto nunca trae `valor`: solo `configurado` y, si es largo, `ultimos` (los últimos 4 caracteres).
 - `PUT /api/configuracion` `{ cambios: { "telegram.token": "...", "telegram.permitidos": ["1","2"], "general.url_publica": null } }` → la vista nueva más `cambiadas`. `null` borra lo guardado (vuelve al entorno o al valor de fábrica); un secreto `""` no se toca. Un campo fijado por una variable de entorno da `409`; un valor inválido, `400`. Al guardar se reconfiguran sin reiniciar Arcanum, el modelo de visión, el almacén y los canales.
-- `POST /api/configuracion/probar/{seccion}` (superadmin) `{ cambios }` → `{ exito, mensaje }`. Prueba con lo que está en pantalla, sin guardar: `general` (la URL pública responde), `arcanum` (`/api/health` y `/api/tenants`), `telegram` (`getMe`), `webhook` (un aviso firmado a la URL de salida), `ia` (`/models` y que esté el modelo), `r2` (pone y borra un objeto).
+- `POST /api/configuracion/probar/{seccion}` (superadmin) `{ cambios }` → `{ exito, mensaje }`. Prueba con lo que está en pantalla, sin guardar: `general` (la URL pública responde), `arcanum` (`/api/health` y `/api/tenants`), `telegram` (`getMe`), `webhook` (un aviso firmado a la URL de salida), `ia` (`/models` y que esté el modelo), `r2` (pone y borra un objeto), `correo_entrada` (IMAP: entra y cuenta los mensajes de la carpeta; Gmail: la cuenta y la etiqueta; Cloudflare y proveedores: que la URL pública responda y el secreto esté) y `correo_salida` (con `destino` en el cuerpo, manda un mail de prueba; sin él, solo entra).
 
 | Clave | Variable | Tipo |
 |---|---|---|
@@ -292,13 +342,29 @@ Reglas: nadie da un rol mayor al suyo ni CUITs que no tiene; un admin no toca su
 | `webhook.token`, `webhook.salida_url` | `FACTORUM_WEBHOOK_TOKEN`, `FACTORUM_WEBHOOK_SALIDA_URL` | secreto, URL |
 | `ia.url`, `ia.modelo`, `ia.api_key` | `LLM_API_BASE_URL`, `LLM_MODEL`, `LLM_API_KEY` | URL, texto, secreto |
 | `r2.endpoint`, `r2.bucket`, `r2.access_key`, `r2.secret_key`, `r2.prefijo` | `FACTORUM_R2_*` | URL, texto, secreto, secreto, texto |
-| `clientes.canales` | `FACTORUM_CANAL_CLIENTES` | remitente → CUIT (`{ "5491155550000": "20222222223" }` o `"5491155550000 = 20-22222222-3"` por renglón) |
+| `clientes.canales` | `FACTORUM_CANAL_CLIENTES` | remitente → CUIT (`{ "5491155550000": "20222222223" }` o `"5491155550000 = 20-22222222-3"` por renglón). El remitente puede ser un email o `@dominio` |
+| `correo.forma`, `correo.permitidos`, `correo.max_mb`, `correo.contestar` | `FACTORUM_CORREO_FORMA`, `FACTORUM_CORREO_PERMITIDOS`, `FACTORUM_CORREO_MAX_MB`, `FACTORUM_CORREO_CONTESTAR` | opción (`imap`, `cloudflare`, `proveedor`, `gmail`, `apagado`), emails o `@dominio`, entero (1 a 100), sí/no |
+| `imap.host`, `imap.puerto`, `imap.tls`, `imap.usuario`, `imap.clave`, `imap.carpeta`, `imap.intervalo`, `imap.procesado`, `imap.carpeta_procesado` | `FACTORUM_IMAP_*` | texto, entero, opción (`implicito`, `starttls`, `ninguno`), texto, secreto, texto, entero (15 a 3600), opción (`leido`, `mover`), texto |
+| `cloudflare.secreto` | `FACTORUM_CLOUDFLARE_SECRETO` | secreto |
+| `correo.proveedor`, `mailgun.signing_key`, `correo.token` | `FACTORUM_CORREO_PROVEEDOR`, `FACTORUM_MAILGUN_SIGNING_KEY`, `FACTORUM_CORREO_TOKEN` | opción (`mailgun`, `postmark`, `sendgrid`), secreto, secreto |
+| `google.client_id`, `google.client_secret`, `gmail.etiqueta`, `gmail.procesado`, `gmail.intervalo` | `FACTORUM_GOOGLE_CLIENT_ID`, `FACTORUM_GOOGLE_CLIENT_SECRET`, `FACTORUM_GMAIL_*` | secreto, secreto, texto, opción (`quitar`, `leido`), entero. El refresh token lo guarda «Conectar con Google» y no se cambia por `PUT` (`400`) |
+| `smtp.host`, `smtp.puerto`, `smtp.tls`, `smtp.usuario`, `smtp.clave`, `smtp.remitente`, `smtp.responder_a` | `FACTORUM_SMTP_*` | texto, entero, opción, texto, secreto, texto (`Nombre <email>`), texto |
+| `avisos.lote`, `avisos.lote_a`, `avisos.alertas`, `avisos.alertas_a`, `avisos.semanal`, `avisos.semanal_a` | `FACTORUM_AVISO_*` | sí/no y emails |
+
+### Avisos por mail
+
+Salen por la cola, una vez por aviso y destinatario (aunque la cola reintente):
+
+- **Lote terminado** (`avisos.lote`): a quien lo cargó desde la pantalla; si vino por chat, por la API o por mail, a `avisos.lote_a`.
+- **Apócrifos y adulterados** (`avisos.alertas`): a los admins y superadmins activos que ven ese cliente, y a `avisos.alertas_a`.
+- **Resumen semanal** (`avisos.semanal`): los lunes desde las 8 (hora de Buenos Aires), lo cargado la semana anterior y lo pendiente de revisar, por cliente. A `avisos.semanal_a` o, sin lista, a los admins.
+- Una dirección que es de una persona de Factorum recibe solo lo de sus clientes (y nada si está desactivada); una que no es de nadie recibe lo que se le manda (la puso un superadmin).
 
 ## Auditoría (admin, con sesión)
 
 `GET /api/auditoria?desde=AAAA-MM-DD&hasta=AAAA-MM-DD&persona=texto&accion=sesion.&limite=50&offset=0` → `{ eventos: [ { id, creado, actor, actor_tipo, usuario_id, accion, objeto, detalle, ip } ], total, acciones }`. Las fechas van en hora argentina; `accion` terminada en punto filtra por grupo.
 
-Acciones: `sesion.entrar`, `sesion.fallida`, `sesion.salir`, `usuario.crear`, `usuario.editar`, `usuario.desactivar`, `usuario.reactivar`, `usuario.restablecer`, `usuario.cambiar_clave`, `clave.crear`, `clave.revocar`, `config.cambiar` (qué claves, nunca los valores), `config.whatsapp_desvincular`, `lote.crear`, `comprobante.corregir`, `comprobante.aprobar`, `exportar`, `suite.pase_emitido`, `suite.pase_usado`, `suite.pase_rechazado`, `suite.abrir`, `suite.abrir_fallido`. Nunca lleva contraseñas, claves, tokens ni pases.
+Acciones: `sesion.entrar`, `sesion.fallida`, `sesion.salir`, `usuario.crear`, `usuario.editar`, `usuario.desactivar`, `usuario.reactivar`, `usuario.restablecer`, `usuario.cambiar_clave`, `clave.crear`, `clave.revocar`, `config.cambiar` (qué claves, nunca los valores), `config.whatsapp_desvincular`, `lote.crear`, `comprobante.corregir`, `comprobante.aprobar`, `exportar`, `suite.pase_emitido`, `suite.pase_usado`, `suite.pase_rechazado`, `suite.abrir`, `suite.abrir_fallido`, `correo.recibido`, `correo.retenido`, `correo.ignorado` (sin adjuntos útiles, muy grande o ilegible), `correo.aceptar`, `correo.descartar`, `config.google_conectar`, `config.google_desconectar`, `usuario.pedir_restablecer`, `usuario.restablecer_por_mail`, `usuario.aceptar_invitacion`, `usuario.link_por_mail`. Del correo, quién lo mandó, la forma y cuántos adjuntos; nunca el texto ni el asunto. Nunca lleva contraseñas, claves, tokens ni pases.
 
 ## Suite Escriba: el pase entre apps
 

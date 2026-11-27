@@ -2,6 +2,20 @@
 
 Cada versión publicada tiene su sección. La imagen Docker toma la versión de la primera.
 
+## [0.4.0] - 2026-11-27
+
+### Correo
+
+- Las facturas pueden llegar por mail. En Configuración, Correo entrante, elegís una de cuatro formas: una casilla por IMAP (Gmail, Microsoft 365 o la del dominio), Cloudflare Email Routing con un Worker (el código viene listo para copiar), un proveedor (Mailgun, Postmark o SendGrid) o Gmail con permiso de Google (botón «Conectar con Google»). Cada una con su paso a paso y un botón Probar.
+- Cada mail con PDFs, fotos o un ZIP adjuntos genera un lote, igual que un mensaje de Telegram. Solo se toman los adjuntos: el texto del mail no se lee ni se guarda. Un mail repetido no se carga dos veces.
+- Remitentes permitidos (un email o un @dominio): lo de los demás queda en la pantalla nueva **Correo retenido**, donde un admin lo acepta (y, si quiere, suma al remitente) o lo descarta. Los retenidos se borran solos a los 30 días. Sin lista, todo queda retenido.
+- Para cargar a un cliente, que manden a facturas+CUIT@tudominio, o asociá el email o el @dominio del remitente en Clientes y canales.
+- Cuando termina el lote, Factorum le contesta al remitente en el mismo hilo con el resumen: cuántos comprobantes, cuántos bien, para revisar y con errores, los apócrifos y el link. Nunca a un retenido.
+- Correo saliente por SMTP (Gmail, Microsoft 365, Resend, Postmark, Mailgun, Brevo...), con un mail de prueba.
+- Avisos por mail, cada uno con su interruptor y sus destinatarios: lote terminado, emisor apócrifo o PDF posiblemente adulterado (a los admins) y un resumen los lunes a las 8. Cada persona recibe solo lo de sus clientes.
+- «Olvidé mi contraseña» en el login: llega un link que vale una vez y vence en 30 minutos, y al usarlo se cierran las demás sesiones.
+- En Usuarios, al crear a alguien, «Mandarle una invitación por mail» para que elija su contraseña (vence en 72 horas), en lugar de la temporal. También «Reenviar invitación» y «Link por mail».
+
 ## [0.3.0] - 2026-11-27
 
 ### Usuarios y roles

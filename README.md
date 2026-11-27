@@ -30,6 +30,7 @@ Factorum hace el "camino C" de esa presentación (código, no IA) a escala. A la
  Entradas                       Factorum (Go)                          Salidas
 ┌───────────────┐    ┌──────────────────────────────────┐    ┌──────────────────────┐
 │ Web (PDF/ZIP) │    │ Cola en Postgres (River)         │    │ Revisión en pantalla │
+│ Correo        │    │                                  │    │ Respuesta por mail   │
 │ WhatsApp      │───▶│   1. QR de ARCA (dato oficial)   │───▶│ Excel / CSV          │
 │ Telegram      │    │   2. Texto del PDF               │    │ Resumen por alícuota │
 │ Webhook       │    │   3. OCR (Tesseract)             │    │ API REST             │
@@ -153,7 +154,7 @@ No necesita base de datos. Usa todos los núcleos.
 
 ## Configuración
 
-Hacen falta solo tres variables de entorno; todo lo demás se configura desde la pantalla **Configuración** (superadmin), con un botón **Probar** por sección y el paso a paso de cada una. Al guardar, se aplica sin reiniciar (Arcanum, el modelo de visión, el almacén, Telegram, WhatsApp y el webhook).
+Hacen falta solo tres variables de entorno; todo lo demás se configura desde la pantalla **Configuración** (superadmin), con un botón **Probar** por sección y el paso a paso de cada una. Al guardar, se aplica sin reiniciar (Arcanum, el modelo de visión, el almacén, Telegram, WhatsApp, el webhook y el correo).
 
 | Variable | Para qué |
 |---|---|
@@ -176,7 +177,10 @@ Si una variable de configuración está puesta, **gana**: en la pantalla el camp
 | `FACTORUM_TELEGRAM_TOKEN`, `FACTORUM_TELEGRAM_PERMITIDOS` | Bot de Telegram |
 | `FACTORUM_WHATSAPP`, `FACTORUM_WHATSAPP_PERMITIDOS` | WhatsApp como dispositivo vinculado |
 | `FACTORUM_WEBHOOK_TOKEN`, `FACTORUM_WEBHOOK_SALIDA_URL` | Webhook genérico (secretaria, Evolution API, n8n) |
-| `FACTORUM_CANAL_CLIENTES` | Qué cliente es cada remitente de chat (`5491155550000=20222222223,...`) |
+| `FACTORUM_CANAL_CLIENTES` | Qué cliente es cada remitente de chat o de mail (`5491155550000=20222222223,@cliente.com.ar=30711111111`) |
+| `FACTORUM_CORREO_*`, `FACTORUM_IMAP_*`, `FACTORUM_CLOUDFLARE_SECRETO`, `FACTORUM_MAILGUN_SIGNING_KEY`, `FACTORUM_GOOGLE_*`, `FACTORUM_GMAIL_*` | Correo entrante (ver [.env.example](.env.example)) |
+| `FACTORUM_SMTP_*` | Correo saliente |
+| `FACTORUM_AVISO_*` | Avisos por mail |
 | `FACTORUM_WORKERS` | Documentos en paralelo (por defecto, los núcleos) |
 
 ## Usuarios, roles y claves
@@ -190,6 +194,7 @@ Si una variable de configuración está puesta, **gana**: en la pantalla el camp
 
 - **Alcance por cliente.** A cada persona y a cada clave se le pueden asignar CUITs de cliente: solo ve y carga lo de esos clientes (en la pantalla, la API y MCP). Vacío = todos.
 - **Contraseñas** con argon2id, de 10 caracteres o más. Al crear a alguien o restablecerle la contraseña, Factorum genera una temporal que se muestra una sola vez y que obliga a cambiarla al entrar. Después de cinco intentos fallidos hay que esperar, cada vez más.
+- **Con correo saliente**: invitación por mail al crear a alguien (un link para elegir la contraseña, vence a las 72 horas) y «Olvidé mi contraseña» en el login (vence a los 30 minutos, contesta igual exista o no la cuenta, tiene tope por email e IP y, al usarlo, cierra las demás sesiones). Los links se guardan por su SHA-256.
 - **Sesión** por cookie (HttpOnly, SameSite=Lax y Secure con URL pública https); vence a las 12 horas sin uso.
 - **Claves de API** (`fct_...`) desde la pantalla, con rol, clientes, vencimiento y la marca «Puede abrir sesiones de la suite». Se muestran una sola vez; Factorum guarda solo su SHA-256. La pantalla ya no entra con una clave de API: las claves son para la API, MCP y las otras apps.
 - **Auditoría** (admin): entradas, salidas, intentos fallidos, personas, claves, configuración (qué cambió, nunca el valor), correcciones, aprobaciones, exportaciones y pases de la suite.
@@ -223,6 +228,27 @@ Listo: 3 comprobante(s). 2 bien, 1 para revisar, 0 con errores.
 | **WhatsApp** | whatsmeow, como dispositivo vinculado. Se vincula desde Configuración, WhatsApp, con el QR o con un código. No es oficial: el número se puede bloquear |
 | **Webhook** | Tu bot existente (la secretaria con Baileys, Evolution API, n8n) manda `POST /api/canales/webhook` y recibe la respuesta. Los avisos posteriores van firmados con HMAC a `FACTORUM_WEBHOOK_SALIDA_URL` |
 
+## Correo
+
+Las facturas también llegan por mail. Configuración, **Correo entrante**, tiene cuatro formas (una activa a la vez, se cambia en caliente):
+
+| Forma | Cómo | Para quién |
+|---|---|---|
+| **IMAP** (por defecto) | Factorum revisa los no leídos de una carpeta cada 60 s y los marca como leídos o los mueve a «Factorum» | Una casilla de Gmail (contraseña de aplicación), del dominio o de Microsoft 365 |
+| **Cloudflare Email Routing** | Un Email Worker firma cada mail (HMAC-SHA256 con la hora, ventana de 5 minutos) y lo manda a `POST /api/correo/entrante/cloudflare`. El código del Worker viene en la pantalla | Dominios en Cloudflare: llega al instante |
+| **Proveedor** | Mailgun (con su firma), Postmark o SendGrid (con un token en la URL) mandan cada mail a `POST /api/correo/entrante/{proveedor}` | Si ya usás uno |
+| **Gmail con permiso de Google** | OAuth (PKCE, permiso `gmail.modify`): Factorum lee una etiqueta («Facturas») con la Gmail API y se la saca al procesar | Una cuenta de Gmail sin contraseña de aplicación |
+
+Reglas para todas:
+
+- **El mail es dato, nunca instrucción.** Solo se toman los adjuntos (PDF, JPG, PNG, ZIP y los PDF dentro de un `.eml` adjunto); el texto ni se lee ni se guarda. Los logos de las firmas no cuentan. Tope por mail (25 MB) y por adjunto (`FACTORUM_MAX_MB`).
+- **Remitentes permitidos** (emails o `@dominio`): lo de los demás queda en **Correo retenido** (quién, asunto, fecha y los adjuntos, cifrados), donde un admin lo acepta o lo descarta. Se borra a los 30 días. Sin lista, todo queda retenido.
+- **Cliente**: `facturas+CUIT@dominio` (CUIT con dígito verificador) o el remitente en Clientes y canales (email o `@dominio`).
+- **Sin duplicados** por `Message-ID` (y los archivos, por su SHA-256).
+- **Respuesta** al remitente permitido cuando termina el lote, en el mismo hilo (`In-Reply-To`), con el resumen y el link. Nunca a un retenido.
+
+**Correo saliente** (SMTP con STARTTLS o TLS implícito) para las respuestas, los avisos (lote terminado, apócrifos o adulterados a los admins, resumen de los lunes a las 8) y los links de las contraseñas. Cada persona recibe solo lo de sus clientes.
+
 ## MCP
 
 `POST /mcp` es Streamable HTTP, con una clave de API (cada clave ve solo sus clientes). La pantalla **Conectar** trae los bloques listos para Claude Code y Claude Desktop. Para un asistente, conviene una clave de rol lectura. Factorum no necesita un LLM, pero uno se le puede conectar así:
@@ -247,7 +273,8 @@ Ver [docs/API.md](docs/API.md).
 - Los archivos se guardan comprimidos y **cifrados antes de salir del proceso**: ni el disco ni el bucket de R2 los ven en claro.
 - Sin la master key no se abren. Guardala fuera del servidor.
 - Los logs nunca llevan contenido de facturas, contraseñas, claves, tokens ni pases.
-- La configuración secreta (claves de Arcanum, de R2, del modelo, el token de Telegram y del webhook) se guarda cifrada con la master key y nunca vuelve completa por la API.
+- La configuración secreta (claves de Arcanum, de R2, del modelo, el token de Telegram y del webhook, las contraseñas de IMAP y SMTP y el permiso de Google) se guarda cifrada con la master key y nunca vuelve completa por la API.
+- Del correo solo se guardan el remitente, el asunto y los adjuntos; nunca el texto del mail. Los adjuntos retenidos van cifrados.
 
 ## Desarrollo
 
@@ -280,6 +307,7 @@ Las facturas de prueba se generan con el modelo "ARCA" de Arcanum, que copia "Co
 | `internal/api` | REST, sesiones, usuarios, claves, auditoría y el pase de la suite |
 | `internal/mcpserver` | MCP |
 | `internal/canal/*` | Telegram, WhatsApp y webhook |
+| `internal/correo` | Leer mails (solo adjuntos), IMAP, Gmail, Cloudflare y proveedores, SMTP y las plantillas; `correotest` tiene SMTP e IMAP de prueba |
 | `web/` | UI sin build, con el sistema de diseño de la suite |
 
 ## Licencia

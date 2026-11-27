@@ -1850,7 +1850,7 @@ function iaPintarModelos() {
     est.className = 'ia-estado'; est.innerHTML = `${I.info}<span>Escrito a mano: tocá Probar para ver si lo lee.</span>`;
   } else {
     const n = ms.filter((x) => x.imagenes).length;
-    const filtro = { openai: ' (sin los de audio, voz, imágenes, embeddings y los que no son de chat)', openrouter: ' (los que reciben imágenes)', gemini: ' (sin los de audio, voz, imágenes y embeddings)', ollama: '' }[p.id] || '';
+    const filtro = { openai: ' (sin los de audio, voz, imágenes, embeddings y los que no son de chat)', gemini: ' (sin los de audio, voz, imágenes y embeddings)', ollama: '' }[p.id] || '';
     est.className = 'ia-estado'; est.innerHTML = ms.length ? `<span class="muted">Lista de ${esc(p.corto)}: ${n} ${n === 1 ? 'modelo' : 'modelos'}${p.id === 'otro' ? '' : ' que leen imágenes'}${filtro}${l.clave_guardada ? ', con la clave guardada' : ''}.</span>` : '';
   }
 }

@@ -2,6 +2,23 @@
 
 Cada versión publicada tiene su sección. La imagen Docker toma la versión de la primera.
 
+## [0.5.0] - 2026-11-27
+
+### Entrar con Lockatus
+
+- Factorum se puede federar con **Lockatus**, el inicio de sesión único de la suite Escriba: el login muestra **«Entrar con Lockatus»** y entrás con la misma cuenta que usás en Arcanum. Se configura en Configuración, **Lockatus (inicio de sesión único)**, con el paso a paso para registrar a Factorum en Lockatus, la dirección de vuelta lista para copiar y un botón **Probar**. Al guardar se aplica sin reiniciar.
+- Te reconoce por tu **email verificado** en Lockatus. Si ya tenías cuenta en Factorum, entrás con tu rol y tus clientes de siempre: lo que diga Lockatus no te sube ni te baja el rol.
+- Quien entra por primera vez se crea solo, con el rol que manda Lockatus (o **lectura**, si no manda uno conocido). Admin y superadmin ven todos los clientes; usuario y lectura empiezan **sin clientes** y en Inicio ven «Pedile a un admin que te asigne clientes» hasta que un admin se los asigna en Usuarios. Se puede apagar la creación automática para que solo entren los que ya tienen cuenta.
+- Si algo sale mal (email sin verificar, cuenta desactivada, sin cuenta, el inicio de sesión venció), el login te dice qué pasó.
+- **«Solo se entra con Lockatus»**: el login con email y contraseña desaparece y el servidor lo rechaza. Las claves de API, MCP y el pase desde Arcanum siguen andando. Se activa desde una sesión abierta con Lockatus, para no quedar afuera, y si Lockatus se cae, `FACTORUM_LOGIN_LOCAL=1` en el servidor devuelve el login con contraseña (paso a paso en el README).
+- Cada entrada con Lockatus y cada rechazo, con el motivo, quedan en la auditoría.
+
+### Usuarios
+
+- La columna Origen muestra **Lockatus** para quien entró por ahí. Esas cuentas no tienen contraseña en Factorum: no tienen «Nueva contraseña», invitación ni «Olvidé mi contraseña», y el menú no ofrece «Cambiar mi contraseña».
+- Al crear o editar a alguien, «Qué clientes ve» se elige entre **Todos**, **Ninguno todavía** y **Solo estos CUITs** (antes, dejar el campo vacío daba acceso a todos sin querer). En Clientes, «Ninguno todavía» aparece resaltado.
+- Con Lockatus configurado, un admin puede dar de alta a alguien que **entra con Lockatus**, con su rol y sus clientes desde el primer día.
+
 ## [0.4.0] - 2026-11-27
 
 ### Correo

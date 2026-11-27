@@ -2,7 +2,8 @@
 
 Contrato entre Arcanum (Node) y Factorum (Go) para entrar de una a la otra sin volver a loguearse,
 siempre que estén conectadas. Si las dos están federadas con Lockatus, el paso ya es directo por el SSO;
-el pase es para cuando no lo están (y no se rompe si lo están).
+el pase es para cuando no lo están (y no se rompe si lo están). En Factorum, el pase sigue andando también con
+«Solo se entra con Lockatus» activo.
 
 ## Términos
 

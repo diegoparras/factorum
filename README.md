@@ -170,6 +170,8 @@ Si una variable de configuración está puesta, **gana**: en la pantalla el camp
 | `FACTORUM_API_KEY` / `FACTORUM_API_KEY_LECTURA` | Claves del entorno: de rol usuario (la que usa Arcanum) y de lectura. Las demás claves se crean en **Claves de API** |
 | `FACTORUM_API_KEY_SUITE_TOPE` | Habilita `FACTORUM_API_KEY` para abrir sesiones desde Arcanum, con ese rol tope (`lectura`, `usuario`, `admin` o `superadmin`) |
 | `FACTORUM_SUITE_CREAR_USUARIOS` | Crear la cuenta de quien llega desde otra app de la suite (por defecto, sí) |
+| `FACTORUM_OIDC_ISSUER`, `FACTORUM_OIDC_CLIENT_ID`, `FACTORUM_OIDC_CLIENT_SECRET`, `FACTORUM_OIDC_SCOPE`, `FACTORUM_OIDC_ROLE_CLAIM`, `FACTORUM_OIDC_DEFAULT_ROLE`, `FACTORUM_OIDC_CREAR_USUARIOS`, `FACTORUM_OIDC_SOLO` | Inicio de sesión único con Lockatus (ver [Lockatus](#lockatus-inicio-de-sesión-único)) |
+| `FACTORUM_LOGIN_LOCAL` | Salida de emergencia: `1` vuelve a dejar entrar con email y contraseña aunque esté «Solo se entra con Lockatus». Solo por el entorno |
 | `FACTORUM_IA_POR_DEFECTO`, `FACTORUM_CONSTATAR_POR_DEFECTO` | Lo que viene marcado al cargar |
 | `FACTORUM_R2_*` | R2 o cualquier S3. Sin esto, guarda en disco (`/data`) |
 | `FACTORUM_COPIAS`, `FACTORUM_COPIAS_HORA`, `FACTORUM_COPIAS_DIARIAS`, `FACTORUM_COPIAS_MENSUALES` | Copia diaria de la base (por defecto sí, a las 03:30, 14 diarias y 12 mensuales) |
@@ -249,9 +251,38 @@ También hay `factorum copia`, que hace una copia en el momento (por ejemplo, an
 - **Alcance por cliente.** A cada persona y a cada clave se le pueden asignar CUITs de cliente: solo ve y carga lo de esos clientes (en la pantalla, la API y MCP). Vacío = todos.
 - **Contraseñas** con argon2id, de 10 caracteres o más. Al crear a alguien o restablecerle la contraseña, Factorum genera una temporal que se muestra una sola vez y que obliga a cambiarla al entrar. Después de cinco intentos fallidos hay que esperar, cada vez más.
 - **Con correo saliente**: invitación por mail al crear a alguien (un link para elegir la contraseña, vence a las 72 horas) y «Olvidé mi contraseña» en el login (vence a los 30 minutos, contesta igual exista o no la cuenta, tiene tope por email e IP y, al usarlo, cierra las demás sesiones). Los links se guardan por su SHA-256.
-- **Sesión** por cookie (HttpOnly, SameSite=Lax y Secure con URL pública https); vence a las 12 horas sin uso.
+- **Sesión** por cookie (HttpOnly, SameSite=Lax y Secure con URL pública https); vence a las 12 horas sin uso. La misma con email y contraseña, con Lockatus o con el pase de la suite.
 - **Claves de API** (`fct_...`) desde la pantalla, con rol, clientes, vencimiento y la marca «Puede abrir sesiones de la suite». Se muestran una sola vez; Factorum guarda solo su SHA-256. La pantalla ya no entra con una clave de API: las claves son para la API, MCP y las otras apps.
 - **Auditoría** (admin): entradas, salidas, intentos fallidos, personas, claves, configuración (qué cambió, nunca el valor), correcciones, aprobaciones, exportaciones y pases de la suite.
+
+### Lockatus: inicio de sesión único
+
+**Lockatus** es el inicio de sesión único de la suite Escriba (un proveedor OpenID Connect). Con Factorum federado, el login muestra **«Entrar con Lockatus»** y cada persona entra con la misma cuenta que usa en Arcanum y en las demás apps. Funciona igual con otro proveedor OIDC.
+
+**1. En Lockatus**, registrá una aplicación para Factorum:
+
+- Tipo **confidencial** (con client secret), flujo **Authorization Code** con **PKCE S256**.
+- **Redirect URI**, exacta: `https://<tu Factorum>/api/auth/oidc/callback` (la URL pública más esa ruta, sin barra al final). La pantalla la muestra para copiar.
+- **Scopes**: `openid profile email`. Factorum reconoce a cada persona por su **email verificado**: si Lockatus no lo manda, o lo manda con `email_verified: false`, no entra.
+- **Rol**: mandá el rol de la persona para Factorum en el claim `role` del `id_token`: `superadmin`, `admin`, `usuario` (u `operador`) o `lectura`. Puede ser una palabra, varias o una lista; gana la de más permisos. Con otro nombre (o anidado, como `realm_access.roles`), ponelo en «Claim del rol».
+
+**2. En Factorum**, Configuración, **Lockatus (inicio de sesión único)** (superadmin): el emisor (la URL de Lockatus, tal como la publica en `/.well-known/openid-configuration`), el client ID y el client secret (queda cifrado). **Probar** lee el discovery y las claves. Al guardar se aplica sin reiniciar. También se puede fijar todo por el entorno (`FACTORUM_OIDC_*`, ver [.env.example](.env.example)). Hace falta la URL pública.
+
+**Quién entra y con qué rol:**
+
+- Si el email ya tiene cuenta en Factorum (sin distinguir mayúsculas), entra con **su rol y sus clientes de Factorum**: lo que diga Lockatus no lo escala ni lo baja. Si está desactivada, no entra.
+- Si no tiene cuenta, se crea (origen Lockatus, sin contraseña) con el rol del claim o, si no trae uno conocido, con el **rol por defecto** (lectura, salvo que un superadmin elija otro). Admin y superadmin ven todos los clientes; **usuario y lectura nacen sin clientes**: no ven nada (Inicio les dice «Pedile a un admin que te asigne clientes») hasta que un admin se los asigna en Usuarios. Con «Crear la cuenta de quien entra por primera vez» apagado, quien no tiene cuenta no entra.
+- Un admin también puede dar de alta a alguien «para Lockatus» desde Usuarios, con su rol y sus clientes: cuando entre, ya los tiene.
+- Una cuenta de Lockatus no tiene contraseña en Factorum: no entra por el login local, no recibe «Olvidé mi contraseña» y en Usuarios no tiene «Nueva contraseña» ni invitación.
+- La sesión es la de siempre (12 horas sin uso, se cierra al salir o al desactivar a la persona). Cada entrada y cada rechazo (con el motivo) queda en la auditoría.
+
+**Seguridad:** Authorization Code con PKCE, `state` y `nonce` de un solo uso que quedan en el servidor y se atan al navegador con una cookie de 10 minutos; el `id_token` se verifica entero (firma RS256 o ES256 con las claves del emisor, emisor, audiencia, vencimiento y nonce); después de entrar se va siempre a la portada; hay límite de intentos; y nunca se loguean tokens, códigos, `state`, `nonce` ni el client secret.
+
+**Solo se entra con Lockatus.** Con esa opción, el login con email y contraseña desaparece y **el servidor lo rechaza** (también «Olvidé mi contraseña» y los links por mail); las altas nuevas son para Lockatus. Las claves de API, MCP y el pase de la suite siguen andando, y la pantalla «Crear el primer superadmin» no cambia. Para no quedar afuera, se activa solo desde una sesión abierta con Lockatus.
+
+**Salida de emergencia.** Si Lockatus se cae con «Solo se entra con Lockatus» activo, poné `FACTORUM_LOGIN_LOCAL=1` en el entorno del servidor y reiniciá: vuelve el login con contraseña (para quien la tiene) y la pantalla de Configuración lo avisa. Sacala cuando Lockatus vuelva a andar. En EasyPanel: el servicio de Factorum, **Environment**, agregá la variable y **Deploy**.
+
+Para probarlo sin un Lockatus de verdad: `go run ./internal/oidc/oidctest/lockatus-falso -puerto 9099` levanta uno de mentira (emisor `http://127.0.0.1:9099`, client ID `factorum`, secret `secreto-de-prueba`) con una pantalla para elegir con qué email y rol entrar.
 
 ### Suite Escriba: de Arcanum a Factorum y vuelta
 
@@ -260,6 +291,7 @@ Con las dos apps conectadas, se pasa de una a la otra sin volver a loguearse (co
 - **De Factorum a Arcanum**: en Configuración, Arcanum, cargá la URL interna, la pública y una clave de Arcanum habilitada para la suite. Aparece el ícono de grilla arriba a la derecha con «Arcanum».
 - **De Arcanum a Factorum**: Arcanum usa `FACTORUM_TOKEN`. Puede ser una clave creada en Claves de API con «Puede abrir sesiones de la suite», o `FACTORUM_API_KEY` con `FACTORUM_API_KEY_SUITE_TOPE`. Factorum necesita su URL pública.
 - La persona entra con **su** rol de Factorum si ya tiene cuenta (no se escala), topeado por el rol tope de la clave; si no tiene cuenta, se crea con el rol que trae (también topeado).
+- Si las dos apps están federadas con Lockatus, el paso ya es directo por el inicio de sesión único; el pase sigue andando igual (también con «Solo se entra con Lockatus»).
 
 ## Canales de mensajería
 
@@ -359,8 +391,9 @@ Las facturas de prueba se generan con el modelo "ARCA" de Arcanum, que copia "Co
 | `internal/copias` | Copias de seguridad de la base: hacer, guardar, podar, programar y restaurar |
 | `internal/arcanum` | Constatación y padrón |
 | `internal/auth` | Roles, identidad y alcance por CUIT, argon2id, tokens y límite de intentos |
+| `internal/oidc` | Lockatus (OIDC): discovery, Authorization Code con PKCE y la verificación del `id_token`; `oidctest` tiene un Lockatus de mentira |
 | `internal/ajustes` | La configuración desde la pantalla, con el entorno que gana y la recarga en caliente |
-| `internal/api` | REST, sesiones, usuarios, claves, auditoría y el pase de la suite |
+| `internal/api` | REST, sesiones, Lockatus, usuarios, claves, auditoría y el pase de la suite |
 | `internal/mcpserver` | MCP |
 | `internal/canal/*` | Telegram, WhatsApp y webhook |
 | `internal/correo` | Leer mails (solo adjuntos), IMAP, Gmail, Cloudflare y proveedores, SMTP y las plantillas; `correotest` tiene SMTP e IMAP de prueba |

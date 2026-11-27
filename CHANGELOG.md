@@ -2,6 +2,23 @@
 
 Cada versión publicada tiene su sección. La imagen Docker toma la versión de la primera.
 
+## [0.9.0] - 2026-11-27
+
+### Libro IVA Digital
+
+- Pantalla nueva **Libro IVA Digital** (menú Datos, para usuario o más): elegís el cliente y el mes (con «Mes pasado» y «Este mes») y Factorum arma los dos archivos que pide ARCA para **importar las compras** en el Libro IVA Digital: el de comprobantes y el de alícuotas, con el diseño de registro oficial. Bajan juntos en un ZIP, con un `resumen.csv` para leer.
+- Arriba, el resumen del mes: cuántos comprobantes van, el IVA, el **crédito fiscal computable**, el total y el neto y el IVA por alícuota. Las notas de crédito restan y la moneda extranjera va aparte.
+- **Antes de bajar, los problemas**, agrupados y con **Abrir** para corregirlos en Revisar:
+  - **No van al archivo:** sin CUIT válido del emisor, sin fecha, importes que no cierran, moneda extranjera sin cotización, un neto que no se puede repartir entre las alícuotas, y los **duplicados** (va una sola copia).
+  - **Advertencia fuerte:** emisor apócrifo, comprobante que ARCA no reconoce o una factura A a nombre de otro CUIT. Su crédito fiscal no debería computarse.
+  - **Advertencias:** sin aprobar, **no figura en ARCA** (si Factorum está conectado con Arcanum, cruza el mes con Mis Comprobantes y te avisa; nunca saca nada por eso), otros tributos sin detalle y otros detalles.
+- Elegís qué va: **Todos** (con sus advertencias) o **Solo los listos** (bien o aprobados, sin advertencias fuertes).
+- Las facturas B y C y los tiques van sin alícuotas y sin crédito fiscal; los tiques factura A, con su IVA. Lo exento y lo no gravado van con su código de operación.
+- Lo que está en **moneda extranjera** va en su moneda con la cotización del comprobante: al importar en ARCA elegí «Los importes están expresados en la Moneda Original del Comprobante». La pantalla te lo recuerda.
+- Factorum no separa las percepciones: los **otros tributos** van todos en «Otros tributos» y se avisan. Si son percepciones de IVA, pasalas a su campo en el Libro IVA Digital.
+- Lo que está en la papelera no cuenta. Desde **Conciliación**, el botón **Exportar al Libro IVA** abre el libro del mismo cliente y mes.
+- Cada ZIP bajado queda en la auditoría. Por API, `GET /api/libro-iva` y `GET /api/libro-iva/archivos.zip`; por MCP, la herramienta `libro_iva_resumen` (solo el resumen y los problemas).
+
 ## [0.8.0] - 2026-11-27
 
 ### Elegir la IA de una lista

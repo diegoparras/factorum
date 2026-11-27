@@ -260,6 +260,7 @@ func permisos(id *auth.Identidad) map[string]bool {
 		"borrar":          id.Rol >= auth.Usuario,
 		"borrar_lotes":    id.Rol >= auth.Admin,
 		"papelera":        id.Rol >= auth.Usuario,
+		"libro_iva":       id.Rol >= auth.Usuario, // exportar al Libro IVA Digital
 		"vaciar_papelera": id.Rol >= auth.Superadmin && id.Tipo == auth.TipoSesion,
 		"sin_clientes":    id.CUITs != nil && len(id.CUITs) == 0,
 	}

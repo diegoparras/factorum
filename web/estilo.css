@@ -740,3 +740,41 @@ html.sin-scroll, html.sin-scroll body { overflow:hidden; }
   .aia-botones { flex-direction:column-reverse; }
   .aia-botones button { width:100%; padding:11px 20px; }
 }
+/* ---- Libro IVA Digital ---- */
+.lib-kpis { grid-template-columns:repeat(4, minmax(0, 1fr)); }
+.kpi.lib-cf { border-top:3px solid var(--accent); }
+.kpi.lib-cf .val { color:var(--accent); }
+.lib-dos { margin-top:4px; }
+.lib-dos .card { margin-bottom:0; }
+.lib-ali tr.lib-extra td { color:var(--muted-2); }
+.lib-bajar .tabs { margin-bottom:0; align-self:flex-start; }
+.lib-bajar > button[data-accion="libBajar"], .lib-bajar > button[disabled] { align-self:flex-start; }
+.lib-bajar > button svg { width:16px; height:16px; }
+.lib-bajar .aviso-mini { color:var(--muted-2); }
+.lib-bajar .aviso-mini.mal { color:var(--err); }
+.aviso-mini.lib-ok { color:var(--ok); border-color:color-mix(in srgb, var(--ok) 35%, transparent); background:color-mix(in srgb, var(--ok) 7%, transparent); margin-bottom:10px; }
+#libro > .aviso-mini { margin-bottom:10px; }
+.lib-h { margin:22px 0 10px; }
+.aviso-card.lib-bien > svg { color:var(--ok); }
+.lib-nivel { margin:0 0 14px; padding-left:12px; border-left:3px solid var(--border); }
+.lib-nivel.error { border-left-color:var(--err); }
+.lib-nivel.revisar { border-left-color:var(--warn); }
+.lib-nivel > h3 { display:flex; align-items:center; gap:8px; }
+.lib-nivel.error > h3 { color:var(--err); }
+.lib-nivel.revisar > h3 { color:var(--warn); }
+.lib-nivel .cnt, .lib-grupo summary .cnt { font-family:var(--mono); font-size:12px; font-weight:500; color:var(--muted); }
+.lib-ayuda { margin:2px 0 8px; font-size:13px; max-width:880px; }
+details.lib-grupo { margin:8px 0; border:1px solid var(--border); border-radius:var(--radius-lg); background:var(--panel); box-shadow:var(--shadow); padding:10px 14px; }
+details.lib-grupo summary { display:flex; align-items:center; gap:10px; flex-wrap:wrap; color:var(--text); font-weight:600; list-style-position:inside; }
+details.lib-grupo.error summary .lib-tit { color:var(--err); }
+details.lib-grupo .tabla-scroll { margin-top:6px; }
+.lib-t td { font-size:13px; }
+table.t tr.lib-afuera td { color:var(--muted); }
+table.t tr.lib-afuera td:first-child { box-shadow:3px 0 0 var(--err) inset; }
+@media (max-width: 980px) { .lib-kpis { grid-template-columns:repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 600px) {
+  .lib-bajar .tabs { display:flex; width:100%; }
+  .lib-bajar .tabs button { flex:1 1 auto; }
+  .lib-bajar > button[data-accion="libBajar"] { align-self:stretch; justify-content:center; }
+  details.lib-grupo { padding:10px; }
+}

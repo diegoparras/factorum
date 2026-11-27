@@ -783,9 +783,9 @@ table.t tr.lib-afuera td:first-child { box-shadow:3px 0 0 var(--err) inset; }
 .lib-estado.presentado.cambio .lib-estado-ico { background:color-mix(in srgb, var(--warn) 14%, transparent); color:var(--warn); }
 .lib-estado .est { margin-left:6px; vertical-align:middle; }
 .lib-cambios { display:flex; gap:18px; flex-wrap:wrap; margin-top:8px; }
-.lib-cambio ul { margin:4px 0 0; padding-left:18px; }
+.lib-cambio ul { margin:4px 0 0; padding-left:0; list-style:none; }
 .lib-cambio li { margin:2px 0; }
-button.link { background:none; border:none; padding:0; color:var(--accent); font:inherit; font-weight:500; cursor:pointer; text-align:left; }
+button.link { display:inline; background:none; border:none; padding:0; color:var(--accent); font:inherit; font-weight:500; cursor:pointer; text-align:left; }
 button.link:hover { text-decoration:underline; }
 .lib-anteriores { margin:4px 0 14px; }
 .lib-anteriores .cnt { font-family:var(--mono); font-size:12px; font-weight:500; color:var(--muted); margin-left:4px; }

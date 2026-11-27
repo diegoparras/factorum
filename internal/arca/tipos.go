@@ -24,24 +24,28 @@ type TipoCbte struct {
 }
 
 var tipos = map[int]TipoCbte{
-	1:   {1, "A", ClaseFactura, "Factura A", false, false},
-	2:   {2, "A", ClaseNotaDebito, "Nota de Débito A", false, false},
-	3:   {3, "A", ClaseNotaCredito, "Nota de Crédito A", false, false},
-	4:   {4, "A", ClaseRecibo, "Recibo A", false, false},
-	5:   {5, "A", ClaseOtro, "Nota de Venta al Contado A", false, false},
-	6:   {6, "B", ClaseFactura, "Factura B", false, false},
-	7:   {7, "B", ClaseNotaDebito, "Nota de Débito B", false, false},
-	8:   {8, "B", ClaseNotaCredito, "Nota de Crédito B", false, false},
-	9:   {9, "B", ClaseRecibo, "Recibo B", false, false},
-	10:  {10, "B", ClaseOtro, "Nota de Venta al Contado B", false, false},
-	11:  {11, "C", ClaseFactura, "Factura C", false, false},
-	12:  {12, "C", ClaseNotaDebito, "Nota de Débito C", false, false},
-	13:  {13, "C", ClaseNotaCredito, "Nota de Crédito C", false, false},
-	15:  {15, "C", ClaseRecibo, "Recibo C", false, false},
-	19:  {19, "E", ClaseFactura, "Factura E", false, false},
-	20:  {20, "E", ClaseNotaDebito, "Nota de Débito E", false, false},
-	21:  {21, "E", ClaseNotaCredito, "Nota de Crédito E", false, false},
-	49:  {49, "", ClaseOtro, "Comprobante de Compra de Bienes Usados", false, false},
+	1:  {1, "A", ClaseFactura, "Factura A", false, false},
+	2:  {2, "A", ClaseNotaDebito, "Nota de Débito A", false, false},
+	3:  {3, "A", ClaseNotaCredito, "Nota de Crédito A", false, false},
+	4:  {4, "A", ClaseRecibo, "Recibo A", false, false},
+	5:  {5, "A", ClaseOtro, "Nota de Venta al Contado A", false, false},
+	6:  {6, "B", ClaseFactura, "Factura B", false, false},
+	7:  {7, "B", ClaseNotaDebito, "Nota de Débito B", false, false},
+	8:  {8, "B", ClaseNotaCredito, "Nota de Crédito B", false, false},
+	9:  {9, "B", ClaseRecibo, "Recibo B", false, false},
+	10: {10, "B", ClaseOtro, "Nota de Venta al Contado B", false, false},
+	11: {11, "C", ClaseFactura, "Factura C", false, false},
+	12: {12, "C", ClaseNotaDebito, "Nota de Débito C", false, false},
+	13: {13, "C", ClaseNotaCredito, "Nota de Crédito C", false, false},
+	15: {15, "C", ClaseRecibo, "Recibo C", false, false},
+	19: {19, "E", ClaseFactura, "Factura E", false, false},
+	20: {20, "E", ClaseNotaDebito, "Nota de Débito E", false, false},
+	21: {21, "E", ClaseNotaCredito, "Nota de Crédito E", false, false},
+	49: {49, "", ClaseOtro, "Comprobante de Compra de Bienes Usados", false, false},
+	// Despacho de importación: tabla «Tipo de Comprobante» de las Tablas del Sistema del Libro IVA
+	// Digital («066 DESPACHO DE IMPORTACION»). No es de factura electrónica: no tiene letra, punto de
+	// venta, número ni CAE; lo identifica el número de despacho.
+	66:  {66, "", ClaseFactura, "Despacho de Importación", false, false},
 	51:  {51, "M", ClaseFactura, "Factura M", false, false},
 	52:  {52, "M", ClaseNotaDebito, "Nota de Débito M", false, false},
 	53:  {53, "M", ClaseNotaCredito, "Nota de Crédito M", false, false},
@@ -129,7 +133,7 @@ func TiqueDesde(clase Clase, letra string) int {
 // Devuelve 0 si la combinación no existe. Nunca devuelve un tique: para eso está TiqueDesde.
 func TipoDesde(clase Clase, letra string, fce bool) int {
 	for _, t := range tipos {
-		if !t.Tique && t.Clase == clase && t.Letra == letra && t.FCE == fce {
+		if !t.Tique && t.Codigo != 66 && t.Clase == clase && t.Letra == letra && t.FCE == fce {
 			return t.Codigo
 		}
 	}

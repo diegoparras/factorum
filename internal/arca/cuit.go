@@ -49,3 +49,11 @@ func FormatearCUIT(s string) string {
 	}
 	return c[:2] + "-" + c[2:10] + "-" + c[10:]
 }
+
+// CUITPais dice si un número tiene la forma de una «CUIT país» de ARCA (la que identifica a una
+// persona del exterior sin documento argentino: 11 dígitos que empiezan con 50, 51 o 55). La
+// tabla oficial está en arca.gob.ar (Tablas de países); Factorum no controla el número contra ella.
+func CUITPais(s string) bool {
+	c := SoloDigitos(s)
+	return len(c) == 11 && (c[:2] == "50" || c[:2] == "51" || c[:2] == "55")
+}

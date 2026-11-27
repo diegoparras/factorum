@@ -41,19 +41,21 @@ func Comprobante(c *modelo.Comprobante, hoy time.Time) []modelo.Hallazgo {
 
 	// --- Datos clave ---
 	faltan := []struct{ campo, nombre string }{}
+	despacho := c.Tipo == modelo.TipoDespacho
 	if c.Tipo == 0 {
 		faltan = append(faltan, struct{ campo, nombre string }{"tipo", "tipo de comprobante"})
 	}
-	if c.PuntoVenta == 0 {
+	// Un despacho de importación no tiene punto de venta ni número: lo identifica el despacho.
+	if c.PuntoVenta == 0 && !despacho {
 		faltan = append(faltan, struct{ campo, nombre string }{"punto_venta", "punto de venta"})
 	}
-	if c.Numero == 0 {
+	if c.Numero == 0 && !despacho {
 		faltan = append(faltan, struct{ campo, nombre string }{"numero", "número"})
 	}
 	if c.Fecha == "" {
 		faltan = append(faltan, struct{ campo, nombre string }{"fecha", "fecha"})
 	}
-	if c.CUITEmisor == "" {
+	if c.CUITEmisor == "" && !despacho {
 		faltan = append(faltan, struct{ campo, nombre string }{"cuit_emisor", "CUIT del emisor"})
 	}
 	if c.Total == 0 {
@@ -75,7 +77,7 @@ func Comprobante(c *modelo.Comprobante, hoy time.Time) []modelo.Hallazgo {
 	}
 
 	// --- CUIT ---
-	if c.CUITEmisor != "" && !arca.CUITValido(c.CUITEmisor) {
+	if c.CUITEmisor != "" && !arca.CUITValido(c.CUITEmisor) && !(despacho && arca.CUITPais(c.CUITEmisor)) {
 		add("cuit_emisor_invalido", modelo.NivelError, "cuit_emisor", "El CUIT del emisor %s no es válido (dígito verificador).", arca.FormatearCUIT(c.CUITEmisor))
 	}
 	if c.DocTipoReceptor == 80 && c.DocNroReceptor != "" && !arca.CUITValido(c.DocNroReceptor) {
@@ -108,8 +110,30 @@ func Comprobante(c *modelo.Comprobante, hoy time.Time) []modelo.Hallazgo {
 		}
 	}
 
+	// --- Despacho de importación ---
+	if despacho {
+		switch d := c.Despacho; {
+		case d == "":
+			add("falta_despacho", modelo.NivelError, "despacho", "Falta el número de despacho de importación (16 caracteres).")
+		case !arca.DespachoValido(d):
+			add("despacho_invalido", modelo.NivelError, "despacho", "El número de despacho %q no tiene los 16 caracteres (letras y números) que pide ARCA.", d)
+		default:
+			if _, _, _, _, _, ok := arca.PartesDespacho(d); !ok {
+				add("despacho_forma_rara", modelo.NivelAviso, "despacho", "El despacho %s no tiene la forma usual (año, aduana, tipo de destinación, número y control, como 26001IC04123456K): revisalo.", d)
+			}
+		}
+		if c.CUITEmisor == "" {
+			add("falta_cuit_emisor", modelo.NivelAviso, "cuit_emisor", "Falta la identificación del proveedor del exterior (la CUIT país de la tabla de ARCA): el Libro IVA Digital la pide.")
+		}
+		if c.IVATotal() == 0 && c.NetoGravado != 0 {
+			add("despacho_sin_iva", modelo.NivelAviso, "iva_21", "El despacho tiene base imponible pero no IVA: cargá el IVA de la liquidación en su alícuota.")
+		}
+	}
+
 	// --- CAE (un tique de controlador fiscal no lleva) ---
-	if tique {
+	if despacho {
+		// Un despacho no tiene CAE ni se constata en ARCA.
+	} else if tique {
 		add("tique_sin_constatacion", modelo.NivelInfo, "", "Los tiques de controlador fiscal no se constatan en ARCA; se controló el CUIT y la base de apócrifos.")
 	} else if c.CAE == "" {
 		add("sin_cae", modelo.NivelAviso, "cae", "No se encontró el CAE: sin él no se puede constatar el comprobante.")
@@ -122,10 +146,32 @@ func Comprobante(c *modelo.Comprobante, hoy time.Time) []modelo.Hallazgo {
 		}
 	}
 
+	// --- Detalle de los otros tributos ---
+	for _, v := range []struct {
+		campo string
+		val   modelo.Importe
+	}{{"percepcion_iva", c.PercepcionIVA}, {"percepcion_nacionales", c.PercepcionNacionales}, {"percepcion_iibb", c.PercepcionIIBB},
+		{"percepcion_municipal", c.PercepcionMunicipal}, {"impuestos_internos", c.ImpuestosInternos}} {
+		if v.val < 0 {
+			add("importe_negativo", modelo.NivelAviso, v.campo, "El importe %s es negativo.", v.campo)
+		}
+	}
+	if d := c.DetalleTributos(); d > c.OtrosTributos {
+		add("detalle_tributos_no_cierra", modelo.NivelError, "otros_tributos", "Las percepciones e impuestos internos (%s) suman más que los otros tributos (%s): los otros tributos son el total, con el detalle adentro.", d.AR(), c.OtrosTributos.AR())
+	}
+
 	// --- Sumas ---
 	if c.Total != 0 {
 		tol := tolerancia(c)
 		switch {
+		case despacho:
+			suma := c.SumaComponentes()
+			if suma == 0 {
+				add("sin_detalle_importes", modelo.NivelAviso, "neto_gravado", "No se cargó la base imponible ni el IVA del despacho.")
+			} else if d := abs(suma - c.Total); d > tol {
+				add("suma_no_cierra", modelo.NivelError, "total", "Base + IVA + otros (%s) no da el total (%s). Diferencia: %s.", suma.AR(), c.Total.AR(), (c.Total - suma).AR())
+			}
+			controlIVANeto(c, add)
 		case tique:
 			validarSumasTique(c, tol, add)
 		case c.Letra == "B" || c.Letra == "C":

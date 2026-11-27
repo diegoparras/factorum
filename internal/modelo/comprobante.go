@@ -66,6 +66,42 @@ type Comprobante struct {
 	Origenes map[string]Origen `json:"origenes"`
 	// Paginas del documento que corresponden a este comprobante (desde 1).
 	Paginas []int `json:"paginas,omitempty"`
+
+	// Libro IVA Digital (0.10.0). PeriodoIVA es el período del libro en el que va (AAAA-MM); vacío
+	// es el mes de la fecha. Lo pone Factorum cuando el comprobante llega después de presentar su
+	// mes (origen calculo) o una persona en Revisar (origen manual).
+	PeriodoIVA string `json:"periodo_iva,omitempty"`
+	// Despacho de importación (tipo 66): el número de la destinación (16 caracteres). La fecha del
+	// comprobante es la de oficialización y el emisor, el proveedor del exterior.
+	Despacho string `json:"despacho,omitempty"`
+	// Detalle de los otros tributos: la parte de OtrosTributos que es percepción o pago a cuenta de
+	// IVA, de otros impuestos nacionales (Ganancias), de Ingresos Brutos, municipal o impuesto
+	// interno. Lo que no está en el detalle queda como «otros tributos».
+	PercepcionIVA        Importe `json:"percepcion_iva,omitempty"`
+	PercepcionNacionales Importe `json:"percepcion_nacionales,omitempty"`
+	PercepcionIIBB       Importe `json:"percepcion_iibb,omitempty"`
+	PercepcionMunicipal  Importe `json:"percepcion_municipal,omitempty"`
+	ImpuestosInternos    Importe `json:"impuestos_internos,omitempty"`
+}
+
+// TipoDespacho es el código de ARCA del despacho de importación (tabla de comprobantes del Libro
+// IVA Digital: «066 DESPACHO DE IMPORTACION»).
+const TipoDespacho = 66
+
+// DetalleTributos suma lo que está separado de los otros tributos (percepciones e impuestos internos).
+func (c *Comprobante) DetalleTributos() Importe {
+	return c.PercepcionIVA + c.PercepcionNacionales + c.PercepcionIIBB + c.PercepcionMunicipal + c.ImpuestosInternos
+}
+
+// Periodo es el período del libro (AAAA-MM): el elegido, o el mes de la fecha. Vacío si no hay fecha.
+func (c *Comprobante) Periodo() string {
+	if c.PeriodoIVA != "" {
+		return c.PeriodoIVA
+	}
+	if len(c.Fecha) >= 7 && c.Fecha[4] == '-' {
+		return c.Fecha[:7]
+	}
+	return ""
 }
 
 // IVATotal suma todas las alícuotas.

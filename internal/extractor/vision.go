@@ -165,7 +165,10 @@ func (v *Vision) Extraer(ctx context.Context, imagen []byte, mime string, texto 
 		if len(msg) > 300 {
 			msg = msg[:300]
 		}
-		return modelo.Comprobante{}, fmt.Errorf("el modelo respondió %d: %s", status, msg)
+		if len(v.APIKey) >= 4 { // por si el proveedor repite la clave en el error
+			msg = strings.ReplaceAll(msg, v.APIKey, "[clave]")
+		}
+		return modelo.Comprobante{}, &ErrorModelo{Status: status, Cuerpo: msg}
 	}
 	var cr struct {
 		Choices []struct {
@@ -205,6 +208,17 @@ func (v *Vision) pedir(ctx context.Context, cuerpo map[string]any, timeout time.
 	defer res.Body.Close()
 	crudo, _ := io.ReadAll(io.LimitReader(res.Body, 4<<20))
 	return res.StatusCode, crudo, nil
+}
+
+// ErrorModelo: el modelo respondió con un error (401 por la clave, 404 por el modelo...). Cuerpo es
+// el principio de lo que respondió, sin la clave.
+type ErrorModelo struct {
+	Status int
+	Cuerpo string
+}
+
+func (e *ErrorModelo) Error() string {
+	return fmt.Sprintf("el modelo respondió %d: %s", e.Status, e.Cuerpo)
 }
 
 func desdeRespuesta(s string) (modelo.Comprobante, error) {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -41,10 +42,13 @@ type Config struct {
 	ConstatarPorDefecto bool // constatar con Arcanum al terminar un lote, si no se dice otra cosa
 
 	// Modelo de visión (API compatible con OpenAI: Ollama, LM Studio, vLLM, OpenAI...).
-	LLMBaseURL string
-	LLMAPIKey  string
-	LLMModelo  string
-	LLMTimeout time.Duration
+	// IAProveedor es el proveedor elegido en la pantalla (ollama, openai, anthropic, gemini,
+	// openrouter u otro). Vacío: se deduce de la URL (las configuraciones de antes no lo tienen).
+	IAProveedor string
+	LLMBaseURL  string
+	LLMAPIKey   string
+	LLMModelo   string
+	LLMTimeout  time.Duration
 	// Aceptación del aviso de privacidad de una IA externa (lo guarda Factorum cuando un superadmin
 	// lo acepta en Configuración; nunca sale del entorno). Sin una aceptación vigente para ese host
 	// y esa versión del aviso, una IA externa no se usa.
@@ -215,6 +219,7 @@ func Leer() (*Config, error) {
 		OIDCCrearUsuarios:   envBool("FACTORUM_OIDC_CREAR_USUARIOS", true),
 		OIDCSolo:            envBool("FACTORUM_OIDC_SOLO", false),
 		LoginLocal:          envBool("FACTORUM_LOGIN_LOCAL", false),
+		IAProveedor:         strings.ToLower(env("FACTORUM_IA_PROVEEDOR", "")),
 		LLMBaseURL:          env("LLM_API_BASE_URL", ""),
 		LLMAPIKey:           env("LLM_API_KEY", ""),
 		LLMModelo:           env("LLM_MODEL", ""),
@@ -349,6 +354,9 @@ func (c *Config) Validar() error {
 	}
 	if c.PapeleraDias < 0 || c.PapeleraDias > 365 { // 0: la de siempre (30)
 		return fmt.Errorf("los días de la papelera tienen que ser entre 1 y 365")
+	}
+	if c.IAProveedor != "" && !slices.Contains(ProveedoresIA, c.IAProveedor) {
+		return fmt.Errorf("el proveedor de IA %q no se conoce: tiene que ser %s", c.IAProveedor, strings.Join(ProveedoresIA, ", "))
 	}
 	if c.LLMBaseURL != "" && c.LLMModelo == "" {
 		return fmt.Errorf("con la URL del modelo de visión hace falta el modelo (por ejemplo qwen2.5vl:7b)")
@@ -553,6 +561,9 @@ func (c *Config) CopiasAGuardar() (diarias, mensuales int) {
 	}
 	return diarias, mensuales
 }
+
+// ProveedoresIA son los valores de FACTORUM_IA_PROVEEDOR (los mismos de iaproveedor.Lista).
+var ProveedoresIA = []string{"ollama", "openai", "anthropic", "gemini", "openrouter", "otro"}
 
 // IAConfigurada indica si hay un modelo de visión.
 func (c *Config) IAConfigurada() bool { return c.LLMBaseURL != "" && c.LLMModelo != "" }

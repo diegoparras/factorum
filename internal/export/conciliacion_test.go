@@ -68,6 +68,14 @@ func TestConciliacionExcel(t *testing.T) {
 	if got := x.GetSheetList(); strings.Join(got, "|") != "Resumen|Falta cargar" {
 		t.Fatalf("hojas de falta cargar: %v", got)
 	}
+	filas, _ = x.GetRows("Resumen")
+	todo = ""
+	for _, f := range filas {
+		todo += strings.Join(f, "|") + "\n"
+	}
+	if strings.Contains(todo, "Coinciden") || !strings.Contains(todo, "Falta cargar|1") {
+		t.Fatalf("el resumen de falta cargar tiene solo ese grupo:\n%s", todo)
+	}
 }
 
 func TestConciliacionCSV(t *testing.T) {

@@ -214,6 +214,29 @@
       <div id="resumen"></div>
     </section>
 
+    <!-- Conciliación -->
+    <section class="vista hidden" id="v-conciliacion">
+      <div class="cabecera"><div><h2>Conciliación</h2><p class="sub">Cruzá las facturas de compra que cargaste de un cliente con lo que ARCA dice que recibió (Mis Comprobantes, que baja Arcanum): qué coincide, qué tiene diferencias, qué falta pedirle al cliente y qué no figura en ARCA.</p></div></div>
+      <form id="fConciliacion" class="card conc-form">
+        <div class="fila">
+          <label class="medio">Cliente<select id="concCliente" required></select></label>
+          <label class="corto hidden" id="concOtroWrap">CUIT del cliente<input id="concOtro" placeholder="20-12345678-9" inputmode="numeric" maxlength="13"></label>
+          <label class="corto">Desde<input id="concDesde" type="date" required></label>
+          <label class="corto">Hasta<input id="concHasta" type="date" required></label>
+        </div>
+        <div class="fila pie-form">
+          <div class="atajos" role="group" aria-label="Atajos de período">
+            <button type="button" class="ghost mini" data-accion="concAtajo" data-atajo="mes_pasado">Mes pasado</button>
+            <button type="button" class="ghost mini" data-accion="concAtajo" data-atajo="este_mes">Este mes</button>
+            <button type="button" class="ghost mini" data-accion="concAtajo" data-atajo="tres_meses">Últimos 3 meses</button>
+          </div>
+          <span class="sp"></span>
+          <button type="submit" id="concBtn">Conciliar</button>
+        </div>
+      </form>
+      <div id="conciliacion"></div>
+    </section>
+
     <!-- Configuración -->
     <section class="vista hidden" id="v-configuracion">
       <div class="cabecera"><div><h2>Configuración</h2><p class="sub" id="confSub">Todo lo que antes iba en variables de entorno. Lo que fija el servidor gana y aparece bloqueado. Al guardar, se aplica sin reiniciar.</p></div></div>

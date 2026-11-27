@@ -39,13 +39,14 @@ const I = {
   externo: svg('<path d="M14 4h6v6M20 4l-9 9"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>'),
   correo: svg('<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3.5 6.5l8.5 6 8.5-6"/>'),
   retenido: svg('<path d="M20 12V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h8"/><path d="M3.5 6.5l8.5 6 8.5-6"/><path d="M17 15v5M21 15v5"/>'),
+  conciliacion: svg('<path d="M4 8h13l-3-3"/><path d="M20 16H7l3 3"/><path d="M9 12h6"/>'),
   enviar: svg('<path d="M21 3L10 14"/><path d="M21 3l-7 18-4-7-7-4z"/>'),
 };
 
 // Cada sección dice qué permiso hace falta para verla (el servidor lo hace cumplir igual).
 const NAV_TODO = [
   ['Trabajo', [['inicio', 'Inicio'], ['revisar', 'Revisar'], ['retenido', 'Correo retenido', 'retenido'], ['verificar', 'Verificar'], ['subir', 'Cargar facturas', 'cargar']]],
-  ['Datos', [['lotes', 'Lotes'], ['comprobantes', 'Comprobantes'], ['resumen', 'Resumen']]],
+  ['Datos', [['lotes', 'Lotes'], ['comprobantes', 'Comprobantes'], ['resumen', 'Resumen'], ['conciliacion', 'Conciliación']]],
   ['Configuración', [['configuracion', 'Configuración', 'clientes'], ['usuarios', 'Usuarios', 'usuarios'], ['claves', 'Claves de API', 'claves'],
     ['conectar', 'Conectar'], ['auditoria', 'Auditoría', 'auditoria']]],
 ];
@@ -180,6 +181,7 @@ function ir(v) {
   if (v === 'lotes') { cargarLotes(); timerLotes = setInterval(cargarLotes, 3000); }
   if (v === 'comprobantes') cargarCbtes();
   if (v === 'resumen') cargarResumen();
+  if (v === 'conciliacion') prepararConciliacion();
   if (v === 'configuracion') { cargarConfiguracion(); timerCanales = setInterval(refrescarWhatsApp, 5000); }
   if (v === 'usuarios') cargarUsuarios();
   if (v === 'claves') cargarClaves();
@@ -370,6 +372,7 @@ async function arrancar() {
 
 async function iniciarApp() {
   $('#login').classList.add('hidden');
+  Object.assign(CONC, { clientes: null, datos: null, tab: '', cliente: '' }); // otra persona, otros clientes
   const id = YO.identidad || {};
   document.documentElement.setAttribute('data-puede-cargar', puede('cargar') && !sinClientes() ? 'si' : 'no');
   // Con clientes asignados, la carga sugiere los propios.
@@ -714,7 +717,7 @@ function cerrarRevision() {
   $('#revision').classList.add('hidden');
   if (rev && rev.url) URL.revokeObjectURL(rev.url);
   rev = null;
-  cargarCbtes();
+  if (vista === 'conciliacion') cargarConciliacion(false); else cargarCbtes();
 }
 
 function cambiosRevision() {
@@ -779,6 +782,330 @@ async function cargarResumen() {
         <div class="fila"><button class="ghost" data-accion="exportar" data-formato="xlsx">Descargar Excel</button><button class="ghost" data-accion="exportar" data-formato="csv">Descargar CSV</button></div>
       </div></div>`;
   } catch (e) { toast(e, true); }
+}
+
+// ---------- Conciliación ----------
+const GRUPOS_CONC = [['coinciden', 'Coinciden'], ['diferencias', 'Con diferencias'], ['falta_cargar', 'Falta cargar'], ['no_figura', 'No figura en ARCA']];
+const CAUSAS = { tique: 'Tique de controlador fiscal', exterior: 'Moneda extranjera o exterior', otro_receptor: 'Otro receptor', no_sincronizado: 'Período sin sincronizar',
+  nota: 'Nota de crédito o débito', incompleto: 'Faltan datos', sin_explicacion: 'Sin explicación' };
+const CONSTATADO = { valido: ['ok', 'Válido en ARCA'], invalido: ['error', 'ARCA no lo reconoce'], apocrifo: ['error', 'Emisor apócrifo'], controlado: ['ok', 'Emisor controlado'], error: ['revisar', 'No se pudo constatar'] };
+const CAMPO_DIF = { total: 'Total', neto_gravado: 'Neto', iva: 'IVA', fecha: 'Fecha', moneda: 'Moneda', punto_venta: 'Punto de venta', tipo: 'Tipo' };
+const CONC = { clientes: null, datos: null, tab: '', orden: {}, cliente: '', desde: '', hasta: '', cargando: false };
+
+const isoLocal = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+function periodoAtajo(a) {
+  const hoy = new Date();
+  const y = hoy.getFullYear(), m = hoy.getMonth();
+  if (a === 'este_mes') return [isoLocal(new Date(y, m, 1)), isoLocal(hoy)];
+  if (a === 'tres_meses') return [isoLocal(new Date(y, m - 3, 1)), isoLocal(new Date(y, m, 0))];
+  return [isoLocal(new Date(y, m - 1, 1)), isoLocal(new Date(y, m, 0))]; // mes pasado
+}
+function aplicarAtajo(a) {
+  const [d, h] = periodoAtajo(a);
+  $('#concDesde').value = d; $('#concHasta').value = h;
+  marcarAtajo();
+}
+function marcarAtajo() {
+  $$('#fConciliacion [data-atajo]').forEach((b) => {
+    const [d, h] = periodoAtajo(b.dataset.atajo);
+    b.classList.toggle('on', $('#concDesde').value === d && $('#concHasta').value === h);
+  });
+}
+
+async function prepararConciliacion() {
+  if (!$('#concDesde').value) aplicarAtajo('mes_pasado');
+  if (!CONC.clientes) {
+    try {
+      const r = await api('/api/conciliacion/clientes');
+      CONC.clientes = r.clientes || [];
+      CONC.arcanum = r.arcanum;
+    } catch (e) { toast(e, true); return; }
+  }
+  const sel = $('#concCliente');
+  const restringido = !!(YO && YO.identidad && YO.identidad.cuits);
+  const cs = CONC.clientes;
+  const previo = CONC.cliente || sel.value;
+  sel.innerHTML = (cs.length === 1 ? '' : '<option value="">Elegí un cliente</option>')
+    + cs.map((c) => `<option value="${esc(c.cuit)}">${esc(cuit(c.cuit))}${c.nombre ? ' · ' + esc(c.nombre) : ''}${c.comprobantes ? ` (${mil(c.comprobantes)})` : ' (sin comprobantes)'}</option>`).join('')
+    + (restringido ? '' : '<option value="otro">Otro CUIT...</option>');
+  if (cs.length === 1) sel.value = cs[0].cuit;
+  else if (previo && [...sel.options].some((o) => o.value === previo)) sel.value = previo;
+  $('#concOtroWrap').classList.toggle('hidden', sel.value !== 'otro');
+  if (!CONC.datos) pintarConciliacionVacia();
+  else pintarConciliacion();
+}
+
+function pintarConciliacionVacia() {
+  if (CONC.arcanum === false) {
+    $('#conciliacion').innerHTML = vacio('conciliacion', 'Factorum no está conectado con Arcanum',
+      'La conciliación compara lo cargado con Mis Comprobantes de ARCA, que baja Arcanum. Un admin lo conecta en Configuración, Arcanum.', puede('configuracion') ? 'configuracion' : '', 'Ir a Configuración');
+    return;
+  }
+  if (CONC.clientes && !CONC.clientes.length) {
+    $('#conciliacion').innerHTML = vacio('conciliacion', 'Todavía no hay clientes para conciliar',
+      'Cargá facturas con el CUIT del cliente (o elegí «Otro CUIT») y después conciliá un período contra lo que ARCA dice que recibió.', 'subir', 'Cargar facturas');
+    return;
+  }
+  $('#conciliacion').innerHTML = `<div class="vacio"><div class="ico">${I.conciliacion}</div><h3>Elegí el cliente y el período</h3>
+    <p>Factorum le pide a Arcanum lo que ARCA dice que el cliente recibió en esas fechas (por fecha de emisión) y lo cruza con lo que cargaste.</p>
+    <div class="pasos">
+      <div class="paso"><span class="n">Coinciden</span><span class="muted">Está en los dos con el mismo emisor, número, fecha y total (un centavo de tolerancia).</span></div>
+      <div class="paso"><span class="n">Con diferencias</span><span class="muted">Está en los dos pero algo no cierra: te dice qué y cuánto.</span></div>
+      <div class="paso"><span class="n">Falta cargar</span><span class="muted">ARCA lo tiene y vos no: copiá la lista y pedíselo al cliente.</span></div>
+      <div class="paso"><span class="n">No figura en ARCA</span><span class="muted">Lo cargaste y ARCA no lo tiene: tiques, exterior y otras causas legítimas aparte del resto.</span></div>
+    </div></div>`;
+}
+
+function clienteConc() {
+  const v = $('#concCliente').value;
+  return v === 'otro' ? soloDig($('#concOtro').value) : v;
+}
+
+async function conciliar(refrescar) {
+  const cli = clienteConc();
+  const desde = $('#concDesde').value, hasta = $('#concHasta').value;
+  if (!cli) { toast('Elegí el cliente', true); return; }
+  if (cli.length !== 11) { toast('El CUIT del cliente tiene que tener 11 dígitos', true); return; }
+  if (!desde || !hasta) { toast('Elegí el período', true); return; }
+  Object.assign(CONC, { cliente: cli, desde, hasta });
+  await cargarConciliacion(refrescar);
+}
+
+async function cargarConciliacion(refrescar) {
+  if (!CONC.cliente || CONC.cargando) return;
+  CONC.cargando = true;
+  const btn = $('#concBtn');
+  btn.disabled = true; btn.textContent = 'Conciliando...';
+  if (!CONC.datos) $('#conciliacion').innerHTML = '<p class="muted">Pidiendo a Arcanum lo que ARCA dice que recibió el cliente...</p>';
+  try {
+    const q = new URLSearchParams({ cliente: CONC.cliente, desde: CONC.desde, hasta: CONC.hasta });
+    if (refrescar) q.set('refrescar', '1');
+    const d = await api('/api/conciliacion?' + q);
+    const cambio = !CONC.datos || CONC.datos.cliente !== d.cliente || CONC.datos.desde !== d.desde || CONC.datos.hasta !== d.hasta;
+    CONC.datos = d;
+    if (cambio || !CONC.tab) {
+      const g = (d.resultado || {}).grupos || {};
+      CONC.tab = ['diferencias', 'falta_cargar', 'no_figura', 'coinciden'].find((k) => (g[k] || []).length) || 'diferencias';
+    }
+    pintarConciliacion();
+  } catch (e) { toast(e, true); if (!CONC.datos) pintarConciliacionVacia(); } finally {
+    CONC.cargando = false;
+    btn.disabled = false; btn.textContent = 'Conciliar';
+  }
+}
+
+const diasEntre = (a, b) => Math.round((new Date(b + 'T00:00:00') - new Date(a + 'T00:00:00')) / 86400000) + 1;
+const rangoTxt = (r) => (r.desde === r.hasta ? fecha(r.desde) : `${fecha(r.desde)} al ${fecha(r.hasta)}`);
+
+function syncHTML(d) {
+  const k = d.cobertura;
+  const hace = d.consultado ? fechaHora(d.consultado) : '';
+  const btnAct = `<button type="button" class="ghost mini" data-accion="concRefrescar" title="Volver a pedirle a Arcanum">Actualizar</button>`;
+  if (!k) return '';
+  const ult = k.ultimaSincronizacion;
+  const partes = [];
+  partes.push(ult ? `Última sincronización: <strong>${esc(fechaHora(ult.terminada))}</strong>` : 'Todavía no terminó ninguna sincronización');
+  if ((k.rangos || []).length) partes.push(`bajado del ${k.rangos.map(rangoTxt).join(', ')}`);
+  if (k.enCurso) partes.push('<span class="est revisar">sincronizando ahora</span>');
+  else if (k.ultimaCorrida && k.ultimaCorrida.estado === 'error') partes.push(`<span class="txt-mal">la última corrida falló${k.ultimaCorrida.error ? ': ' + esc(k.ultimaCorrida.error) : ''}</span>`);
+  let h = `<div class="conc-sync"><div class="conc-sync-ico">${I.conectar}</div><div class="conc-sync-txt"><strong>Mis Comprobantes en Arcanum</strong><br><span class="muted">${partes.join(' · ')}</span>
+    <br><span class="muted mini-txt">Consultado ${esc(hace)}${d.de_cache ? ' (guardado unos minutos)' : ''}.</span></div>${btnAct}</div>`;
+  const faltan = d.sin_sincronizar || [];
+  if (faltan.length) {
+    const dias = faltan.reduce((s, r) => s + diasEntre(r.desde, r.hasta), 0);
+    const todo = dias >= diasEntre(d.desde, d.hasta);
+    const app = SUITE.find((a) => a.app === 'arcanum');
+    h += `<div class="aviso-mini${todo ? ' mal' : ''}">${I.alerta}<span><strong>${todo ? 'Arcanum no tiene sincronizado este período.' : 'El período no está completo en Arcanum.'}</strong>
+      Falta${faltan.length > 1 || dias > 1 ? 'n' : ''} ${faltan.map(rangoTxt).join(', ')}. Lo que cae ahí puede aparecer como «Falta cargar» o «No figura en ARCA» sin serlo: sincronizá los recibidos de esas fechas en Arcanum y volvé a conciliar.</span>
+      ${app ? '<button type="button" class="ghost mini" data-accion="abrirApp" data-app="arcanum">Abrir Arcanum</button>' : ''}</div>`;
+  }
+  if (d.truncado) h += `<div class="aviso-mini mal">${I.alerta}<span>${esc(d.mensaje || 'Arcanum tiene más recibidos de los que manda de una vez: conciliá un período más corto.')}</span></div>`;
+  if (d.sin_fecha) h += `<div class="aviso-mini">${I.info}<span>Este cliente tiene ${mil(d.sin_fecha)} comprobante${d.sin_fecha > 1 ? 's' : ''} sin fecha: no entra${d.sin_fecha > 1 ? 'n' : ''} en ningún período. Completales la fecha en Revisar.</span></div>`;
+  return h;
+}
+
+function estadoNoListo(d) {
+  const ico = { sin_arcanum: 'conectar', sin_sincronizar: 'conciliacion', sin_permiso: 'llave' }[d.estado] || 'alerta';
+  const tit = { sin_arcanum: 'Factorum no está conectado con Arcanum', sin_sincronizar: 'Arcanum todavía no bajó Mis Comprobantes de este cliente',
+    sin_permiso: 'La clave de Arcanum no incluye este cliente', arcanum_viejo: 'Hay que actualizar Arcanum', arcanum_caido: 'Arcanum no responde',
+    arcanum_error: 'Arcanum no pudo responder' }[d.estado] || 'No se pudo conciliar';
+  const extra = d.en_factorum ? ` En Factorum hay ${mil(d.en_factorum)} comprobante${d.en_factorum > 1 ? 's' : ''} de este cliente en el período.` : '';
+  const app = SUITE.find((a) => a.app === 'arcanum');
+  const boton = d.estado === 'sin_arcanum' && puede('configuracion') ? '<button type="button" data-accion="irConf" data-sec="arcanum">Configurar Arcanum</button>'
+    : ['sin_sincronizar', 'sin_permiso'].includes(d.estado) && app ? '<button type="button" data-accion="abrirApp" data-app="arcanum">Abrir Arcanum</button>'
+    : ['arcanum_caido', 'arcanum_error'].includes(d.estado) ? '<button type="button" data-accion="concRefrescar">Probar de nuevo</button>' : '';
+  return `${d.cobertura ? syncHTML(d) : ''}<div class="vacio"><div class="ico">${I[ico]}</div><h3>${esc(tit)}</h3><p>${esc(d.mensaje || '')}${esc(extra)}</p>${boton}</div>`;
+}
+
+// El período entero cae en días que Arcanum no bajó: los grupos vacíos no dicen nada.
+const periodoSinArca = (d) => (d.sin_sincronizar || []).reduce((s, r) => s + diasEntre(r.desde, r.hasta), 0) >= diasEntre(d.desde, d.hasta);
+
+function kpiConc(g, t, d) {
+  const n = t.cantidad || 0;
+  const ext = Object.entries(t.moneda_extranjera || {}).map(([m, v]) => `${esc(m)} ${pesos(v)}`).join(' · ');
+  const monto = g === 'no_figura' ? t.pesos_factorum : g === 'diferencias' ? t.pesos_arca : t.pesos;
+  const sinArca = periodoSinArca(d);
+  let pie = n ? `$ ${pesos(monto)}${g === 'diferencias' ? ' en ARCA' : ''}${ext ? ' · ' + ext : ''}` : { coinciden: 'nada todavía', diferencias: 'todo cierra', falta_cargar: 'no falta nada', no_figura: 'todo figura' }[g];
+  if (!n && sinArca && g !== 'no_figura') pie = 'sin datos de ARCA';
+  if (g === 'diferencias' && n) pie += `<br>$ ${pesos(t.pesos_factorum)} en Factorum${t.casi_iguales ? ` · ${t.casi_iguales} casi igual${t.casi_iguales > 1 ? 'es' : ''}` : ''}`;
+  if (g === 'no_figura' && n) pie += `<br>${t.legitimas || 0} con causa legítima${t.alarmas ? ` · <strong>${t.alarmas} con alarma</strong>` : ''}`;
+  const cls = !n ? '' : g === 'coinciden' ? 'bien' : g === 'diferencias' ? 'aviso' : g === 'falta_cargar' ? 'alerta' : (t.alarmas ? 'alerta' : (n - (t.legitimas || 0)) ? 'aviso' : '');
+  return `<button type="button" class="kpi conc-kpi ${cls}${CONC.tab === g ? ' on' : ''}" data-accion="concTab" data-grupo="${g}" aria-pressed="${CONC.tab === g}">
+    <span class="et">${esc(GRUPOS_CONC.find((x) => x[0] === g)[1])}</span><span class="val">${mil(n)}</span><span class="kpi-pie">${pie}</span></button>`;
+}
+
+const nroCbte = (it) => `${String(it.punto_venta || 0).padStart(5, '0')}-${String(it.numero || 0).padStart(8, '0')}`;
+const firmaDe = (it) => (it.clase === 'nota_credito' ? -1 : 1);
+
+function difsHTML(it) {
+  return (it.diferencias || []).map((x) => {
+    const n = CAMPO_DIF[x.campo] || x.campo;
+    if (['total', 'neto_gravado', 'iva'].includes(x.campo)) return `<li><strong>${n}</strong>: Factorum $ ${pesos(x.factorum)}, ARCA $ ${pesos(x.arca)} <span class="dif">${Number(x.diferencia) > 0 ? '+' : ''}${pesos(x.diferencia)}</span></li>`;
+    if (x.campo === 'fecha') return `<li><strong>Fecha</strong>: Factorum ${fecha(x.factorum)}, ARCA ${fecha(x.arca)} <span class="dif">${x.dias > 0 ? '+' : ''}${x.dias} día${Math.abs(x.dias) === 1 ? '' : 's'}</span></li>`;
+    return `<li><strong>${n}</strong>: Factorum ${esc(x.factorum)}, ARCA ${esc(x.arca)}</li>`;
+  }).join('');
+}
+
+function dupHTML(it) {
+  const p = [];
+  if ((it.duplicados_factorum || []).length) p.push(`<span class="chip-dup" title="El mismo comprobante está cargado más de una vez">Cargado ${it.duplicados_factorum.length + 1} veces</span>`
+    + it.duplicados_factorum.map((id) => ` <button type="button" class="link-btn" data-accion="concAbrir" data-id="${id}">ver ${id}</button>`).join(''));
+  if (it.duplicados_arca) p.push(`<span class="chip-dup">Repetido en ARCA</span>`);
+  return p.join(' ');
+}
+
+// Columnas de cada pestaña: [clave de orden, título, celda, clase].
+function columnasConc(g) {
+  const fechaC = ['fecha', 'Fecha', (it) => fecha(it.fecha)];
+  const cbteC = ['comprobante', 'Comprobante', (it) => `${esc(it.nombre_tipo)}<div class="mono nowrap">${nroCbte(it)}</div>${it.casi_igual ? ' <span class="chip-casi" title="Mismo emisor y número con otro punto de venta o tipo: puede ser un error de lectura">Casi igual</span>' : ''}`];
+  const emisorC = ['emisor', 'Emisor', (it) => `${esc(it.emisor || '')}<div class="muted mono">${esc(cuit(it.cuit_emisor))}</div>`];
+  const totalC = ['total', 'Total', (it) => `$ ${pesos(firmaDe(it) * it.total)}${it.moneda_extranjera ? ' ' + esc(it.moneda) : ''}`, 'num'];
+  const abrirC = ['', '', (it) => (it.factorum ? `<button type="button" class="ghost mini" data-accion="concAbrir" data-id="${it.factorum.id}">Abrir</button>` : '')];
+  if (g === 'coinciden') return [fechaC, cbteC, emisorC, totalC, ['', '', (it) => [it.nota ? `<span class="muted">${esc(it.nota)}</span>` : '', dupHTML(it)].filter(Boolean).join('<br>')], abrirC];
+  if (g === 'diferencias') {
+    return [fechaC, cbteC, emisorC,
+      ['arca', 'ARCA', (it) => `$ ${pesos(firmaDe(it) * it.arca.total)}${it.arca.moneda !== 'PES' ? ' ' + esc(it.arca.moneda) : ''}`, 'num'],
+      ['factorum', 'Factorum', (it) => `$ ${pesos(firmaDe(it) * it.factorum.total)}${it.factorum.moneda !== 'PES' ? ' ' + esc(it.factorum.moneda) : ''}`, 'num'],
+      ['diferencia', 'Qué no cierra', (it) => `<ul class="difs">${difsHTML(it)}</ul>${it.nota ? `<div class="muted">${esc(it.nota)}</div>` : ''}${dupHTML(it)}`], abrirC];
+  }
+  if (g === 'falta_cargar') {
+    return [fechaC, cbteC, emisorC, totalC,
+      ['', '', (it) => [it.arca && it.arca.emisor_apocrifo ? '<span class="est error">Emisor apócrifo</span>' : '', it.nota ? `<span class="muted">${esc(it.nota)}</span>` : '', dupHTML(it)].filter(Boolean).join('<br>')]];
+  }
+  return [fechaC, cbteC, emisorC, totalC,
+    ['causa', 'Causa', (it) => `<span class="causa ${it.alarma ? 'alarma' : it.legitima ? 'legitima' : 'pendiente'}">${esc(it.alarma ? 'Alarma: no lo computes' : CAUSAS[it.causa] || it.causa)}</span><div class="muted">${esc(it.nota || '')}</div>${dupHTML(it)}`],
+    ['constatacion', 'Constatación', (it) => {
+      const k = CONSTATADO[(it.factorum || {}).constatacion];
+      return k ? `<span class="est ${k[0]}">${k[1]}</span>` : '<span class="muted">Sin constatar</span>';
+    }],
+    ['', '', (it) => `<div class="acc-apiladas">${it.constatar && puede('corregir') && SALUD && SALUD.arcanum ? `<button type="button" class="ghost mini" data-accion="concConstatar" data-id="${it.factorum.id}">Constatar</button>` : ''}${it.factorum ? `<button type="button" class="ghost mini" data-accion="concAbrir" data-id="${it.factorum.id}">Abrir</button>` : ''}</div>`]];
+}
+
+const ORDEN_CONC = {
+  fecha: (it) => it.fecha || '',
+  comprobante: (it) => `${String(it.tipo).padStart(3, '0')}${nroCbte(it)}`,
+  emisor: (it) => (it.emisor || it.cuit_emisor || '').toLowerCase(),
+  total: (it) => firmaDe(it) * Number(it.total || 0),
+  arca: (it) => firmaDe(it) * Number((it.arca || {}).total || 0),
+  factorum: (it) => firmaDe(it) * Number((it.factorum || {}).total || 0),
+  diferencia: (it) => Math.abs(Number(((it.diferencias || []).find((x) => x.campo === 'total') || {}).diferencia || 0)),
+  causa: (it) => `${it.alarma ? 0 : it.legitima ? 2 : 1}${CAUSAS[it.causa] || ''}`,
+  constatacion: (it) => (it.factorum || {}).constatacion || '',
+};
+
+function itemsConc(g) {
+  const its = [...(((CONC.datos || {}).resultado || {}).grupos || {})[g] || []];
+  const o = CONC.orden[g];
+  if (o && ORDEN_CONC[o.col]) {
+    const f = ORDEN_CONC[o.col];
+    its.sort((a, b) => { const x = f(a), y = f(b); return (x < y ? -1 : x > y ? 1 : 0) * o.dir; });
+  }
+  return its;
+}
+
+const VACIO_CONC = {
+  coinciden: ['Nada coincide todavía', 'Cuando un comprobante cargado sea igual al de ARCA (emisor, número, fecha y total) aparece acá.'],
+  diferencias: ['No hay diferencias', 'Todo lo que está en los dos lados cierra: mismo total, fecha y moneda.'],
+  falta_cargar: ['No falta cargar nada', 'Todo lo que ARCA tiene de este período está cargado en Factorum.'],
+  no_figura: ['Todo lo cargado figura en ARCA', 'Ninguno de los comprobantes cargados de este período falta en Mis Comprobantes.'],
+};
+
+function pintarConciliacion() {
+  const d = CONC.datos;
+  if (!d) { pintarConciliacionVacia(); return; }
+  if (d.estado !== 'lista' || !d.resultado) { $('#conciliacion').innerHTML = estadoNoListo(d); return; }
+  const r = d.resultado;
+  const g = CONC.tab;
+  const its = itemsConc(g);
+  const cols = columnasConc(g);
+  const o = CONC.orden[g] || {};
+  const nombreCli = ((CONC.clientes || []).find((c) => c.cuit === d.cliente) || {}).nombre || '';
+  const accionesTab = g === 'falta_cargar' && its.length
+    ? `<button type="button" class="ghost mini" data-accion="concCopiar">${I.copiar}<span>Copiar la lista</span></button><button type="button" class="ghost mini" data-accion="concExportar" data-formato="xlsx" data-grupo="falta_cargar">Excel para el cliente</button>`
+    : '';
+  const tabla = its.length ? `<div class="tabla-scroll"><table class="t conc-t"><thead><tr>${cols.map(([k, t, , cls]) => (k
+    ? `<th class="${cls || ''}" aria-sort="${o.col === k ? (o.dir > 0 ? 'ascending' : 'descending') : 'none'}"><button type="button" class="orden${o.col === k ? ' on' : ''}" data-accion="concOrden" data-col="${k}">${t}<span class="flecha" aria-hidden="true">${o.col === k ? (o.dir > 0 ? '▲' : '▼') : ''}</span></button></th>`
+    : `<th>${t}</th>`)).join('')}</tr></thead><tbody>
+    ${its.map((it) => `<tr class="${it.alarma ? 'fila-alarma' : ''}">${cols.map(([, , f, cls]) => `<td class="${cls || ''}">${f(it)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`
+    : periodoSinArca(d) && g !== 'no_figura' ? vacio('alerta', 'Sin datos de ARCA para este período', 'Arcanum no bajó Mis Comprobantes de estas fechas, así que no hay con qué comparar. Sincronizá los recibidos en Arcanum y volvé a conciliar.')
+    : vacio(g === 'coinciden' ? 'doc' : 'check', VACIO_CONC[g][0], VACIO_CONC[g][1]);
+  const ayudaTab = {
+    diferencias: 'Están en los dos lados, pero algo no cierra. «Casi igual» es una sugerencia: mismo emisor y número con otro punto de venta o tipo, típico de un error de lectura; revisalo en Factorum.',
+    falta_cargar: 'Figuran en ARCA como recibidas por el cliente y no están cargadas: pedíselas.',
+    no_figura: 'Las cargaste y no están en los recibidos de ARCA. Las causas legítimas (tiques, exterior, otro receptor, período sin sincronizar, notas) van en gris; el resto, constatalo.',
+    coinciden: 'Mismo emisor, tipo, punto de venta, número, fecha y total (y neto e IVA en las A cuando ARCA los trae), con un centavo de tolerancia.',
+  }[g];
+  $('#conciliacion').innerHTML = `${syncHTML(d)}
+    <div class="conc-cab"><div><strong>${esc(cuit(d.cliente))}${nombreCli ? ' · ' + esc(nombreCli) : ''}</strong> <span class="muted">del ${fecha(d.desde)} al ${fecha(d.hasta)} · ${mil(d.en_factorum)} en Factorum · ${mil(d.en_arca)} en ARCA</span>
+      ${r.duplicados.factorum || r.duplicados.arca ? `<br><span class="chip-dup">${r.duplicados.factorum ? `${r.duplicados.factorum} duplicado${r.duplicados.factorum > 1 ? 's' : ''} en Factorum` : ''}${r.duplicados.factorum && r.duplicados.arca ? ' · ' : ''}${r.duplicados.arca ? `${r.duplicados.arca} repetido${r.duplicados.arca > 1 ? 's' : ''} en ARCA` : ''}</span>` : ''}</div>
+      <div class="acciones"><button type="button" class="ghost mini" data-accion="concExportar" data-formato="xlsx">Excel</button><button type="button" class="ghost mini" data-accion="concExportar" data-formato="csv">CSV</button></div></div>
+    <div class="kpis conc-kpis">${GRUPOS_CONC.map(([k]) => kpiConc(k, r.totales[k], d)).join('')}</div>
+    <div class="conc-barra"><div class="tabs" role="tablist">${GRUPOS_CONC.map(([k, t]) => `<button type="button" role="tab" aria-selected="${k === g}" class="${k === g ? 'on' : ''}" data-accion="concTab" data-grupo="${k}">${t} <span class="cnt">${r.grupos[k].length}</span></button>`).join('')}</div>
+      <div class="acciones">${accionesTab}</div></div>
+    <p class="muted conc-ayuda">${esc(ayudaTab)}</p>
+    ${tabla}
+    <p class="muted mini-txt">Las notas de crédito restan. Lo que está en moneda extranjera va aparte y no se suma con los pesos.</p>`;
+  tarjetas('#conciliacion');
+}
+
+function ordenarConc(col) {
+  const g = CONC.tab;
+  const o = CONC.orden[g];
+  CONC.orden[g] = o && o.col === col ? { col, dir: -o.dir } : { col, dir: ['total', 'arca', 'factorum', 'diferencia'].includes(col) ? -1 : 1 };
+  pintarConciliacion();
+}
+
+function textoFaltaCargar() {
+  const d = CONC.datos;
+  const its = itemsConc('falta_cargar');
+  const nom = ((CONC.clientes || []).find((c) => c.cuit === d.cliente) || {}).nombre || '';
+  const lin = its.map((it) => `- ${it.nombre_tipo} ${nroCbte(it)} de ${it.emisor || 'emisor sin nombre'} (CUIT ${cuit(it.cuit_emisor)}), del ${fecha(it.fecha)}, por ${it.moneda_extranjera ? it.moneda : '$'} ${pesos(it.total)}`);
+  return `Comprobantes de compra que figuran en ARCA a nombre de ${cuit(d.cliente)}${nom ? ' (' + nom + ')' : ''} entre el ${fecha(d.desde)} y el ${fecha(d.hasta)} y que todavía no recibimos:\n\n${lin.join('\n')}\n\nTotal: ${its.length} comprobante${its.length === 1 ? '' : 's'}.`;
+}
+
+function exportarConc(formato, grupo) {
+  const d = CONC.datos;
+  if (!d) return;
+  const q = new URLSearchParams({ cliente: d.cliente, desde: d.desde, hasta: d.hasta });
+  if (grupo) q.set('grupo', grupo);
+  descargar(`/api/conciliacion.${formato}?${q}`, `conciliacion-${d.cliente}-${d.desde}-a-${d.hasta}${grupo ? '-' + grupo.replace('_', '-') : ''}.${formato}`);
+}
+
+// Revisar desde la conciliación: Anterior y Siguiente recorren lo que tiene Factorum en la pestaña.
+function abrirDesdeConc(id) {
+  const ids = itemsConc(CONC.tab).filter((it) => it.factorum).map((it) => it.factorum.id);
+  if (!ids.includes(id)) ids.unshift(id);
+  listado = ids.map((x) => ({ id: x }));
+  abrirRevision(ids.indexOf(id));
+}
+
+async function constatarConc(id, btn) {
+  if (btn) { btn.disabled = true; btn.textContent = 'Constatando...'; }
+  try {
+    const { constatacion: k } = await api(`/api/comprobantes/${id}/constatar`, { method: 'POST' });
+    toast(k && k.apoc && k.apoc.esApocrifo ? 'El emisor figura como apócrifo' : k && k.valido === true ? 'ARCA lo reconoce: existe' : k && k.valido === false ? 'ARCA no lo reconoce' : 'Constatado');
+    await cargarConciliacion(false);
+  } catch (e) { toast(e, true); if (btn) { btn.disabled = false; btn.textContent = 'Constatar'; } }
 }
 
 // ---------- Estado vacío ----------
@@ -2005,6 +2332,14 @@ document.addEventListener('click', (ev) => {
     case 'exportar': leerFiltro(); descargar(`/api/export.${el.dataset.formato}?` + qsFiltro({ limite: '', offset: '' }), `factorum.${el.dataset.formato}`); break;
     case 'pagina': filtro.offset = Math.max(0, filtro.offset + Number(el.dataset.dir) * filtro.limite); cargarCbtes(); break;
     case 'revisar': abrirRevision(Number(el.dataset.idx)); break;
+    case 'concAtajo': aplicarAtajo(el.dataset.atajo); break;
+    case 'concTab': CONC.tab = el.dataset.grupo; pintarConciliacion(); break;
+    case 'concOrden': ordenarConc(el.dataset.col); break;
+    case 'concAbrir': abrirDesdeConc(Number(el.dataset.id)); break;
+    case 'concConstatar': constatarConc(Number(el.dataset.id), el); break;
+    case 'concExportar': exportarConc(el.dataset.formato, el.dataset.grupo || ''); break;
+    case 'concCopiar': copiar(textoFaltaCargar()); break;
+    case 'concRefrescar': cargarConciliacion(true); break;
     case 'revAnterior': if (rev) abrirRevision(rev.idx - 1); break;
     case 'revSiguiente': if (rev) abrirRevision(rev.idx + 1); break;
     case 'revCerrar': cerrarRevision(); break;
@@ -2044,6 +2379,7 @@ document.addEventListener('submit', (ev) => {
   else if (f.id === 'fAuditoria') { ev.preventDefault(); audOffset = 0; cargarAuditoria(); }
   else if (f.id === 'fVerificar') verificar(ev);
   else if (f.id === 'fSubir') subir(ev);
+  else if (f.id === 'fConciliacion') { ev.preventDefault(); conciliar(false); }
   else if (f.id === 'fFiltro') { ev.preventDefault(); leerFiltro(); filtro.offset = 0; cargarCbtes(); }
   else if (f.id === 'revForm') { ev.preventDefault(); guardarRevision(false); }
   else if (f.id === 'fVincular') {
@@ -2058,6 +2394,8 @@ document.addEventListener('change', (ev) => {
   if (ev.target.id === 'ckSuite') $('#ckTopeWrap').classList.toggle('hidden', !ev.target.checked);
   if (ev.target.name === 'correoForma') cambiarForma(ev.target.value);
   if (ev.target.id === idCampo('correo.proveedor')) mostrarProveedor();
+  if (ev.target.id === 'concCliente') { $('#concOtroWrap').classList.toggle('hidden', ev.target.value !== 'otro'); if (ev.target.value === 'otro') $('#concOtro').focus(); }
+  if (ev.target.id === 'concDesde' || ev.target.id === 'concHasta') marcarAtajo();
   if (ev.target.id === 'usAlcance') $('#usCuitsWrap').classList.toggle('hidden', ev.target.value !== 'estos');
   if (ev.target.id === 'usLockatus') $('#usClaveWrap').classList.toggle('hidden', ev.target.checked);
 });

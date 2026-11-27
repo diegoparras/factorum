@@ -268,7 +268,8 @@ func ConciliacionExcel(w io.Writer, r *conciliar.Resultado, info InfoConciliacio
 		set(string(rune('A'+i)), t, encab)
 	}
 	fila++
-	for _, g := range conciliar.Grupos {
+	pedidos := gruposPedidos(grupo)
+	for _, g := range pedidos {
 		t := r.Totales[g]
 		set("A", conciliar.NombreGrupo[g], 0)
 		set("B", t.Cantidad, 0)
@@ -281,7 +282,7 @@ func ConciliacionExcel(w io.Writer, r *conciliar.Resultado, info InfoConciliacio
 		set("E", extranjeraTexto(t.Extranjera), 0)
 		fila++
 	}
-	if nf := r.Totales[conciliar.NoFigura]; nf.Cantidad > 0 {
+	if nf := r.Totales[conciliar.NoFigura]; nf.Cantidad > 0 && len(pedidos) > 1 {
 		fila++
 		set("A", "No figura en ARCA, por causa", negrita)
 		fila++
@@ -293,7 +294,7 @@ func ConciliacionExcel(w io.Writer, r *conciliar.Resultado, info InfoConciliacio
 			}
 		}
 	}
-	if r.Duplicados.Factorum > 0 || r.Duplicados.Arca > 0 {
+	if (r.Duplicados.Factorum > 0 || r.Duplicados.Arca > 0) && len(pedidos) > 1 {
 		fila++
 		set("A", fmt.Sprintf("Duplicados: %d en Factorum, %d en ARCA (ver la columna Duplicados).", r.Duplicados.Factorum, r.Duplicados.Arca), 0)
 		fila++
@@ -301,7 +302,7 @@ func ConciliacionExcel(w io.Writer, r *conciliar.Resultado, info InfoConciliacio
 	fila++
 	set("A", "Las notas de crédito restan. Lo que está en moneda extranjera no se suma con los pesos. Tolerancia de redondeo: un centavo por importe.", 0)
 
-	for _, g := range gruposPedidos(grupo) {
+	for _, g := range pedidos {
 		hoja := conciliar.NombreGrupo[g]
 		f.NewSheet(hoja)
 		cols := columnasConc[g]
@@ -329,7 +330,7 @@ func ConciliacionExcel(w io.Writer, r *conciliar.Resultado, info InfoConciliacio
 			_ = f.AutoFilter(hoja, "A1:"+ult, nil)
 		}
 	}
-	if len(gruposPedidos(grupo)) == 1 {
+	if len(pedidos) == 1 {
 		idx, _ := f.GetSheetIndex(conciliar.NombreGrupo[grupo])
 		f.SetActiveSheet(idx)
 	}

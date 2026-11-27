@@ -190,6 +190,15 @@ func (s *Server) Handler() http.Handler {
 	m.HandleFunc("POST /api/lotes", s.auth(usu, s.crearLote))
 	m.HandleFunc("GET /api/lotes", s.auth(lect, s.lotes))
 	m.HandleFunc("GET /api/lotes/{id}", s.auth(lect, s.lote))
+	m.HandleFunc("PATCH /api/lotes/{id}", s.auth(usu, s.editarLote))
+	m.HandleFunc("DELETE /api/lotes/{id}", s.auth(adm, s.borrarLote))
+	m.HandleFunc("POST /api/comprobantes/borrar", s.auth(usu, s.borrarComprobantes))
+	// La papelera: ver y restaurar, usuario o más (cada uno lo de sus clientes); el borrado
+	// definitivo a mano, solo un superadmin con sesión (una clave de API no vacía la papelera).
+	m.HandleFunc("GET /api/papelera", s.auth(usu, s.papelera))
+	m.HandleFunc("POST /api/papelera/restaurar", s.auth(usu, s.restaurarPapelera))
+	m.HandleFunc("DELETE /api/papelera", s.soloSesion(sup, s.vaciarPapelera))
+	m.HandleFunc("POST /api/papelera/borrar", s.soloSesion(sup, s.borrarYa))
 	m.HandleFunc("GET /api/comprobantes", s.auth(lect, s.comprobantes))
 	m.HandleFunc("GET /api/comprobantes/{id}", s.auth(lect, s.comprobante))
 	m.HandleFunc("PATCH /api/comprobantes/{id}", s.auth(usu, s.corregir))
@@ -285,6 +294,8 @@ func (s *Server) fallo(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, store.ErrFiltro):
 		jsonErr(w, http.StatusBadRequest, err.Error())
+	case errors.Is(err, store.ErrConflicto):
+		jsonErr(w, http.StatusConflict, sinPrefijo(err))
 	case errors.Is(err, store.ErrNoEncontrado):
 		jsonErr(w, http.StatusNotFound, "No encontrado")
 	default:

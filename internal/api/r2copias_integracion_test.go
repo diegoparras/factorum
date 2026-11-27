@@ -65,7 +65,7 @@ func (e *entorno) primerDocumento(t *testing.T) int64 {
 // seVenLosArchivos: el original y la primera página de cada documento se pueden ver.
 func (e *entorno) seVenLosArchivos(t *testing.T, cuando string) {
 	t.Helper()
-	rows, err := e.app.Store.Pool.Query(context.Background(), `SELECT id FROM documentos WHERE estado IN ('listo','repetido') ORDER BY id`)
+	rows, err := e.app.Store.Pool.Query(context.Background(), `SELECT id FROM documentos WHERE estado IN ('listo','repetido') AND borrado_en IS NULL ORDER BY id`)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -938,14 +938,21 @@ async function descargar(ruta, nombre) {
 
 // ---------- Revisión ----------
 const CAMPOS = [
-  ['fecha', 'Fecha', 'date'], ['tipo', 'Código de tipo'], ['punto_venta', 'Punto de venta'], ['numero', 'Número'],
+  ['fecha', 'Fecha', 'date'], ['tipo', 'Código de tipo'], ['punto_venta', 'Punto de venta'], ['numero', 'Número'], ['despacho', 'Número de despacho', 'texto', true],
   ['cuit_emisor', 'CUIT emisor'], ['razon_social_emisor', 'Razón social emisor', 'texto', true], ['condicion_iva_emisor', 'Condición IVA emisor', 'texto', true],
   ['doc_nro_receptor', 'Doc. receptor'], ['razon_social_receptor', 'Razón social receptor'],
   ['neto_gravado', 'Neto gravado', 'm'], ['no_gravado', 'No gravado', 'm'], ['exento', 'Exento', 'm'],
   ['iva_21', 'IVA 21%', 'm'], ['iva_10_5', 'IVA 10,5%', 'm'], ['iva_27', 'IVA 27%', 'm'], ['iva_5', 'IVA 5%', 'm'], ['iva_2_5', 'IVA 2,5%', 'm'],
   ['otros_tributos', 'Otros tributos', 'm'], ['subtotal', 'Subtotal (B y C)', 'm'], ['total', 'Total', 'm'],
+  // El detalle de los otros tributos: van en su campo del Libro IVA Digital.
+  ['percepcion_iva', 'Percepción de IVA', 'm'], ['percepcion_nacionales', 'Percepción de Ganancias', 'm'], ['percepcion_iibb', 'Percepción de IIBB', 'm'],
+  ['percepcion_municipal', 'Percepción municipal', 'm'], ['impuestos_internos', 'Impuestos internos', 'm'],
   ['moneda', 'Moneda'], ['cotizacion', 'Cotización'], ['cae', 'CAE'], ['vto_cae', 'Vto. CAE', 'date'],
+  ['periodo_iva', 'Período del Libro IVA', 'month', true],
 ];
+// Campos que solo tienen sentido en un despacho de importación (066).
+const CAMPOS_DESPACHO = new Set(['despacho']);
+const CAMPOS_NO_DESPACHO = new Set(['punto_venta', 'numero', 'cae', 'vto_cae', 'subtotal']);
 const ORIGEN_RUBRO = { texto: 'Factorum lo dedujo del nombre y el texto.', ocr: 'Factorum lo dedujo del nombre y el texto.', arcanum: 'Sale de la actividad del emisor en el padrón de ARCA.', manual: 'Lo eligió una persona.' };
 
 // Rubro y hora van arriba del formulario: son lo primero que se mira en un ticket.
@@ -973,12 +980,17 @@ async function abrirRevision(idx) {
     $('#revTitulo').textContent = `${nombreCbte(c)}${c.es_tique ? ' (ticket)' : ''}  ·  ${c.archivo}`;
     $('#revPos').textContent = `${idx + 1} de ${listado.length}`;
     $('#revHallazgos').innerHTML = `<div class="fila" style="justify-content:space-between;margin-bottom:8px">${estado(c.estado)}<span class="muted">confianza ${Math.round((c.confianza || 0) * 100)}%</span></div>${hallazgosHTML(c.hallazgos)}`;
-    $('#revForm').innerHTML = camposTicketHTML(c) + CAMPOS.filter(([k]) => !(c.es_tique && ['cae', 'vto_cae'].includes(k))).map(([k, t, tipo, ancho]) => {
-      const o = (c.origenes || {})[k];
-      const v = tipo === 'm' ? (Number(c[k] || 0) ? Number(c[k]).toFixed(2) : '') : (c[k] ?? '');
-      return `<label class="${ancho ? 'ancho' : ''}"><span class="et"><span>${t}</span>${o ? `<span class="origen ${esc(o)}" title="Origen del dato">${esc(ORIGEN[o] || o)}</span>` : ''}</span>
-        <input name="${k}" value="${esc(v === 0 ? '' : v)}" data-orig="${esc(v === 0 ? '' : v)}" ${tipo === 'date' ? 'type="date"' : ''} class="${tipo === 'm' ? 'num' : ''}" inputmode="${tipo === 'm' ? 'decimal' : 'text'}"${puede('corregir') ? '' : ' readonly'}></label>`;
-    }).join('');
+    const esDesp = Number(c.tipo) === 66;
+    $('#revForm').innerHTML = camposTicketHTML(c) + (esDesp || !puede('corregir') ? '' : `<div class="rev-desp-btn"><button type="button" class="ghost mini" data-accion="revDespacho">Es un despacho de importación</button></div>`)
+      + CAMPOS.filter(([k]) => !(c.es_tique && ['cae', 'vto_cae'].includes(k)) && !(esDesp && CAMPOS_NO_DESPACHO.has(k))).map(([k, t, tipo, ancho]) => {
+        const o = (c.origenes || {})[k];
+        const v = tipo === 'm' ? (Number(c[k] || 0) ? Number(c[k]).toFixed(2) : '') : (c[k] ?? '');
+        const oculto = CAMPOS_DESPACHO.has(k) && !esDesp;
+        const ayuda = k === 'periodo_iva' ? `<span class="ayuda">${c.periodo_iva ? (o === 'manual' ? 'Lo eligió una persona. Vacío vuelve al automático.' : 'Lo puso Factorum: su mes ya estaba presentado.') : 'Vacío: el mes de la fecha (si ese mes ya se presentó, Factorum lo pasa al primero abierto).'}</span>`
+          : k === 'despacho' ? '<span class="ayuda">16 caracteres: año, aduana, tipo de destinación, número y control (por ejemplo 26001IC04123456K). La fecha es la de oficialización.</span>' : '';
+        return `<label class="${ancho ? 'ancho' : ''}${CAMPOS_DESPACHO.has(k) ? ' rev-desp' : ''}${oculto ? ' hidden' : ''}"><span class="et"><span>${t}</span>${o ? `<span class="origen ${esc(o)}" title="Origen del dato">${esc(ORIGEN[o] || o)}</span>` : ''}</span>
+          <input name="${k}" value="${esc(v === 0 ? '' : v)}" data-orig="${esc(v === 0 ? '' : v)}" ${tipo === 'date' ? 'type="date"' : tipo === 'month' ? 'type="month"' : ''} class="${tipo === 'm' ? 'num' : ''}" inputmode="${tipo === 'm' ? 'decimal' : 'text'}"${puede('corregir') ? '' : ' readonly'}>${ayuda}</label>`;
+      }).join('');
     $('#btnConstatar').classList.toggle('hidden', !(SALUD && SALUD.arcanum));
     const k = c.constatacion;
     $('#revConstatacion').innerHTML = k ? `<div class="card"><strong>${c.es_tique ? 'Control del emisor' : 'Constatación ARCA'}</strong><dl class="kv">
@@ -1000,6 +1012,21 @@ async function abrirRevision(idx) {
       <button class="ghost mini" data-accion="abrirOriginal" data-doc="${c.documento_id}">Abrir el original</button></div>
       <div class="rev-doc-img"><img src="${rev.url}" alt="Comprobante original"></div>`;
   } catch (e) { toast(e, true); }
+}
+
+// Marcar un comprobante como despacho de importación: tipo 066, sin letra, y aparece el número de
+// despacho. Se guarda con «Guardar» (queda como corrección).
+function marcarDespachoRev() {
+  const f = $('#revForm');
+  if (!f) return;
+  const tipo = f.querySelector('input[name="tipo"]');
+  if (tipo) { tipo.value = '66'; tipo.classList.add('cambiado'); }
+  f.querySelectorAll('.rev-desp').forEach((l) => l.classList.remove('hidden'));
+  const b = f.querySelector('.rev-desp-btn');
+  if (b) b.classList.add('hidden');
+  const d = f.querySelector('input[name="despacho"]');
+  if (d) d.focus();
+  toast('Cargá el número de despacho, la fecha de oficialización, el proveedor del exterior y la liquidación, y guardá');
 }
 
 function cerrarRevision() {
@@ -1398,14 +1425,29 @@ async function constatarConc(id, btn) {
 }
 
 // ---------- Libro IVA Digital ----------
-// Las compras de un cliente en un mes, en el formato de importación de ARCA (RG 4597). El servidor
-// arma los archivos y dice qué problemas hay; acá se muestran agrupados y se baja el ZIP.
-const LIB = { datos: null, cliente: '', periodo: '', solo: false, cargando: false };
+// Un libro (compras, ventas o importaciones) de un cliente en un mes, en el formato de importación
+// de ARCA (RG 4597). El servidor arma los archivos, dice qué problemas hay y si el período ya se
+// presentó; acá se muestran agrupados y se baja el ZIP.
+const LIB = { datos: null, cliente: '', periodo: '', solo: false, cargando: false, libro: 'compras' };
 const NIVEL_LIB = {
   bloquea: ['error', 'No va al archivo', 'Hay que corregirlos en Revisar: con estos problemas no se pueden exportar.'],
   fuerte: ['error', 'Advertencia fuerte', 'Van solo si bajás todos. Su crédito fiscal no debería computarse.'],
   advertencia: ['revisar', 'Advertencias', 'Van al archivo. Conviene mirarlos antes de presentar.'],
   info: ['', 'Para tener en cuenta', 'Cómo quedaron en el archivo.'],
+};
+// Lo que cambia entre los tres libros: textos, la contraparte y lo que se muestra.
+const LIBROS = {
+  compras: { tit: 'Compras', cbtes: 'comprobante', contra: 'Emisor', arca: 'Libro IVA Compras, «Importar archivos»',
+    vacioTit: 'Todavía no hay clientes con compras', vacioTxt: 'Cargá las facturas de compra con el CUIT del cliente y después armá el libro del mes.',
+    pasos: [['Comprobantes', 'Un registro de 325 posiciones por comprobante: LIBRO_IVA_DIGITAL_COMPRAS_CBTE.'], ['Alícuotas', 'Uno de 84 por cada alícuota de IVA de las A y M. B, C y tiques no llevan.'], ['Problemas', 'Lo que no puede ir, lo que no deberías computar y lo que conviene mirar.']],
+    intro: 'Factorum arma los dos archivos que pide ARCA con las compras del mes (las de su fecha y las que entraron de meses anteriores) y te muestra antes qué hay que corregir.' },
+  ventas: { tit: 'Ventas', cbtes: 'comprobante', contra: 'Comprador', arca: 'Libro IVA Ventas, «Importar archivos»',
+    pasos: [['Comprobantes', 'Un registro de 266 posiciones por comprobante emitido: LIBRO_IVA_DIGITAL_VENTAS_CBTE.'], ['Alícuotas', 'Uno de 62 por cada alícuota, también en las B (el IVA contenido).'], ['De Mis Comprobantes', 'Los emitidos salen de Arcanum: el período tiene que estar sincronizado.']],
+    intro: 'Factorum arma los dos archivos de ventas con los comprobantes emitidos que Arcanum bajó de Mis Comprobantes, con el detalle por alícuota de ARCA o de lo que Arcanum emitió.' },
+  importaciones: { tit: 'Importaciones', cbtes: 'despacho', contra: 'Proveedor del exterior', arca: 'Libro IVA Compras, pestaña «Impor. de Bienes», «Importar archivos»',
+    vacioTit: 'Todavía no hay despachos', vacioTxt: 'Cargá el PDF del despacho de importación o marcá un comprobante como despacho en Revisar.',
+    pasos: [['Despachos', 'Un registro de 325 posiciones por despacho, con el número de despacho y la fecha de oficialización.'], ['Alícuotas', 'Uno de 50 por cada alícuota: LIBRO_IVA_DIGITAL_IMPORTACION_BIENES_ALICUOTA.'], ['Desde Revisar', 'Marcá el comprobante como despacho (066) y cargá el número, el proveedor y la liquidación.']],
+    intro: 'Factorum arma los archivos de importación de bienes con los despachos del mes (por la fecha de oficialización).' },
 };
 const mesDe = (d) => isoLocal(d).slice(0, 7);
 function mesAtajo(a) {
@@ -1423,10 +1465,19 @@ const mesTxt = (p) => {
   return t.charAt(0).toUpperCase() + t.slice(1);
 };
 
+function marcarLibros() {
+  $$('#libLibros [data-libro]').forEach((b) => {
+    const on = b.dataset.libro === LIB.libro;
+    b.classList.toggle('on', on);
+    b.setAttribute('aria-selected', String(on));
+  });
+}
+
 async function prepararLibro() {
   if (LIB.periodo) $('#libPeriodo').value = LIB.periodo;
   if (!$('#libPeriodo').value) libAtajo('mes_pasado');
   marcarLibAtajo();
+  marcarLibros();
   if (!CONC.clientes) {
     try {
       const r = await api('/api/conciliacion/clientes');
@@ -1451,17 +1502,14 @@ async function prepararLibro() {
 }
 
 function pintarLibroVacio() {
-  if (CONC.clientes && !CONC.clientes.length) {
-    $('#libro').innerHTML = vacio('libro_iva', 'Todavía no hay clientes con compras', 'Cargá las facturas de compra con el CUIT del cliente y después armá el libro del mes.', 'subir', 'Cargar facturas');
+  const L = LIBROS[LIB.libro];
+  if (CONC.clientes && !CONC.clientes.length && L.vacioTit) {
+    $('#libro').innerHTML = vacio('libro_iva', L.vacioTit, L.vacioTxt, 'subir', 'Cargar comprobantes');
     return;
   }
   $('#libro').innerHTML = `<div class="vacio"><div class="ico">${I.libro_iva}</div><h3>Elegí el cliente y el mes</h3>
-    <p>Factorum arma los dos archivos que pide ARCA con las compras del mes (por fecha de emisión) y te muestra antes qué hay que corregir.</p>
-    <div class="pasos">
-      <div class="paso"><span class="n">Comprobantes</span><span class="muted">Un registro de 325 posiciones por comprobante: LIBRO_IVA_DIGITAL_COMPRAS_CBTE.</span></div>
-      <div class="paso"><span class="n">Alícuotas</span><span class="muted">Uno de 84 por cada alícuota de IVA de las A y M. B, C y tiques no llevan.</span></div>
-      <div class="paso"><span class="n">Problemas</span><span class="muted">Lo que no puede ir, lo que no deberías computar y lo que conviene mirar.</span></div>
-    </div></div>`;
+    <p>${esc(L.intro)}</p>
+    <div class="pasos">${L.pasos.map(([n, t]) => `<div class="paso"><span class="n">${esc(n)}</span><span class="muted">${esc(t)}</span></div>`).join('')}</div></div>`;
 }
 
 function clienteLib() {
@@ -1479,14 +1527,26 @@ async function armarLibro() {
   await cargarLibro();
 }
 
+function cambiarLibro(libro) {
+  if (!LIBROS[libro] || libro === LIB.libro) return;
+  LIB.libro = libro;
+  LIB.datos = null;
+  marcarLibros();
+  // Con el cliente y el mes que están en el formulario (si son válidos).
+  const cli = clienteLib();
+  const per = $('#libPeriodo').value.trim();
+  if (cli && cli.length === 11 && /^\d{4}-\d{2}$/.test(per)) Object.assign(LIB, { cliente: cli, periodo: per });
+  if (LIB.cliente && LIB.periodo) cargarLibro(); else pintarLibroVacio();
+}
+
 async function cargarLibro() {
   if (!LIB.cliente || LIB.cargando) return;
   LIB.cargando = true;
   const btn = $('#libBtn');
   btn.disabled = true; btn.textContent = 'Armando...';
-  if (!LIB.datos) $('#libro').innerHTML = '<p class="muted">Armando el libro y buscando problemas...</p>';
+  if (!LIB.datos) $('#libro').innerHTML = `<p class="muted">${LIB.libro === 'ventas' ? 'Pidiendo los emitidos a Arcanum y armando el libro...' : 'Armando el libro y buscando problemas...'}</p>`;
   try {
-    const q = new URLSearchParams({ cliente: LIB.cliente, periodo: LIB.periodo });
+    const q = new URLSearchParams({ cliente: LIB.cliente, periodo: LIB.periodo, libro: LIB.libro });
     if (LIB.solo) q.set('solo_aprobados', '1');
     LIB.datos = await api('/api/libro-iva?' + q);
     pintarLibro();
@@ -1496,73 +1556,130 @@ async function cargarLibro() {
   }
 }
 
-const nroItem = (it) => `${String(it.punto_venta || 0).padStart(5, '0')}-${String(it.numero || 0).padStart(8, '0')}`;
+const nroItem = (it) => (it.despacho ? it.despacho : `${String(it.punto_venta || 0).padStart(5, '0')}-${String(it.numero || 0).padStart(8, '0')}`);
 const montoMon = (v, mon) => (mon && mon !== 'PES' ? `${esc(mon)} ${pesos(v)}` : `$ ${pesos(v)}`);
+const docTxt = (d) => (String(d || '').length === 11 ? cuit(d) : (d === '0' ? '' : d || ''));
+const claveLib = (it) => (it.id ? 'id:' + it.id : it.clave);
 
-function grupoLibHTML(g) {
+function grupoLibHTML(g, L) {
   const [cls] = NIVEL_LIB[g.nivel] || [''];
   const n = g.items.length;
   const afuera = g.items.filter((it) => it.excluido).length;
-  const filas = g.items.map((it) => `<tr class="${it.excluido ? 'lib-afuera' : ''}"><td>${esc(it.nombre_tipo)}<div class="mono nowrap">${nroItem(it)}</div></td>
+  const filas = g.items.map((it) => `<tr class="${it.excluido ? 'lib-afuera' : ''}"><td>${esc(it.nombre_tipo)}<div class="mono nowrap">${esc(nroItem(it))}</div></td>
       <td class="nowrap">${it.fecha ? fecha(it.fecha) : '<span class="muted">sin fecha</span>'}</td>
-      <td>${esc(it.emisor || '')}<div class="muted mono">${esc(cuit(it.cuit_emisor))}</div></td>
+      <td>${esc(it.contraparte || '')}<div class="muted mono">${esc(docTxt(it.doc))}</div></td>
       <td class="num nowrap">${montoMon(it.total, it.moneda)}</td>
       <td>${it.detalle ? esc(it.detalle) : '<span class="muted">-</span>'}</td>
       <td>${it.excluido ? '<span class="est error">No va</span>' : '<span class="est ok">Va</span>'}</td>
-      <td><button type="button" class="ghost mini" data-accion="libAbrir" data-id="${it.id}" data-grupo="${esc(g.codigo)}">Abrir</button></td></tr>`).join('');
+      <td>${it.id ? `<button type="button" class="ghost mini" data-accion="libAbrir" data-id="${it.id}" data-grupo="${esc(g.codigo)}">Abrir</button>` : ''}</td></tr>`).join('');
   return `<details class="lib-grupo ${cls}"${g.nivel === 'info' ? '' : ' open'}><summary><span class="lib-tit">${esc(g.titulo)}</span>
       <span class="cnt">${mil(n)}</span>${afuera && afuera < n ? `<span class="muted mini-txt">${mil(afuera)} no va${afuera > 1 ? 'n' : ''}</span>` : ''}</summary>
     <p class="muted lib-ayuda">${esc(g.ayuda)}</p>
-    <div class="tabla-scroll"><table class="t lib-t"><thead><tr><th>Comprobante</th><th>Fecha</th><th>Emisor</th><th class="num">Total</th><th>Detalle</th><th>Archivo</th><th></th></tr></thead>
+    <div class="tabla-scroll"><table class="t lib-t"><thead><tr><th>Comprobante</th><th>Fecha</th><th>${esc(L.contra)}</th><th class="num">Total</th><th>Detalle</th><th>Archivo</th><th></th></tr></thead>
     <tbody>${filas}</tbody></table></div></details>`;
 }
 
-function problemasLibHTML(d) {
-  const gs = d.problemas || [];
+function problemasLibHTML(d, L) {
+  const gs = (d.problemas || []).filter((g) => g.codigo !== 'de_mes_anterior');
   const serios = gs.filter((g) => g.nivel !== 'info');
   let h = '';
   if (!serios.length) {
-    h += `<div class="aviso-card lib-bien">${I.check}<div><strong>Sin problemas.</strong><br><span class="muted">${d.cantidad_todos ? 'Todo lo del mes se puede exportar tal cual.' : 'No hay comprobantes en el mes.'}</span></div></div>`;
+    h += `<div class="aviso-card lib-bien">${I.check}<div><strong>Sin problemas.</strong><br><span class="muted">${d.cantidad_todos ? 'Todo lo del mes se puede exportar tal cual.' : `No hay ${L.cbtes}s en el mes.`}</span></div></div>`;
   }
   for (const nivel of ['bloquea', 'fuerte', 'advertencia', 'info']) {
     const del = gs.filter((g) => g.nivel === nivel);
     if (!del.length) continue;
     const [cls, tit, ayuda] = NIVEL_LIB[nivel];
-    const cuantos = new Set(del.flatMap((g) => g.items.map((it) => it.id))).size;
-    h += `<section class="lib-nivel ${cls}"><h3>${esc(tit)} <span class="cnt">${mil(cuantos)} comprobante${cuantos === 1 ? '' : 's'}</span></h3><p class="muted lib-ayuda">${esc(ayuda)}</p>
-      ${del.map(grupoLibHTML).join('')}</section>`;
+    const cuantos = new Set(del.flatMap((g) => g.items.map(claveLib))).size;
+    h += `<section class="lib-nivel ${cls}"><h3>${esc(tit)} <span class="cnt">${mil(cuantos)} ${L.cbtes}${cuantos === 1 ? '' : 's'}</span></h3><p class="muted lib-ayuda">${esc(ayuda)}</p>
+      ${del.map((g) => grupoLibHTML(g, L)).join('')}</section>`;
   }
   return h;
+}
+
+// El estado del período: abierto, o presentado (la última exportación) y qué cambió desde entonces.
+function presentacionHTML(d) {
+  const p = d.presentacion || {};
+  if (p.estado !== 'presentado' || !p.ultima) {
+    return `<div class="lib-estado abierto"><span class="lib-estado-ico">${I.libro_iva}</span><div><strong>Período abierto</strong>
+      <div class="muted">Todavía no se exportó. Cuando bajes el ZIP queda presentado: lo que llegue después de este mes va al período siguiente.</div></div></div>`;
+  }
+  const u = p.ultima;
+  const veces = p.veces > 1 ? ` · se exportó ${p.veces} veces` : '';
+  let cambios = '';
+  if (p.cambio && p.cambios) {
+    const c = p.cambios;
+    const lista = (t, xs) => (xs.length ? `<div class="lib-cambio"><strong>${t} (${mil(xs.length)})</strong><ul>${xs.slice(0, 8).map((x) => `<li>${x.id ? `<button type="button" class="link" data-accion="libAbrirId" data-id="${x.id}">${esc(x.descripcion)}</button>` : esc(x.descripcion)}</li>`).join('')}${xs.length > 8 ? `<li class="muted">y ${mil(xs.length - 8)} más</li>` : ''}</ul></div>` : '');
+    cambios = `<div class="lib-cambios">${lista('Entraron', c.agregados)}${lista('Salieron', c.quitados)}${lista('Cambiaron', c.modificados)}</div>`;
+  }
+  return `<div class="lib-estado presentado${p.cambio ? ' cambio' : ''}"><span class="lib-estado-ico">${p.cambio ? I.info : I.check}</span><div>
+    <strong>Presentado el ${esc(fechaHora(u.creado))}${u.usuario ? ' por ' + esc(u.usuario) : ''}</strong>${p.cambio ? ' <span class="est revisar">Cambió desde la presentación</span>' : ''}
+    <div class="muted">${mil(u.cantidad)} ${LIBROS[d.libro].cbtes}${u.cantidad === 1 ? '' : 's'}${u.solo_aprobados ? ', solo los listos' : ''}${veces}. ${p.cambio ? 'Si ya lo importaste en ARCA, revisá estos cambios: se puede volver a exportar.' : 'Desde entonces no cambió nada de lo que va al archivo.'}</div>
+    ${cambios}</div></div>`;
+}
+
+// Ventas: de dónde salen (Arcanum) y si el período está bajado.
+function fuenteHTML(d) {
+  const f = d.fuente;
+  if (!f) return '';
+  if (f.estado !== 'lista') return `<div class="aviso-card lib-fuente-mal">${I.info}<div><strong>No se pudieron traer las ventas.</strong><br><span>${esc(f.mensaje || '')}</span></div></div>`;
+  if (!f.cubre_todo || f.truncado) {
+    const faltan = (f.sin_sincronizar || []).map((x) => `${fecha(x.desde)} al ${fecha(x.hasta)}`).join(', ');
+    return `<div class="aviso-mini mal lib-fuente">${I.info}<span>${esc(f.mensaje || '')}${faltan ? ` Sin sincronizar: ${esc(faltan)}.` : ''}</span></div>`;
+  }
+  return `<div class="aviso-mini lib-ok">${I.check}<span>Los emitidos del mes están bajados de Mis Comprobantes (${mil(f.emitidos)}).</span></div>`;
+}
+
+function anterioresHTML(d, L) {
+  const g = (d.problemas || []).find((x) => x.codigo === 'de_mes_anterior');
+  if (!g || !g.items.length) return '';
+  return `<div class="card lib-anteriores"><div class="card-cab"><h3>Entraron de meses anteriores <span class="cnt">${mil(g.items.length)}</span></h3></div>
+    <p class="muted lib-ayuda">${esc(g.ayuda)}</p>
+    <div class="tabla-scroll"><table class="t lib-t"><thead><tr><th>Comprobante</th><th>Fecha</th><th>${esc(L.contra)}</th><th class="num">Total</th><th>Detalle</th><th></th></tr></thead><tbody>
+    ${g.items.map((it) => `<tr><td>${esc(it.nombre_tipo)}<div class="mono nowrap">${esc(nroItem(it))}</div></td><td class="nowrap">${fecha(it.fecha)}</td>
+      <td>${esc(it.contraparte || '')}<div class="muted mono">${esc(docTxt(it.doc))}</div></td><td class="num nowrap">${montoMon(it.total, it.moneda)}</td>
+      <td>${esc(it.detalle || '')}</td><td>${it.id ? `<button type="button" class="ghost mini" data-accion="libAbrir" data-id="${it.id}" data-grupo="de_mes_anterior">Abrir</button>` : ''}</td></tr>`).join('')}
+    </tbody></table></div></div>`;
 }
 
 function pintarLibro() {
   const d = LIB.datos;
   if (!d) { pintarLibroVacio(); return; }
+  const L = LIBROS[d.libro] || LIBROS.compras;
+  const ventas = d.libro === 'ventas';
   const r = d.resumen;
   const nombre = d.nombre || ((CONC.clientes || []).find((c) => c.cuit === d.cliente) || {}).nombre || '';
   const ext = r.moneda_extranjera || [];
   const extTxt = ext.map((m) => `${esc(m.moneda)} ${pesos(m.total)} (${m.cantidad})`).join(' · ');
   const conc = d.conciliacion || {};
-  const concHTML = conc.estado === 'lista'
+  const concHTML = d.libro !== 'compras' ? '' : conc.estado === 'lista'
     ? `<div class="aviso-mini lib-ok">${I.check}<span>Conciliado con Mis Comprobantes: lo que no figura en ARCA aparece en las advertencias.${conc.mensaje ? ' ' + esc(conc.mensaje) : ''}</span></div>`
     : conc.estado && conc.estado !== 'no_pedida' ? `<div class="aviso-mini">${I.info}<span>Sin conciliación con ARCA: ${esc(conc.mensaje || 'no se pudo conciliar.')} Los archivos se arman igual.</span></div>` : '';
   const aliFilas = (r.por_alicuota || []).map((a) => `<tr><td>${esc(a.tasa)} %</td><td class="mono">${esc(a.codigo)}</td><td class="num">${mil(a.registros)}</td><td class="num">$ ${pesos(a.neto_gravado)}</td><td class="num">$ ${pesos(a.iva)}</td></tr>`).join('');
-  const otros = [['No gravado', r.no_gravado], ['Exento', r.exento], ['Otros tributos', r.otros_tributos]].filter(([, v]) => Number(v))
+  const otros = [['No gravado', r.no_gravado], ['Exento', r.exento], ['Percepciones', r.percepciones], ['Otros tributos', r.otros_tributos]].filter(([, v]) => Number(v))
     .map(([t, v]) => `<tr class="lib-extra"><td>${t}</td><td></td><td></td><td class="num">$ ${pesos(v)}</td><td></td></tr>`).join('');
   const n = r.comprobantes;
-  const bajar = n
-    ? `<button type="button" data-accion="libBajar">${I.bajar}<span>Bajar el ZIP (${mil(n)} comprobante${n === 1 ? '' : 's'})</span></button>`
+  const fuenteMal = d.fuente && d.fuente.estado !== 'lista';
+  const presentado = (d.presentacion || {}).estado === 'presentado';
+  const bajar = n && !fuenteMal
+    ? `<button type="button" data-accion="libBajar">${I.bajar}<span>${presentado ? 'Volver a bajar' : 'Bajar'} el ZIP (${mil(n)} ${L.cbtes}${n === 1 ? '' : 's'})</span></button>`
     : '<button type="button" disabled>No hay nada para bajar</button>';
   const hayExt = ext.length > 0;
-  $('#libro').innerHTML = `${concHTML}
-    <div class="conc-cab"><div><strong>${esc(cuit(d.cliente))}${nombre ? ' · ' + esc(nombre) : ''}</strong> <span class="muted">${esc(mesTxt(d.periodo))} · ${mil(d.leidos)} comprobante${d.leidos === 1 ? '' : 's'} en Factorum · ${mil(d.excluidos)} no va${d.excluidos === 1 ? '' : 'n'}</span></div>
+  const arch = (d.archivos || []).map(esc).join(', ');
+  const kpi3 = ventas
+    ? `<div class="kpi lib-cf"><span class="et">Percepciones</span><span class="val">${pesos(r.percepciones)}</span><span class="kpi-pie">otros tributos $ ${pesos(r.otros_tributos)}</span></div>`
+    : `<div class="kpi lib-cf"><span class="et">Crédito fiscal computable</span><span class="val">${pesos(r.credito_fiscal)}</span><span class="kpi-pie">${r.sin_credito_fiscal ? `${r.sin_credito_fiscal} sin crédito fiscal (B, C y tiques)` : 'sin prorrateo: igual al IVA'}</span></div>`;
+  $('#libro').innerHTML = `${fuenteHTML(d)}${concHTML}
+    <div class="conc-cab"><div><strong>${esc(cuit(d.cliente))}${nombre ? ' · ' + esc(nombre) : ''}</strong> <span class="muted">${esc(L.tit)} · ${esc(mesTxt(d.periodo))} · ${mil(d.leidos)} ${L.cbtes}${d.leidos === 1 ? '' : 's'} ${ventas ? 'en Mis Comprobantes' : 'en Factorum'} · ${mil(d.excluidos)} no va${d.excluidos === 1 ? '' : 'n'}</span></div>
       <div class="acciones"><button type="button" class="ghost mini" data-accion="libRefrescar">Actualizar</button></div></div>
+    ${presentacionHTML(d)}
     <div class="kpis lib-kpis">
-      <div class="kpi"><span class="et">Comprobantes</span><span class="val">${mil(n)}</span><span class="kpi-pie">${mil(r.registros_alicuotas)} registro${r.registros_alicuotas === 1 ? '' : 's'} de alícuotas${r.notas_credito ? ` · ${r.notas_credito} nota${r.notas_credito > 1 ? 's' : ''} de crédito` : ''}</span></div>
-      <div class="kpi"><span class="et">IVA</span><span class="val">${pesos(r.iva)}</span><span class="kpi-pie">neto gravado $ ${pesos(r.neto_gravado)}</span></div>
-      <div class="kpi lib-cf"><span class="et">Crédito fiscal computable</span><span class="val">${pesos(r.credito_fiscal)}</span><span class="kpi-pie">${r.sin_credito_fiscal ? `${r.sin_credito_fiscal} sin crédito fiscal (B, C y tiques)` : 'sin prorrateo: igual al IVA'}</span></div>
+      <div class="kpi"><span class="et">${ventas ? 'Comprobantes' : L.tit === 'Importaciones' ? 'Despachos' : 'Comprobantes'}</span><span class="val">${mil(n)}</span><span class="kpi-pie">${mil(r.registros_alicuotas)} registro${r.registros_alicuotas === 1 ? '' : 's'} de alícuotas${r.notas_credito ? ` · ${r.notas_credito} nota${r.notas_credito > 1 ? 's' : ''} de crédito` : ''}${r.de_meses_anteriores ? ` · ${r.de_meses_anteriores} de meses anteriores` : ''}</span></div>
+      <div class="kpi"><span class="et">${ventas ? 'IVA débito fiscal' : 'IVA'}</span><span class="val">${pesos(r.iva)}</span><span class="kpi-pie">neto gravado $ ${pesos(r.neto_gravado)}</span></div>
+      ${kpi3}
       <div class="kpi"><span class="et">Total</span><span class="val">${pesos(r.total)}</span><span class="kpi-pie">las notas de crédito restan${extTxt ? '<br>aparte: ' + extTxt : ''}</span></div>
     </div>
+    ${anterioresHTML(d, L)}
     <div class="dos parejo lib-dos">
       <div class="card"><div class="card-cab"><h3>Por alícuota</h3><span class="muted mini-txt">en pesos</span></div>
         ${aliFilas || otros ? `<div class="tabla-scroll"><table class="t lib-ali"><thead><tr><th>Alícuota</th><th>Código</th><th class="num">Registros</th><th class="num">Neto gravado</th><th class="num">IVA</th></tr></thead>
@@ -1576,20 +1693,21 @@ function pintarLibro() {
         <p class="muted mini-txt">${d.solo_aprobados ? 'Solo lo que está bien o aprobado y sin advertencias fuertes.' : 'Todo lo que se puede exportar, con sus advertencias (los apócrifos también: miralos antes).'}</p>
         ${bajar}
         <div class="aviso-mini${hayExt ? ' mal' : ''}">${I.info}<span>${hayExt ? '<strong>Hay comprobantes en moneda extranjera.</strong> ' : ''}${esc(d.importar || '')}</span></div>
-        <p class="muted mini-txt">En el ZIP: ${esc('LIBRO_IVA_DIGITAL_COMPRAS_CBTE.txt')}, ${esc('LIBRO_IVA_DIGITAL_COMPRAS_ALICUOTAS.txt')} (ISO 8859-1, una línea por registro) y resumen.csv. En ARCA: Libro IVA Compras, «Importar archivos».</p>
+        <p class="muted mini-txt">En el ZIP: ${arch} (ISO 8859-1, una línea por registro) y resumen.csv. En ARCA: ${esc(L.arca)}. Bajarlo deja el período presentado.</p>
       </div>
     </div>
     <h3 class="lib-h">Problemas</h3>
-    ${problemasLibHTML(d)}`;
+    ${problemasLibHTML(d, L)}`;
   $$('#libro table.t').forEach(tarjetaDe);
 }
 
-function bajarLibro() {
+async function bajarLibro() {
   const d = LIB.datos;
   if (!d) return;
-  const q = new URLSearchParams({ cliente: d.cliente, periodo: d.periodo });
+  const q = new URLSearchParams({ cliente: d.cliente, periodo: d.periodo, libro: d.libro });
   if (d.solo_aprobados) q.set('solo_aprobados', '1');
-  descargar(`/api/libro-iva/archivos.zip?${q}`, `libro-iva-compras-${d.cliente}-${d.periodo}${d.solo_aprobados ? '-listos' : ''}.zip`);
+  await descargar(`/api/libro-iva/archivos.zip?${q}`, `libro-iva-${d.libro}-${d.cliente}-${d.periodo}${d.solo_aprobados ? '-listos' : ''}.zip`);
+  cargarLibro(); // ya quedó presentado
 }
 
 // Revisar desde el libro: Anterior y Siguiente recorren el grupo de problemas.
@@ -3377,6 +3495,9 @@ document.addEventListener('click', (ev) => {
     case 'libBajar': bajarLibro(); break;
     case 'libRefrescar': cargarLibro(); break;
     case 'libAbrir': abrirDesdeLibro(Number(el.dataset.id), el.dataset.grupo); break;
+    case 'libAbrirId': abrirDesdeLibro(Number(el.dataset.id), ''); break;
+    case 'libLibro': cambiarLibro(el.dataset.libro); break;
+    case 'revDespacho': marcarDespachoRev(); break;
     case 'revAnterior': if (rev) abrirRevision(rev.idx - 1); break;
     case 'revSiguiente': if (rev) abrirRevision(rev.idx + 1); break;
     case 'revCerrar': cerrarRevision(); break;

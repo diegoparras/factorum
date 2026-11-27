@@ -245,7 +245,12 @@
 
     <!-- Libro IVA Digital -->
     <section class="vista hidden" id="v-libro_iva">
-      <div class="cabecera"><div><h2>Libro IVA Digital</h2><p class="sub">Exportá las compras de un cliente en un mes con el formato de importación del Libro IVA Digital de ARCA: el archivo de comprobantes y el de alícuotas, listos para «Importar archivos» en Libro IVA Compras. Antes de bajarlos, mirá los problemas.</p></div></div>
+      <div class="cabecera"><div><h2>Libro IVA Digital</h2><p class="sub">Exportá las compras, las ventas y las importaciones de un cliente en un mes con el formato de importación del Libro IVA Digital de ARCA: el archivo de comprobantes y el de alícuotas, listos para «Importar archivos». Antes de bajarlos, mirá los problemas. Bajarlos deja el mes presentado.</p></div></div>
+      <div class="tabs lib-libros" role="tablist" id="libLibros" aria-label="Libro">
+        <button type="button" role="tab" class="on" aria-selected="true" data-accion="libLibro" data-libro="compras">Compras</button>
+        <button type="button" role="tab" aria-selected="false" data-accion="libLibro" data-libro="ventas">Ventas</button>
+        <button type="button" role="tab" aria-selected="false" data-accion="libLibro" data-libro="importaciones">Importaciones</button>
+      </div>
       <form id="fLibro" class="card conc-form">
         <div class="fila">
           <label class="medio">Cliente<select id="libCliente" required></select></label>

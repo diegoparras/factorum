@@ -176,6 +176,30 @@ func (a *Almacen) Leer(ctx context.Context, clave string) ([]byte, error) {
 	return a.Abrir(obj)
 }
 
+// borrador es un backend que sabe borrar (el disco y S3).
+type borrador interface {
+	Borrar(ctx context.Context, clave string) error
+}
+
+// Borrar saca un objeto de donde se guarda lo nuevo y del respaldo (el disco y R2): lo usa el
+// borrado definitivo de la papelera. No es error si no estaba.
+func (a *Almacen) Borrar(ctx context.Context, clave string) error {
+	b, resp := a.backends()
+	for _, x := range []Backend{b, resp} {
+		if x == nil {
+			continue
+		}
+		br, ok := x.(borrador)
+		if !ok {
+			return fmt.Errorf("el almacén %s no sabe borrar", x.Nombre())
+		}
+		if err := br.Borrar(ctx, clave); err != nil && !errors.Is(err, ErrNoExiste) {
+			return err
+		}
+	}
+	return nil
+}
+
 // ---- Disco ----
 
 // Disco guarda en un directorio, repartido en subcarpetas por los dos primeros caracteres.
@@ -284,7 +308,8 @@ func (s *S3) Traer(ctx context.Context, clave string) ([]byte, error) {
 	return b, nil
 }
 
-// Borrar saca un objeto (lo usa la prueba de la configuración de R2).
+// Borrar saca un objeto (lo usan la prueba de la configuración de R2 y el borrado definitivo de
+// la papelera). En S3, borrar lo que no está no es error.
 func (s *S3) Borrar(ctx context.Context, clave string) error {
 	return s.cli.RemoveObject(ctx, s.bucket, s.prefijo+clave, minio.RemoveObjectOptions{})
 }

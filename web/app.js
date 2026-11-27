@@ -41,12 +41,14 @@ const I = {
   retenido: svg('<path d="M20 12V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h8"/><path d="M3.5 6.5l8.5 6 8.5-6"/><path d="M17 15v5M21 15v5"/>'),
   conciliacion: svg('<path d="M4 8h13l-3-3"/><path d="M20 16H7l3 3"/><path d="M9 12h6"/>'),
   enviar: svg('<path d="M21 3L10 14"/><path d="M21 3l-7 18-4-7-7-4z"/>'),
+  papelera: svg('<path d="M4 7h16"/><path d="M9 7V4.5h6V7"/><path d="M6 7l1 13h10l1-13"/><path d="M10 11v5.5M14 11v5.5"/>'),
+  restaurar: svg('<path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3"/><path d="M4 4.5V9h4.5"/>'),
 };
 
 // Cada sección dice qué permiso hace falta para verla (el servidor lo hace cumplir igual).
 const NAV_TODO = [
   ['Trabajo', [['inicio', 'Inicio'], ['revisar', 'Revisar'], ['retenido', 'Correo retenido', 'retenido'], ['verificar', 'Verificar'], ['subir', 'Cargar facturas', 'cargar']]],
-  ['Datos', [['lotes', 'Lotes'], ['comprobantes', 'Comprobantes'], ['resumen', 'Resumen'], ['conciliacion', 'Conciliación']]],
+  ['Datos', [['lotes', 'Lotes'], ['comprobantes', 'Comprobantes'], ['resumen', 'Resumen'], ['conciliacion', 'Conciliación'], ['papelera', 'Papelera', 'papelera']]],
   ['Configuración', [['configuracion', 'Configuración', 'clientes'], ['usuarios', 'Usuarios', 'usuarios'], ['claves', 'Claves de API', 'claves'],
     ['conectar', 'Conectar'], ['auditoria', 'Auditoría', 'auditoria']]],
 ];
@@ -182,6 +184,7 @@ function ir(v) {
   if (v === 'comprobantes') cargarCbtes();
   if (v === 'resumen') cargarResumen();
   if (v === 'conciliacion') prepararConciliacion();
+  if (v === 'papelera') { papOffset = 0; PAP_SEL.clear(); cargarPapelera(); }
   if (v === 'configuracion') { cargarConfiguracion(); timerCanales = setInterval(refrescarWhatsApp, 5000); }
   if (v === 'usuarios') cargarUsuarios();
   if (v === 'claves') cargarClaves();
@@ -586,9 +589,140 @@ async function cargarLotes() {
           <td>${new Date(l.creado).toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' })}</td>
           <td><span class="prog mini-prog"><div style="width:${pct}%"></div></span> <span class="muted">${l.procesados}/${l.documentos}</span>${l.con_error ? ` <span class="est error">${l.con_error} ilegibles</span>` : ''}</td>
           <td class="num">${(c.ok || 0) + (c.aprobado || 0)}</td><td class="num">${c.revisar || 0}</td><td class="num">${c.error || 0}</td>
-          <td><button class="ghost mini" data-accion="exportarLote" data-id="${l.id}">Excel</button></td></tr>`;
+          <td class="acciones-fila">${accionesLote(l)}</td></tr>`;
       }).join('')}</tbody></table></div>`;
+    tarjetas('#tablaLotes');
   } catch (e) { toast(e, true); }
+}
+
+// Excel, Cambiar cliente (usuario o más) y Borrar (admin o más) de un lote.
+function accionesLote(l, largo) {
+  return `<button class="ghost mini" data-accion="exportarLote" data-id="${l.id}">Excel</button>
+    ${puede('cargar') ? `<button class="ghost mini" data-accion="cambiarCliente" data-id="${l.id}" title="Cambiar el cliente del lote">${largo ? 'Cambiar cliente' : 'Cliente'}</button>` : ''}
+    ${puede('borrar_lotes') ? `<button class="ghost mini peligro" data-accion="borrarLote" data-id="${l.id}" title="Mandar el lote entero a la papelera">${I.papelera}<span>${largo ? 'Borrar el lote' : 'Borrar'}</span></button>` : ''}`;
+}
+
+const nombreLote = (l) => (l.nombre || '').trim() || `lote ${l.id}`;
+// El lote recién leído (la tabla se refresca cada 3 segundos: los números pueden haber cambiado).
+async function loteDe(id) {
+  return (await api('/api/lotes/' + id)).lote;
+}
+
+// ---------- Papelera: borrar y cambiar el cliente ----------
+let PAP_DIAS = 30;
+async function pedirBorrarLote(id) {
+  let l;
+  try { l = await loteDe(id); } catch (e) { toast(e, true); return; }
+  const c = l.comprobantes || {};
+  const n = (c.ok || 0) + (c.revisar || 0) + (c.error || 0) + (c.aprobado || 0);
+  const conf = nombreLote(l);
+  abrirModal('Borrar el lote', `<p>El lote <strong>${esc(conf)}</strong>${l.cliente_cuit ? ` (cliente ${esc(cuit(l.cliente_cuit))})` : ''} se va a la papelera con sus <strong>${mil(l.documentos)} archivo(s)</strong> y <strong>${mil(n)} comprobante(s)</strong>.</p>
+    ${l.estado !== 'terminado' ? '<p class="aviso-mini">Todavía se está procesando: lo que falta se cancela. Si lo restaurás, se termina de procesar.</p>' : ''}
+    <p class="muted">Deja de aparecer en Comprobantes, Revisar, Resumen, Inicio y las exportaciones. Lo podés restaurar desde la Papelera, tal cual estaba, durante ${mil(PAP_DIAS)} días; después se borra para siempre. Si volvés a subir los mismos archivos, se procesan como nuevos.</p>
+    <label class="campo-conf"><span class="et">Para confirmar, escribí «${esc(conf)}»</span><input id="borrarLoteConf" autocomplete="off" spellcheck="false" data-esperado="${esc(conf.toLowerCase())}"></label>
+    <div class="login-err hidden" id="borrarLoteErr"></div>`,
+  { acciones: `<button type="button" class="ghost" data-accion="modalCerrar">Cancelar</button><button type="button" class="peligro" data-accion="borrarLoteConfirmar" data-id="${l.id}" disabled>Borrar el lote</button>` });
+  setTimeout(() => $('#borrarLoteConf')?.focus(), 50);
+}
+
+async function borrarLote(id, btn) {
+  btn.disabled = true;
+  try {
+    const { borrado: b } = await api('/api/lotes/' + id, { method: 'DELETE' });
+    cerrarModal();
+    toast(`El lote se fue a la papelera (${b.documentos} archivo(s), ${b.comprobantes} comprobante(s)${b.trabajos_cancelados ? '; se canceló lo que faltaba procesar' : ''}).`);
+    if (String(filtro.lote) === String(id)) filtro.lote = '';
+    actualizarPendientes();
+    if (vista === 'lotes') cargarLotes(); else if (vista === 'comprobantes') cargarCbtes(); else ir('lotes');
+  } catch (e) {
+    btn.disabled = false;
+    const er = $('#borrarLoteErr');
+    if (er) { er.textContent = e.message; er.classList.remove('hidden'); } else toast(e, true);
+  }
+}
+
+// Dígito verificador del CUIT (el mismo control que hace el servidor).
+function cuitValido(c) {
+  const d = soloDig(c);
+  if (d.length !== 11) return false;
+  const pesos = [5, 4, 3, 2, 7, 6, 5, 4, 3, 2];
+  let s = 0;
+  for (let i = 0; i < 10; i++) s += Number(d[i]) * pesos[i];
+  let v = 11 - (s % 11);
+  if (v === 11) v = 0;
+  if (v === 10) return false;
+  return v === Number(d[10]);
+}
+
+async function pedirCambiarCliente(id) {
+  let l;
+  try { l = await loteDe(id); } catch (e) { toast(e, true); return; }
+  const constatado = l.constatado || l.constatacion_pendiente;
+  abrirModal('Cambiar el cliente del lote', `<form id="fCambioCliente" class="form-modal" data-id="${l.id}">
+    <p>El lote <strong>${esc(nombreLote(l))}</strong> y todos sus comprobantes pasan al cliente nuevo. No se borra nada.</p>
+    <label>Cliente actual<input value="${esc(l.cliente_cuit ? cuit(l.cliente_cuit) : 'Sin cliente')}" disabled></label>
+    <label>CUIT del cliente nuevo<input id="clienteNuevo" required placeholder="20-12345678-9" inputmode="numeric" maxlength="13" list="misCuits" autocomplete="off"></label>
+    ${constatado ? '<p class="aviso-mini">Lo que ya se constató con ARCA usó el CUIT del cliente de antes como consultante: se vuelve a constatar con el nuevo.</p>' : ''}
+    <div class="login-err hidden" id="clienteErr"></div></form>`,
+  { acciones: '<button type="button" class="ghost" data-accion="modalCerrar">Cancelar</button><button type="submit" form="fCambioCliente">Cambiar el cliente</button>' });
+  setTimeout(() => $('#clienteNuevo')?.focus(), 50);
+}
+
+async function cambiarCliente(f) {
+  const v = $('#clienteNuevo').value.trim();
+  const er = $('#clienteErr');
+  const mal = (m) => { er.textContent = m; er.classList.remove('hidden'); };
+  if (!cuitValido(v)) { mal('Ese CUIT no es válido: revisá el dígito verificador.'); return; }
+  try {
+    const { cambio } = await api('/api/lotes/' + f.dataset.id, { method: 'PATCH', json: { cliente_cuit: soloDig(v) } });
+    cerrarModal();
+    let msg = cambio.antes === cambio.despues ? 'El lote ya era de ese cliente.' : `Listo: el lote y sus ${cambio.comprobantes} comprobante(s) son de ${cuit(cambio.despues)}.`;
+    if (cambio.reconstatar) msg += cambio.constatacion_encolada ? ` ${cambio.reconstatar} se vuelven a constatar con el CUIT nuevo.` : ` ${cambio.reconstatar} quedan para volver a constatar.`;
+    toast(msg);
+    if (vista === 'lotes') cargarLotes(); else cargarCbtes();
+  } catch (e) { mal(e.message); }
+}
+
+function pedirBorrarCbtes(ids, desdeRevision) {
+  const n = ids.length;
+  abrirModal(n === 1 ? 'Borrar el comprobante' : `Borrar ${mil(n)} comprobantes`, `<p>${n === 1 ? 'El comprobante se va' : `Los ${mil(n)} comprobantes se van`} a la papelera: dejan de aparecer en Comprobantes, Revisar, Resumen, Inicio y las exportaciones.</p>
+    <p class="muted">Si a un archivo no le queda ningún comprobante, se va con ellos (y si lo volvés a subir, se procesa como nuevo). Se puede restaurar desde la Papelera, tal cual estaba, durante ${mil(PAP_DIAS)} días.</p>`,
+  { acciones: `<button type="button" class="ghost" data-accion="modalCerrar">Cancelar</button><button type="button" class="peligro" data-accion="borrarCbtesConfirmar" data-ids="${ids.join(',')}"${desdeRevision ? ' data-rev="1"' : ''}>${n === 1 ? 'Borrar' : `Borrar (${mil(n)})`}</button>` });
+}
+
+async function borrarCbtes(btn) {
+  const ids = btn.dataset.ids.split(',').map(Number);
+  btn.disabled = true;
+  try {
+    const { borrado: b } = await api('/api/comprobantes/borrar', { method: 'POST', json: { ids } });
+    cerrarModal();
+    toast(`${b.comprobantes === 1 ? 'El comprobante se fue' : `${b.comprobantes} comprobantes se fueron`} a la papelera${b.documentos ? ` (y ${b.documentos} archivo(s) que quedaron vacíos)` : ''}.`);
+    SEL.clear();
+    actualizarPendientes();
+    if (btn.dataset.rev && rev) {
+      const sigue = rev.idx;
+      listado.splice(sigue, 1);
+      if (sigue < listado.length) abrirRevision(sigue); else cerrarRevision();
+      if (vista === 'revisar') cargarBandeja();
+      return;
+    }
+    cargarCbtes();
+  } catch (e) { btn.disabled = false; toast(e, true); }
+}
+
+// Las casillas de Comprobantes: los elegidos de la página.
+const SEL = new Set();
+function pintarSeleccion() {
+  const n = SEL.size;
+  $('#barraSel').classList.toggle('hidden', !n);
+  $('#selCuenta').textContent = n === 1 ? '1 elegido' : `${mil(n)} elegidos`;
+  $('#btnBorrarSel').textContent = `Borrar (${mil(n)})`;
+  const todos = $('#selTodos');
+  if (todos) {
+    todos.checked = n > 0 && listado.every((c) => SEL.has(c.id));
+    todos.indeterminate = n > 0 && !todos.checked;
+  }
+  $$('#tablaCbtes tbody tr').forEach((tr) => tr.classList.toggle('elegido', SEL.has(Number(tr.dataset.id))));
 }
 
 // ---------- Comprobantes ----------
@@ -618,14 +752,18 @@ function pintarFiltro() {
 async function cargarCbtes() {
   pintarFiltro();
   try {
+    pintarLoteBanner();
     const { comprobantes, total } = await api('/api/comprobantes?' + qsFiltro());
     listado = comprobantes;
+    SEL.clear();
+    pintarSeleccion();
     if (!comprobantes.length) { $('#tablaCbtes').innerHTML = vacio('doc', 'No hay comprobantes con estos filtros', 'Probá con otro estado, otras fechas o borrando la búsqueda.'); $('#pager').innerHTML = ''; return; }
-    $('#tablaCbtes').innerHTML = `<div class="tabla-scroll"><table class="t"><thead><tr><th>Fecha</th><th>Comprobante</th><th>Emisor</th><th>Rubro</th><th class="num">Neto</th><th class="num">IVA</th><th class="num">Total</th><th>Estado</th><th>Observaciones</th></tr></thead><tbody>
+    const sel = puede('borrar');
+    $('#tablaCbtes').innerHTML = `<div class="tabla-scroll"><table class="t cbtes${sel ? ' con-sel' : ''}"><thead><tr>${sel ? '<th class="sel"><label class="selbox" data-accion="nada" title="Elegir todos los de esta página"><input type="checkbox" id="selTodos" data-accion="selTodos" aria-label="Elegir todos los de esta página"></label></th>' : ''}<th>Fecha</th><th>Comprobante</th><th>Emisor</th><th>Rubro</th><th class="num">Neto</th><th class="num">IVA</th><th class="num">Total</th><th>Estado</th><th>Observaciones</th></tr></thead><tbody>
       ${comprobantes.map((c, i) => {
         const iva = ['iva_27', 'iva_21', 'iva_10_5', 'iva_5', 'iva_2_5'].reduce((s, k) => s + Number(c[k] || 0), 0);
         const obs = (c.hallazgos || []).filter((h) => h.nivel !== 'info').map((h) => h.mensaje)[0] || '';
-        return `<tr class="clic" data-accion="revisar" data-idx="${i}"><td>${fecha(c.fecha)}${c.hora ? `<div class="muted mono">${esc(c.hora.slice(0, 5))}</div>` : ''}</td><td>${esc(nombreCbte(c))} ${ticketChip(c)}</td>
+        return `<tr class="clic" data-accion="revisar" data-idx="${i}" data-id="${c.id}">${sel ? `<td class="sel"><label class="selbox" data-accion="nada"><input type="checkbox" data-accion="selCbte" data-id="${c.id}" aria-label="Elegir ${esc(nombreCbte(c))}"></label></td>` : ''}<td>${fecha(c.fecha)}${c.hora ? `<div class="muted mono">${esc(c.hora.slice(0, 5))}</div>` : ''}</td><td>${esc(nombreCbte(c))} ${ticketChip(c)}</td>
           <td>${esc(c.razon_social_emisor || '')}<div class="muted mono">${esc(cuit(c.cuit_emisor))}</div></td><td>${rubroChip(c.rubro)}</td>
           <td class="num">${pesos(c.neto_gravado)}</td><td class="num">${pesos(iva)}</td><td class="num">${pesos(c.total)}${c.moneda && c.moneda !== 'PES' ? ' ' + esc(c.moneda) : ''}</td>
           <td>${estado(c.estado)}</td><td class="muted">${esc(obs)}</td></tr>`;
@@ -635,6 +773,140 @@ async function cargarCbtes() {
       ${filtro.offset > 0 ? '<button class="ghost mini" data-accion="pagina" data-dir="-1">Anteriores</button>' : ''}
       ${hasta < total ? '<button class="ghost mini" data-accion="pagina" data-dir="1">Siguientes</button>' : ''}`;
   } catch (e) { toast(e, true); }
+}
+
+// Con el filtro de un lote: de qué lote son, con Cambiar cliente y Borrar el lote (el detalle del lote).
+async function pintarLoteBanner() {
+  const b = $('#loteBanner');
+  if (!filtro.lote) { b.innerHTML = ''; return; }
+  try {
+    const { lote: l } = await api('/api/lotes/' + filtro.lote);
+    if (String(l.id) !== String(filtro.lote)) return;
+    b.innerHTML = `<div class="lote-banner card"><div><strong>Lote ${l.id}${l.nombre ? ' · ' + esc(l.nombre) : ''}</strong><br>
+      <span class="muted">${l.cliente_cuit ? 'Cliente ' + esc(cuit(l.cliente_cuit)) : 'Sin cliente'} · ${esc(l.origen)} · ${fechaHora(l.creado)} · ${mil(l.documentos)} archivo(s)${l.estado !== 'terminado' ? ` · procesando ${l.procesados}/${l.documentos}` : ''}</span></div>
+      <div class="acciones-fila">${accionesLote(l, true)}<button type="button" class="ghost mini" data-accion="sinLote">Ver todos</button></div></div>`;
+  } catch (e) {
+    b.innerHTML = e.status === 404 ? `<div class="aviso-card">${I.info}<div>El lote ${esc(filtro.lote)} no existe o está en la <button type="button" class="link-btn" data-accion="ir" data-vista="papelera">Papelera</button>.</div><button type="button" class="ghost mini" data-accion="sinLote">Ver todos</button></div>` : '';
+  }
+}
+
+// ---------- Papelera ----------
+let papOffset = 0;
+const PAP_LIM = 100;
+let PAP = [];
+const PAP_SEL = new Set(); // "tipo:id"
+const claveItem = (it) => `${it.tipo}:${it.id}`;
+
+function quedaHTML(it) {
+  const d = it.dias_restantes;
+  const cuando = fechaCorta(it.vence);
+  if (d <= 0) return `<span class="txt-mal">Hoy</span><div class="muted">en la próxima pasada</div>`;
+  return `<span class="${d <= 3 ? 'txt-mal' : ''}">${d === 1 ? 'En 1 día' : `En ${d} días`}</span><div class="muted">${esc(cuando)}</div>`;
+}
+
+function queHTML(it) {
+  if (it.tipo === 'lote') {
+    return `<span class="tipo-pap">${I.lotes}<span>Lote entero</span></span><strong>${esc(nombreLote({ id: it.id, nombre: it.lote_nombre }))}</strong>
+      <div class="muted">${mil(it.documentos)} archivo(s), ${mil(it.comprobantes)} comprobante(s)</div>`;
+  }
+  const c = { tipo: it.cbte_tipo, punto_venta: it.punto_venta, numero: it.numero };
+  return `<span class="tipo-pap">${I.comprobantes}<span>Comprobante</span></span><strong>${esc(nombreCbte(c))}</strong>
+    <div class="muted">${esc(it.emisor || cuit(it.cuit_emisor))}${it.fecha ? ' · ' + fecha(it.fecha) : ''}${it.total ? ' · $ ' + pesos(it.total) : ''}</div>
+    <div class="muted mono">${esc(it.archivo)}</div>`;
+}
+
+async function cargarPapelera() {
+  const vaciar = puede('vaciar_papelera');
+  try {
+    const { items, total, dias } = await api(`/api/papelera?limite=${PAP_LIM}&offset=${papOffset}`);
+    PAP = items;
+    PAP_DIAS = dias;
+    $('#papeleraSub').textContent = `Lo que se borró${YO.identidad.cuits ? ' de tus clientes' : ''}. Se puede restaurar tal cual estaba (con sus estados, correcciones y constatación) durante ${dias} días; después se borra para siempre, con sus archivos.`;
+    $('#btnVaciar').classList.toggle('hidden', !vaciar || !total);
+    for (const k of [...PAP_SEL]) if (!items.some((it) => claveItem(it) === k)) PAP_SEL.delete(k);
+    pintarSelPapelera();
+    if (!items.length) {
+      $('#papelera').innerHTML = vacio('papelera', 'La papelera está vacía', 'Cuando borres un lote o comprobantes, van a aparecer acá hasta que se borren para siempre.');
+      $('#papPager').innerHTML = '';
+      return;
+    }
+    $('#papelera').innerHTML = `<div class="tabla-scroll"><table class="t pap con-sel"><thead><tr><th class="sel"><label class="selbox" data-accion="nada" title="Elegir todos los de esta página"><input type="checkbox" id="papTodos" data-accion="papTodos" aria-label="Elegir todos los de esta página"></label></th>
+      <th>Qué</th><th>Lote y cliente</th><th>Se borró</th><th>Se borra para siempre</th><th></th></tr></thead><tbody>
+      ${items.map((it) => `<tr data-clave="${claveItem(it)}"><td class="sel"><label class="selbox" data-accion="nada"><input type="checkbox" data-accion="papSel" data-clave="${claveItem(it)}" aria-label="Elegir"${PAP_SEL.has(claveItem(it)) ? ' checked' : ''}></label></td>
+        <td>${queHTML(it)}</td>
+        <td>${it.tipo === 'comprobante' ? `Lote ${it.lote_id}${it.lote_nombre ? ' · ' + esc(it.lote_nombre) : ''}${it.lote_borrado ? '<div class="aviso-mini">Su lote también está en la papelera</div>' : ''}` : `Lote ${it.id}`}
+          <div class="muted mono">${it.cliente_cuit ? esc(cuit(it.cliente_cuit)) : 'Sin cliente'}</div></td>
+        <td>${fechaHora(it.borrado_en)}<div class="muted">${esc(it.borrado_por)}</div></td>
+        <td>${quedaHTML(it)}</td>
+        <td class="acciones-fila"><button type="button" class="ghost mini" data-accion="restaurar" data-clave="${claveItem(it)}">${I.restaurar}<span>Restaurar</span></button>
+          ${vaciar ? `<button type="button" class="ghost mini peligro" data-accion="borrarYa" data-clave="${claveItem(it)}">Borrar ya</button>` : ''}</td></tr>`).join('')}</tbody></table></div>`;
+    tarjetas('#papelera');
+    pintarSelPapelera();
+    const hasta = papOffset + items.length;
+    $('#papPager').innerHTML = `<span>${papOffset + 1} a ${hasta} de ${total}</span>
+      ${papOffset > 0 ? '<button class="ghost mini" data-accion="papPagina" data-dir="-1">Anteriores</button>' : ''}
+      ${hasta < total ? '<button class="ghost mini" data-accion="papPagina" data-dir="1">Siguientes</button>' : ''}`;
+  } catch (e) { toast(e, true); }
+}
+
+function pintarSelPapelera() {
+  const n = PAP_SEL.size;
+  $('#barraPap').classList.toggle('hidden', !n);
+  $('#papCuenta').textContent = n === 1 ? '1 elegido' : `${mil(n)} elegidos`;
+  $('#btnRestaurarSel').textContent = `Restaurar (${mil(n)})`;
+  $('#btnBorrarYaSel').textContent = `Borrar ya (${mil(n)})`;
+  $('#btnBorrarYaSel').classList.toggle('hidden', !puede('vaciar_papelera'));
+  const todos = $('#papTodos');
+  if (todos) {
+    todos.checked = n > 0 && PAP.every((it) => PAP_SEL.has(claveItem(it)));
+    todos.indeterminate = n > 0 && !todos.checked;
+  }
+  $$('#papelera tbody tr').forEach((tr) => tr.classList.toggle('elegido', PAP_SEL.has(tr.dataset.clave)));
+}
+
+const refDe = (k) => { const [tipo, id] = k.split(':'); return { tipo, id: Number(id) }; };
+
+async function restaurar(claves, btn) {
+  if (btn) btn.disabled = true;
+  try {
+    const r = await api('/api/papelera/restaurar', { method: 'POST', json: { items: claves.map(refDe) } });
+    PAP_SEL.clear();
+    if (r.rechazados.length) {
+      abrirModal('Algunas cosas no se pudieron restaurar', `<p>Se restauraron ${mil(r.restaurados)}. Estas no:</p><ul>${r.rechazados.map((x) => `<li><strong>${x.tipo === 'lote' ? 'Lote' : 'Comprobante'} ${x.id}</strong>: ${esc(x.error)}</li>`).join('')}</ul>`);
+    } else toast(r.restaurados === 1 ? 'Restaurado: volvió como estaba.' : `Restaurados ${r.restaurados}: volvieron como estaban.`);
+    actualizarPendientes();
+  } catch (e) {
+    if (e.status === 409 || e.status === 404) abrirModal('No se pudo restaurar', `<p>${esc(e.message)}</p>`);
+    else toast(e, true);
+  }
+  if (btn) btn.disabled = false;
+  cargarPapelera();
+}
+
+function pedirBorrarYa(claves) {
+  const todo = !claves;
+  const n = todo ? 0 : claves.length;
+  const titulo = todo ? 'Vaciar la papelera' : n === 1 ? 'Borrar para siempre' : `Borrar para siempre ${mil(n)} cosas`;
+  abrirModal(titulo, `<p>${todo ? 'Todo lo que está en la papelera' : n === 1 ? 'Esto' : 'Lo elegido'} se borra <strong>para siempre</strong>, con sus correcciones y los archivos que no use ningún otro lote. No se puede deshacer.</p>
+    <label class="campo-conf"><span class="et">Para confirmar, escribí «borrar»</span><input id="borrarYaConf" autocomplete="off" spellcheck="false"></label>
+    <div class="login-err hidden" id="borrarYaErr"></div>`,
+  { acciones: `<button type="button" class="ghost" data-accion="modalCerrar">Cancelar</button><button type="button" class="peligro" data-accion="borrarYaConfirmar"${todo ? '' : ` data-claves="${claves.join(',')}"`} disabled>${todo ? 'Vaciar la papelera' : 'Borrar para siempre'}</button>` });
+  setTimeout(() => $('#borrarYaConf')?.focus(), 50);
+}
+
+async function borrarYa(btn) {
+  btn.disabled = true;
+  const confirmacion = $('#borrarYaConf').value.trim();
+  try {
+    const r = btn.dataset.claves
+      ? await api('/api/papelera/borrar', { method: 'POST', json: { items: btn.dataset.claves.split(',').map(refDe), confirmacion } })
+      : await api('/api/papelera', { method: 'DELETE', json: { confirmacion } });
+    const b = r.borrado;
+    cerrarModal();
+    PAP_SEL.clear();
+    toast(`Borrado para siempre: ${b.lotes ? `${b.lotes} lote(s), ` : ''}${b.comprobantes} comprobante(s) y ${b.archivos} archivo(s).`);
+    cargarPapelera();
+  } catch (e) { btn.disabled = false; const er = $('#borrarYaErr'); er.textContent = e.message; er.classList.remove('hidden'); }
 }
 
 async function descargar(ruta, nombre) {
@@ -706,6 +978,7 @@ async function abrirRevision(idx) {
     $('#revDoc').innerHTML = '<p class="muted" style="padding:16px">Cargando el archivo...</p>';
     const pag = (c.paginas || [1])[0];
     const b = await api(`/api/documentos/${c.documento_id}/pagina/${pag}`, { binario: true });
+    if (!rev || rev.cbte.id !== c.id) return; // se cerró o se pasó a otro mientras cargaba
     rev.url = URL.createObjectURL(b);
     $('#revDoc').innerHTML = `<div class="rev-doc-barra"><span class="muted">${esc(c.archivo)}${(c.paginas || []).length ? ', página ' + pag : ''}</span>
       <button class="ghost mini" data-accion="abrirOriginal" data-doc="${c.documento_id}">Abrir el original</button></div>
@@ -1359,6 +1632,10 @@ const SECCIONES = {
       'La copia es lógica y portable: no depende de la versión de Postgres. Se abre solo con la misma FACTORUM_MASTER_KEY: guardala fuera del servidor.',
       'Bajá de vez en cuando una copia con «Descargar» y guardala en otro lado.',
       'Restaurar se hace por consola (borra lo que hay en la base): mirá «Cómo restaurar», abajo de la lista.'] },
+  papelera: { t: 'Papelera', d: 'Cuánto tiempo queda lo que se borra antes de borrarse para siempre.', clave: ['papelera.dias'],
+    como: ['Borrar un lote (desde Lotes) o comprobantes sueltos (desde Comprobantes o la revisión) no borra nada de verdad: lo manda a la Papelera, donde se puede restaurar tal cual estaba.',
+      'Pasados estos días (de 1 a 365), Factorum lo borra para siempre, con sus correcciones y los archivos del disco y de R2 que no use ningún otro lote. Lo revisa una vez por hora.',
+      'Un superadmin puede vaciar la papelera o borrar algo ya, escribiendo «borrar».'] },
   clientes: { t: 'Clientes y canales', d: 'Qué cliente es cada remitente de chat o de mail: lo que mande se carga para ese CUIT.', clave: ['clientes.canales'],
     como: ['Una línea por remitente: el número de WhatsApp (con código de país), el id de Telegram, el chat del webhook, un email o @dominio, un igual y el CUIT del cliente.',
       'Ejemplos: 5491155550000 = 20-22222222-3, juan@cliente.com.ar = 30-71111111-1, @cliente.com.ar = 30-71111111-1.',
@@ -2220,6 +2497,9 @@ const ACCIONES = {
   'r2.migrar_fin': 'Terminó el pase a R2', 'r2.liberar_inicio': 'Pidió liberar el disco', 'r2.liberar_fin': 'Se liberó el disco',
   'copia.ok': 'Copia de la base hecha', 'copia.error': 'Falló la copia de la base', 'copia.pedir': 'Pidió una copia de la base',
   'copia.descargar': 'Descargó una copia de la base', 'copia.restaurar': 'Restauró una copia de la base',
+  'lote.borrar': 'Mandó un lote a la papelera', 'comprobante.borrar': 'Mandó comprobantes a la papelera', 'lote.cambiar_cliente': 'Cambió el cliente de un lote',
+  'papelera.restaurar': 'Restauró de la papelera', 'papelera.vaciar': 'Vació la papelera', 'papelera.borrar_ya': 'Borró para siempre de la papelera',
+  'papelera.purgar': 'Borrado definitivo de lo vencido',
 };
 let audOffset = 0;
 const AUD_LIM = 50;
@@ -2242,7 +2522,7 @@ async function cargarAuditoria() {
     const sel = $('#audAccion');
     const elegida = sel.value;
     const grupos = [...new Set(acciones.map((a) => a.split('.')[0] + '.'))].filter((g) => acciones.filter((a) => a.startsWith(g)).length > 1);
-    sel.innerHTML = '<option value="">Todas las acciones</option>' + grupos.map((g) => `<option value="${g}">${esc({ 'sesion.': 'Entradas y salidas', 'usuario.': 'Personas', 'clave.': 'Claves de API', 'config.': 'Configuración', 'comprobante.': 'Comprobantes', 'suite.': 'Suite', 'r2.': 'Almacenamiento R2', 'copia.': 'Copias de la base' }[g] || g)} (todas)</option>`).join('')
+    sel.innerHTML = '<option value="">Todas las acciones</option>' + grupos.map((g) => `<option value="${g}">${esc({ 'sesion.': 'Entradas y salidas', 'usuario.': 'Personas', 'clave.': 'Claves de API', 'config.': 'Configuración', 'comprobante.': 'Comprobantes', 'suite.': 'Suite', 'r2.': 'Almacenamiento R2', 'copia.': 'Copias de la base', 'lote.': 'Lotes', 'papelera.': 'Papelera' }[g] || g)} (todas)</option>`).join('')
       + acciones.map((a) => `<option value="${esc(a)}">${esc(ACCIONES[a] || a)}</option>`).join('');
     sel.value = elegida;
     if (!eventos.length) { $('#auditoria').innerHTML = vacio('auditoria', 'No hay movimientos con estos filtros', 'Probá con otras fechas o sacando la persona.'); $('#audPager').innerHTML = ''; return; }
@@ -2360,6 +2640,37 @@ document.addEventListener('click', (ev) => {
     case 'revGuardar': guardarRevision(false); break;
     case 'revAprobar': guardarRevision(true); break;
     case 'revConstatar': constatarRevision(); break;
+    case 'revBorrar': if (rev) pedirBorrarCbtes([rev.cbte.id], true); break;
+    // Papelera: borrar lotes y comprobantes, cambiar el cliente, restaurar y borrar para siempre.
+    case 'borrarLote': pedirBorrarLote(el.dataset.id); break;
+    case 'borrarLoteConfirmar': borrarLote(el.dataset.id, el); break;
+    case 'cambiarCliente': pedirCambiarCliente(el.dataset.id); break;
+    case 'sinLote': Object.assign(filtro, { lote: '', offset: 0 }); cargarCbtes(); break;
+    case 'selCbte': if (el.checked) SEL.add(Number(el.dataset.id)); else SEL.delete(Number(el.dataset.id)); pintarSeleccion(); break;
+    case 'selTodos':
+      SEL.clear();
+      if (el.checked) listado.forEach((c) => SEL.add(c.id));
+      $$('#tablaCbtes input[data-accion="selCbte"]').forEach((i) => { i.checked = el.checked; });
+      pintarSeleccion();
+      break;
+    case 'selNinguno': SEL.clear(); $$('#tablaCbtes input[data-accion="selCbte"]').forEach((i) => { i.checked = false; }); pintarSeleccion(); break;
+    case 'borrarElegidos': if (SEL.size) pedirBorrarCbtes([...SEL]); break;
+    case 'borrarCbtesConfirmar': borrarCbtes(el); break;
+    case 'papSel': if (el.checked) PAP_SEL.add(el.dataset.clave); else PAP_SEL.delete(el.dataset.clave); pintarSelPapelera(); break;
+    case 'papTodos':
+      PAP_SEL.clear();
+      if (el.checked) PAP.forEach((it) => PAP_SEL.add(claveItem(it)));
+      $$('#papelera input[data-accion="papSel"]').forEach((i) => { i.checked = el.checked; });
+      pintarSelPapelera();
+      break;
+    case 'papNinguno': PAP_SEL.clear(); $$('#papelera input[data-accion="papSel"]').forEach((i) => { i.checked = false; }); pintarSelPapelera(); break;
+    case 'papPagina': papOffset = Math.max(0, papOffset + Number(el.dataset.dir) * PAP_LIM); PAP_SEL.clear(); cargarPapelera(); break;
+    case 'restaurar': restaurar([el.dataset.clave], el); break;
+    case 'restaurarElegidos': if (PAP_SEL.size) restaurar([...PAP_SEL], el); break;
+    case 'borrarYa': pedirBorrarYa([el.dataset.clave]); break;
+    case 'borrarYaElegidos': if (PAP_SEL.size) pedirBorrarYa([...PAP_SEL]); break;
+    case 'vaciarPapelera': pedirBorrarYa(null); break;
+    case 'borrarYaConfirmar': borrarYa(el); break;
     case 'desvincularWa':
       if (confirm('¿Desvincular WhatsApp? Vas a tener que escanear el código otra vez.')) api('/api/canales/whatsapp/desvincular', { method: 'POST' }).then(refrescarWhatsApp).catch((e) => toast(e, true));
       break;
@@ -2376,6 +2687,7 @@ document.addEventListener('submit', (ev) => {
   else if (f.id === 'fClaveMia') { ev.preventDefault(); cambiarMiClave(); }
   else if (f.id === 'fUsuario') { ev.preventDefault(); guardarUsuario(f); }
   else if (f.id === 'fClave') { ev.preventDefault(); crearClave(); }
+  else if (f.id === 'fCambioCliente') { ev.preventDefault(); cambiarCliente(f); }
   else if (f.id === 'fAuditoria') { ev.preventDefault(); audOffset = 0; cargarAuditoria(); }
   else if (f.id === 'fVerificar') verificar(ev);
   else if (f.id === 'fSubir') subir(ev);
@@ -2402,12 +2714,15 @@ document.addEventListener('change', (ev) => {
 
 document.addEventListener('input', (ev) => {
   if (ev.target.id === 'liberarConf') { const b = $('[data-accion="liberarConfirmar"]'); if (b) b.disabled = ev.target.value.trim().toLowerCase() !== 'liberar'; }
+  if (ev.target.id === 'borrarLoteConf') { const b = $('[data-accion="borrarLoteConfirmar"]'); if (b) b.disabled = ev.target.value.trim().toLowerCase() !== ev.target.dataset.esperado; }
+  if (ev.target.id === 'borrarYaConf') { const b = $('[data-accion="borrarYaConfirmar"]'); if (b) b.disabled = ev.target.value.trim().toLowerCase() !== 'borrar'; }
   if (ev.target.closest('#revForm')) ev.target.classList.toggle('cambiado', ev.target.value !== ev.target.dataset.orig);
   if (ev.target.id === idCampo('correo.token')) actualizarUrlsCorreo();
 });
 
 document.addEventListener('keydown', (ev) => {
   if (ev.key === 'Escape' && !$('#modal').classList.contains('hidden')) { cerrarModal(); return; }
+  if (!$('#modal').classList.contains('hidden')) return; // con una ventana abierta, el teclado es de la ventana
   if (ev.key === 'Escape') { $('#menu').classList.add('hidden'); $('#suiteMenu').classList.add('hidden'); }
   if (!rev || $('#revision').classList.contains('hidden')) return;
   if (ev.key === 'Escape') cerrarRevision();

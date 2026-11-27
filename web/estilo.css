@@ -530,3 +530,31 @@ table.t tr.fila-alarma td:first-child { box-shadow:3px 0 0 var(--err) inset; }
   .conc-barra .tabs button { flex:1 1 auto; padding:7px 8px; }
   .atajos { width:100%; }
 }
+
+/* ---- Papelera ---- */
+table.t th.sel, table.t td.sel { width:36px; padding-right:0; }
+.selbox { display:inline-flex; align-items:center; justify-content:center; width:28px; height:28px; margin:-5px 0 -5px -6px; border-radius:8px; cursor:pointer; }
+.selbox:hover { background:var(--accent-suave); }
+.selbox input { width:16px; height:16px; margin:0; accent-color:var(--accent); cursor:pointer; }
+table.t tbody tr.elegido { background:var(--accent-suave); }
+.barra-sel { position:sticky; bottom:12px; z-index:20; display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-top:12px; padding:10px 14px;
+  background:var(--panel); border:1px solid color-mix(in srgb, var(--accent) 40%, var(--border)); border-radius:var(--radius-lg); box-shadow:var(--shadow); }
+.barra-sel > span:first-child { font-weight:600; }
+.barra-sel .sp { flex:1; }
+.lote-banner { flex-direction:row; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px 16px; padding:12px 16px; margin-bottom:12px; }
+.lote-banner .acciones-fila { display:flex; gap:6px; flex-wrap:wrap; white-space:normal; }
+.tipo-pap { display:flex; align-items:center; gap:5px; font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); margin-bottom:2px; }
+.tipo-pap svg { width:14px; height:14px; }
+table.pap .aviso-mini { margin-top:6px; padding:4px 8px; font-size:12px; }
+button.mini.peligro svg { width:14px; height:14px; }
+@media (max-width: 760px) {
+  table.t.tarjetas td.sel { position:absolute; right:8px; top:8px; width:auto; padding:0; }
+  table.t.tarjetas tr { position:relative; }
+  .barra-sel { bottom:8px; }
+  .barra-sel > button { flex:1 1 auto; }
+  .barra-sel .sp { display:none; }
+}
+@media (max-width: 760px) {
+  table.t.tarjetas td.num { text-align:left; }
+  table.t.pap.tarjetas td:nth-child(2)::before { display:none; }
+}

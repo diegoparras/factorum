@@ -33,26 +33,26 @@ type DiaPanel struct {
 }
 
 // Panel arma los números de la pantalla de inicio. Los días van en hora argentina. alcance: los CUITs
-// de cliente que puede ver quien pide (nil = todos).
+// de cliente que puede ver quien pide (nil = todos). Lo de la papelera no cuenta.
 func (s *Store) Panel(ctx context.Context, ahora time.Time, alcance []string) (*Panel, error) {
 	p := &Panel{PorEstado: map[string]int{"ok": 0, "revisar": 0, "error": 0, "aprobado": 0}, PorDia: []DiaPanel{}, Lotes: []Lote{}}
 	const tz = `'America/Argentina/Buenos_Aires'`
 	q := s.Pool.QueryRow(ctx, `SELECT
-		(SELECT count(*) FROM documentos WHERE ($3::text[] IS NULL OR lote_id IN (SELECT id FROM lotes WHERE cliente_cuit = ANY($3))) AND (creado AT TIME ZONE `+tz+`)::date = ($1 AT TIME ZONE `+tz+`)::date),
-		(SELECT count(*) FROM comprobantes WHERE ($3::text[] IS NULL OR cliente_cuit = ANY($3)) AND (creado AT TIME ZONE `+tz+`)::date = ($1 AT TIME ZONE `+tz+`)::date),
-		(SELECT count(*) FROM documentos WHERE ($3::text[] IS NULL OR lote_id IN (SELECT id FROM lotes WHERE cliente_cuit = ANY($3))) AND date_trunc('month', creado AT TIME ZONE `+tz+`) = date_trunc('month', $1 AT TIME ZONE `+tz+`)),
-		(SELECT count(*) FROM comprobantes WHERE ($3::text[] IS NULL OR cliente_cuit = ANY($3)) AND date_trunc('month', creado AT TIME ZONE `+tz+`) = date_trunc('month', $1 AT TIME ZONE `+tz+`)),
-		(SELECT count(*) FROM comprobantes WHERE ($3::text[] IS NULL OR cliente_cuit = ANY($3)) AND hallazgos @> '[{"codigo":"emisor_apocrifo"}]'),
-		(SELECT count(*) FROM comprobantes WHERE ($3::text[] IS NULL OR cliente_cuit = ANY($3)) AND hallazgos @> '[{"codigo":"qr_distinto_texto"}]'),
-		(SELECT count(*) FROM comprobantes WHERE ($3::text[] IS NULL OR cliente_cuit = ANY($3)) AND datos->'origenes' @> '{}' AND EXISTS (SELECT 1 FROM jsonb_each_text(datos->'origenes') o WHERE o.value = 'vision')),
-		(SELECT count(*) FROM comprobantes WHERE ($3::text[] IS NULL OR cliente_cuit = ANY($3))),
-		(SELECT coalesce(avg(duracion_ms), 0) FROM documentos WHERE ($3::text[] IS NULL OR lote_id IN (SELECT id FROM lotes WHERE cliente_cuit = ANY($3))) AND estado = 'listo'),
-		(SELECT count(*) FROM comprobantes WHERE ($3::text[] IS NULL OR cliente_cuit = ANY($3)) AND tipo = ANY($2::int[]) AND date_trunc('month', creado AT TIME ZONE `+tz+`) = date_trunc('month', $1 AT TIME ZONE `+tz+`))`, ahora, codigosTique(), alcance)
+		(SELECT count(*) FROM documentos WHERE borrado_en IS NULL AND ($3::text[] IS NULL OR lote_id IN (SELECT id FROM lotes WHERE cliente_cuit = ANY($3))) AND (creado AT TIME ZONE `+tz+`)::date = ($1 AT TIME ZONE `+tz+`)::date),
+		(SELECT count(*) FROM comprobantes WHERE borrado_en IS NULL AND ($3::text[] IS NULL OR cliente_cuit = ANY($3)) AND (creado AT TIME ZONE `+tz+`)::date = ($1 AT TIME ZONE `+tz+`)::date),
+		(SELECT count(*) FROM documentos WHERE borrado_en IS NULL AND ($3::text[] IS NULL OR lote_id IN (SELECT id FROM lotes WHERE cliente_cuit = ANY($3))) AND date_trunc('month', creado AT TIME ZONE `+tz+`) = date_trunc('month', $1 AT TIME ZONE `+tz+`)),
+		(SELECT count(*) FROM comprobantes WHERE borrado_en IS NULL AND ($3::text[] IS NULL OR cliente_cuit = ANY($3)) AND date_trunc('month', creado AT TIME ZONE `+tz+`) = date_trunc('month', $1 AT TIME ZONE `+tz+`)),
+		(SELECT count(*) FROM comprobantes WHERE borrado_en IS NULL AND ($3::text[] IS NULL OR cliente_cuit = ANY($3)) AND hallazgos @> '[{"codigo":"emisor_apocrifo"}]'),
+		(SELECT count(*) FROM comprobantes WHERE borrado_en IS NULL AND ($3::text[] IS NULL OR cliente_cuit = ANY($3)) AND hallazgos @> '[{"codigo":"qr_distinto_texto"}]'),
+		(SELECT count(*) FROM comprobantes WHERE borrado_en IS NULL AND ($3::text[] IS NULL OR cliente_cuit = ANY($3)) AND datos->'origenes' @> '{}' AND EXISTS (SELECT 1 FROM jsonb_each_text(datos->'origenes') o WHERE o.value = 'vision')),
+		(SELECT count(*) FROM comprobantes WHERE borrado_en IS NULL AND ($3::text[] IS NULL OR cliente_cuit = ANY($3))),
+		(SELECT coalesce(avg(duracion_ms), 0) FROM documentos WHERE borrado_en IS NULL AND ($3::text[] IS NULL OR lote_id IN (SELECT id FROM lotes WHERE cliente_cuit = ANY($3))) AND estado = 'listo'),
+		(SELECT count(*) FROM comprobantes WHERE borrado_en IS NULL AND ($3::text[] IS NULL OR cliente_cuit = ANY($3)) AND tipo = ANY($2::int[]) AND date_trunc('month', creado AT TIME ZONE `+tz+`) = date_trunc('month', $1 AT TIME ZONE `+tz+`))`, ahora, codigosTique(), alcance)
 	if err := q.Scan(&p.Hoy.Documentos, &p.Hoy.Comprobantes, &p.Mes.Documentos, &p.Mes.Comprobantes,
 		&p.Apocrifos, &p.Adulterados, &p.ConIA, &p.Total, &p.DuracionMS, &p.TicketsMes); err != nil {
 		return nil, err
 	}
-	rows, err := s.Pool.Query(ctx, `SELECT estado, count(*) FROM comprobantes WHERE ($1::text[] IS NULL OR cliente_cuit = ANY($1)) GROUP BY estado`, alcance)
+	rows, err := s.Pool.Query(ctx, `SELECT estado, count(*) FROM comprobantes WHERE borrado_en IS NULL AND ($1::text[] IS NULL OR cliente_cuit = ANY($1)) GROUP BY estado`, alcance)
 	if err != nil {
 		return nil, err
 	}
@@ -73,7 +73,7 @@ func (s *Store) Panel(ctx context.Context, ahora time.Time, alcance []string) (*
 			count(c.id) FILTER (WHERE c.estado = 'revisar'),
 			count(c.id) FILTER (WHERE c.estado = 'error')
 		FROM generate_series(($1 AT TIME ZONE `+tz+`)::date - 13, ($1 AT TIME ZONE `+tz+`)::date, interval '1 day') d
-		LEFT JOIN comprobantes c ON (c.creado AT TIME ZONE `+tz+`)::date = d::date AND ($2::text[] IS NULL OR c.cliente_cuit = ANY($2))
+		LEFT JOIN comprobantes c ON (c.creado AT TIME ZONE `+tz+`)::date = d::date AND c.borrado_en IS NULL AND ($2::text[] IS NULL OR c.cliente_cuit = ANY($2))
 		GROUP BY d ORDER BY d`, ahora, alcance)
 	if err != nil {
 		return nil, err

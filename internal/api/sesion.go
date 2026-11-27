@@ -255,7 +255,13 @@ func permisos(id *auth.Identidad) map[string]bool {
 		"clientes":      id.Rol >= auth.Admin,
 		"retenido":      id.Rol >= auth.Admin,
 		"configuracion": id.Rol >= auth.Superadmin,
-		"sin_clientes":  id.CUITs != nil && len(id.CUITs) == 0,
+		// La papelera: borrar comprobantes y restaurar, usuario o más; borrar lotes, admin o más;
+		// el borrado definitivo a mano, superadmin con sesión.
+		"borrar":          id.Rol >= auth.Usuario,
+		"borrar_lotes":    id.Rol >= auth.Admin,
+		"papelera":        id.Rol >= auth.Usuario,
+		"vaciar_papelera": id.Rol >= auth.Superadmin && id.Tipo == auth.TipoSesion,
+		"sin_clientes":    id.CUITs != nil && len(id.CUITs) == 0,
 	}
 }
 

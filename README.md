@@ -186,6 +186,7 @@ Si una variable de configuración está puesta, **gana**: en la pantalla el camp
 | `FACTORUM_IA_POR_DEFECTO`, `FACTORUM_CONSTATAR_POR_DEFECTO` | Lo que viene marcado al cargar |
 | `FACTORUM_R2_*` | R2 o cualquier S3. Sin esto, guarda en disco (`/data`) |
 | `FACTORUM_COPIAS`, `FACTORUM_COPIAS_HORA`, `FACTORUM_COPIAS_DIARIAS`, `FACTORUM_COPIAS_MENSUALES` | Copia diaria de la base (por defecto sí, a las 03:30, 14 diarias y 12 mensuales) |
+| `FACTORUM_PAPELERA_DIAS` | Días que queda lo borrado en la papelera antes del borrado definitivo (1 a 365, por defecto 30) |
 | `LLM_API_BASE_URL`, `LLM_MODEL`, `LLM_API_KEY` | Modelo de visión compatible con OpenAI (Ollama, LM Studio, vLLM...) |
 | `ARCANUM_URL`, `ARCANUM_URL_PUBLICA`, `ARCANUM_API_KEY`, `ARCANUM_CUIT_CONSULTANTE` | Constatación, apócrifos, padrón y el pase de la suite |
 | `FACTORUM_TELEGRAM_TOKEN`, `FACTORUM_TELEGRAM_PERMITIDOS` | Bot de Telegram |
@@ -196,6 +197,22 @@ Si una variable de configuración está puesta, **gana**: en la pantalla el camp
 | `FACTORUM_SMTP_*` | Correo saliente |
 | `FACTORUM_AVISO_*` | Avisos por mail |
 | `FACTORUM_WORKERS` | Documentos en paralelo (por defecto, los núcleos) |
+
+## Borrar lo que se cargó mal: la papelera
+
+¿Cargaste un lote al cliente equivocado o subiste lo que no era? Nada se borra de golpe:
+
+- **Un lote entero** (admin o superadmin): en **Lotes** (o arriba de sus comprobantes), «Borrar». Para confirmar hay que escribir el nombre del lote (o «lote 12» si no tiene). Si todavía se está procesando, lo que falta se cancela.
+- **Comprobantes sueltos** (usuario o más, de sus clientes): en **Comprobantes**, marcá las casillas (o «elegir todos los de esta página») y tocá «Borrar (N)»; o «Borrar» en la revisión de uno. Si a un archivo no le queda ningún comprobante, se va con ellos.
+- **Si solo le erraste al cliente**, no hace falta borrar: «Cambiar cliente» en el lote pasa el lote y sus comprobantes al CUIT correcto (con el dígito verificador controlado). Lo que ya se había constatado con ARCA usando el CUIT del cliente viejo como consultante se vuelve a constatar con el nuevo.
+
+Todo va a la **Papelera** (menú Datos): ahí se ve qué se borró, cuándo, quién, de qué lote y cliente, y cuántos días faltan para que se borre para siempre. **Restaurar** lo deja tal cual estaba, con sus estados, correcciones y constatación (lo que había quedado sin procesar se termina de procesar). Mientras está en la papelera no aparece en Comprobantes, Revisar, Resumen, Inicio, las exportaciones, MCP, los chats ni los avisos por mail.
+
+- **Volver a subir** lo que está en la papelera funciona: no cuenta como repetido y se procesa como nuevo. Después no se puede restaurar el viejo (quedarían dos iguales): primero hay que borrar el nuevo.
+- **Para siempre:** a los 30 días (Configuración, **Papelera**, de 1 a 365; o `FACTORUM_PAPELERA_DIAS`) Factorum lo borra de verdad, junto con los archivos del disco y de R2 que no use ningún otro lote (el mismo PDF subido dos veces es un solo archivo y se queda mientras alguien lo use). Lo revisa cada hora; mientras corre el pase a R2, los archivos esperan. Un superadmin puede **Vaciar la papelera** o **Borrar ya** algo, escribiendo «borrar» (con la sesión; una clave de API no puede).
+- Todo queda en la auditoría: quién borró, restauró, vació o cambió el cliente, y el borrado automático.
+
+Las copias de seguridad de la base llevan lo que está en la papelera: al restaurar una, vuelve a estar en la papelera con su fecha. Ojo: si la copia es de antes de un borrado definitivo, esas filas vuelven pero sus archivos ya no están.
 
 ## Almacenamiento en R2 y copias de seguridad
 
@@ -255,9 +272,9 @@ También hay `factorum copia`, que hace una copia en el momento (por ejemplo, an
 | Rol | Puede |
 |---|---|
 | `lectura` | Mirar: listados, resumen, exportar y verificar sin guardar |
-| `usuario` | Además cargar, revisar, corregir, constatar y aprobar |
-| `admin` | Además personas (hasta admin), claves de API, los clientes de los canales y la auditoría |
-| `superadmin` | Todo, incluida la configuración y los otros superadmin |
+| `usuario` | Además cargar, revisar, corregir, constatar y aprobar; borrar comprobantes, cambiar el cliente de un lote y restaurar de la papelera |
+| `admin` | Además borrar lotes enteros, personas (hasta admin), claves de API, los clientes de los canales y la auditoría |
+| `superadmin` | Todo, incluida la configuración, los otros superadmin y vaciar la papelera |
 
 - **Alcance por cliente.** A cada persona y a cada clave se le pueden asignar CUITs de cliente: solo ve y carga lo de esos clientes (en la pantalla, la API y MCP). Vacío = todos.
 - **Contraseñas** con argon2id, de 10 caracteres o más. Al crear a alguien o restablecerle la contraseña, Factorum genera una temporal que se muestra una sola vez y que obliga a cambiarla al entrar. Después de cinco intentos fallidos hay que esperar, cada vez más.

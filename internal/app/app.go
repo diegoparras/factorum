@@ -98,6 +98,9 @@ func (ProcesarArgs) Kind() string { return "procesar_documento" }
 
 type ConstatarArgs struct {
 	LoteID int64 `json:"lote_id"`
+	// Comprobantes, si viene, limita a esos (se cambió el cliente de un lote que no se constata
+	// entero: se vuelven a constatar solo los que ya se habían constatado).
+	Comprobantes []int64 `json:"comprobantes,omitempty"`
 }
 
 func (ConstatarArgs) Kind() string { return "constatar_lote" }
@@ -128,7 +131,7 @@ type constatarWorker struct {
 
 func (w *constatarWorker) Timeout(*river.Job[ConstatarArgs]) time.Duration { return 30 * time.Minute }
 func (w *constatarWorker) Work(ctx context.Context, j *river.Job[ConstatarArgs]) error {
-	return w.a.constatarLote(ctx, j.Args.LoteID)
+	return w.a.constatarLote(ctx, j.Args.LoteID, j.Args.Comprobantes)
 }
 
 type notificarWorker struct {
@@ -159,12 +162,18 @@ func (a *App) IniciarCola(ctx context.Context) error {
 	river.AddWorker(ws, &notificarWorker{a: a})
 	river.AddWorker(ws, &avisoCorreoWorker{a: a})
 	river.AddWorker(ws, &semanalWorker{a: a})
+	river.AddWorker(ws, &purgarWorker{a: a})
 	if a.Trabajos != nil {
 		a.Trabajos(ws)
 	}
 	a.River, err = river.NewClient(drv, &river.Config{
-		PeriodicJobs: []*river.PeriodicJob{river.NewPeriodicJob(river.PeriodicInterval(15*time.Minute),
-			func() (river.JobArgs, *river.InsertOpts) { return SemanalArgs{}, nil }, &river.PeriodicJobOpts{ID: "resumen_semanal", RunOnStart: true})},
+		PeriodicJobs: []*river.PeriodicJob{
+			river.NewPeriodicJob(river.PeriodicInterval(15*time.Minute),
+				func() (river.JobArgs, *river.InsertOpts) { return SemanalArgs{}, nil }, &river.PeriodicJobOpts{ID: "resumen_semanal", RunOnStart: true}),
+			// El borrado definitivo de lo vencido en la papelera.
+			river.NewPeriodicJob(river.PeriodicInterval(time.Hour),
+				func() (river.JobArgs, *river.InsertOpts) { return PurgarArgs{}, nil }, &river.PeriodicJobOpts{ID: "purgar_papelera", RunOnStart: true}),
+		},
 		Queues: map[string]river.QueueConfig{
 			river.QueueDefault: {MaxWorkers: a.Config().Workers},
 			"arcanum":          {MaxWorkers: 1}, // WSCDC no es para ráfagas
@@ -321,17 +330,32 @@ func (a *App) CrearLote(ctx context.Context, n store.LoteNuevo, archivos []Archi
 		sha string
 	}
 	var gs []guardado
+	var shas []string
 	for _, f := range ok {
 		s := sha256.Sum256(f.Datos)
-		sha := hex.EncodeToString(s[:])
-		if _, err := a.Almacen.Guardar(ctx, "originales/"+sha, f.Datos); err != nil {
-			return nil, fmt.Errorf("no se pudo guardar %s: %w", f.Nombre, err)
+		gs = append(gs, guardado{f, hex.EncodeToString(s[:])})
+		shas = append(shas, gs[len(gs)-1].sha)
+	}
+	// El candado de cada archivo, compartido, desde antes de guardarlo hasta que su documento queda en
+	// la base: así el borrado definitivo de la papelera no puede borrar del almacén un archivo que se
+	// está volviendo a subir (si ya lo borró, Guardar lo vuelve a poner).
+	conn, err := a.Store.Pool.Acquire(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Release()
+	if _, err := conn.Exec(ctx, `SELECT pg_advisory_lock_shared($1, hashtext(x)) FROM unnest($2::text[]) x`, store.CandadoArchivo, shas); err != nil {
+		return nil, err
+	}
+	defer func() { _, _ = conn.Exec(context.WithoutCancel(ctx), `SELECT pg_advisory_unlock_all()`) }()
+	for _, g := range gs {
+		if _, err := a.Almacen.Guardar(ctx, "originales/"+g.sha, g.f.Datos); err != nil {
+			return nil, fmt.Errorf("no se pudo guardar %s: %w", g.f.Nombre, err)
 		}
-		gs = append(gs, guardado{f, sha})
 	}
 	res := &ResultadoLote{Recibidos: len(gs), Descartados: desc}
 	var loteID int64
-	err := pgx.BeginFunc(ctx, a.Store.Pool, func(tx pgx.Tx) error {
+	err = pgx.BeginFunc(ctx, conn, func(tx pgx.Tx) error {
 		var err error
 		if ventana > 0 && n.Canal != "" && n.Chat != "" {
 			loteID, err = a.Store.LoteAbiertoDeChat(ctx, tx, n.Canal, n.Chat, ventana)
@@ -411,7 +435,10 @@ func (a *App) procesar(ctx context.Context, docID int64, ultimoIntento bool) err
 			a.Log.Warn("no se pudo guardar el resultado en el almacén", "documento", docID, "error", err)
 		}
 	}
-	if _, err := a.Store.GuardarResultado(ctx, doc, lote.ClienteCUIT, &r); err != nil {
+	if _, err := a.Store.GuardarResultado(ctx, doc, &r); err != nil {
+		if errors.Is(err, store.ErrNoEncontrado) {
+			return nil // se fue a la papelera mientras se leía: si se restaura, se vuelve a procesar
+		}
 		return err
 	}
 	a.verificarFinDeLote(ctx, doc.LoteID)
@@ -566,7 +593,8 @@ func hallazgosConstatacion(k *arcanum.Constatacion) []modelo.Hallazgo {
 	return nil
 }
 
-var codigosConstatacion = map[string]bool{"emisor_apocrifo": true, "apoc_controlado": true, "constatacion_rechazada": true, "constatado": true, "constatacion_fallo": true}
+var codigosConstatacion = map[string]bool{"emisor_apocrifo": true, "apoc_controlado": true, "constatacion_rechazada": true, "constatado": true, "constatacion_fallo": true,
+	codigoReconstatar: true}
 
 // aplicarConstatacion guarda el resultado en el comprobante y recalcula el estado.
 func (a *App) aplicarConstatacion(ctx context.Context, c *store.Cbte, k *arcanum.Constatacion) error {
@@ -587,22 +615,31 @@ func (a *App) aplicarConstatacion(ctx context.Context, c *store.Cbte, k *arcanum
 	return a.Store.ActualizarCbte(ctx, c, nil, "")
 }
 
-func (a *App) constatarLote(ctx context.Context, loteID int64) error {
+func (a *App) constatarLote(ctx context.Context, loteID int64, solo []int64) error {
 	arc := a.Arcanum()
 	if arc == nil {
 		return nil
 	}
 	l, err := a.Store.Lote(ctx, loteID)
+	if errors.Is(err, store.ErrNoEncontrado) {
+		return nil // se fue a la papelera
+	}
 	if err != nil {
 		return err
 	}
 	for {
-		cbs, err := a.Store.SinConstatar(ctx, loteID, 100)
+		cbs, err := a.Store.SinConstatar(ctx, loteID, solo, 100)
 		if err != nil {
 			return err
 		}
 		if len(cbs) == 0 {
 			break
+		}
+		// El cliente se lee en cada tanda: si alguien lo cambió, se constata con el nuevo.
+		if l, err = a.Store.Lote(ctx, loteID); errors.Is(err, store.ErrNoEncontrado) {
+			return nil
+		} else if err != nil {
+			return err
 		}
 		ptrs := make([]*modelo.Comprobante, len(cbs))
 		for i := range cbs {
@@ -616,8 +653,16 @@ func (a *App) constatarLote(ctx context.Context, loteID int64) error {
 		if err != nil {
 			return err // la cola reintenta con espera creciente
 		}
+		// Si mientras se constataba se borró el lote o le cambiaron el cliente, esta tanda no vale.
+		if ahora, err := a.Store.Lote(ctx, loteID); errors.Is(err, store.ErrNoEncontrado) {
+			return nil
+		} else if err != nil {
+			return err
+		} else if ahora.ClienteCUIT != l.ClienteCUIT {
+			continue
+		}
 		for i := range cbs {
-			if err := a.aplicarConstatacion(ctx, &cbs[i], &ks[i]); err != nil {
+			if err := a.aplicarConstatacion(ctx, &cbs[i], &ks[i]); err != nil && !errors.Is(err, store.ErrNoEncontrado) {
 				return err
 			}
 		}

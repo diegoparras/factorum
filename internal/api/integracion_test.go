@@ -64,6 +64,13 @@ var recibidosLlamadas atomic.Int32
 // paseArcanum guarda el último pedido de pase que recibió el Arcanum falso.
 var paseArcanum atomic.Value
 
+// consultantesArcanum son los CUITs con certificado del Arcanum falso; consultantesVistos, con
+// cuáles se constató (para cambiar el cliente de un lote).
+var (
+	consultantesArcanum = map[string]bool{"20222222223": true, "20333333334": true}
+	consultantesVistos  sync.Map
+)
+
 // arcanumFalso: el emisor 20123456786 es apócrifo; el resto, válido. El padrón conoce a todos.
 func arcanumFalso(t *testing.T, llamadas *atomic.Int32) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -102,8 +109,11 @@ func arcanumFalso(t *testing.T, llamadas *atomic.Int32) *httptest.Server {
 				Items []map[string]any `json:"items"`
 			}
 			_ = json.NewDecoder(r.Body).Decode(&b)
-			if b.Cuit != "20222222223" {
+			if !consultantesArcanum[b.Cuit] {
 				t.Errorf("consultante %q", b.Cuit)
+			}
+			for _, it := range b.Items {
+				consultantesVistos.Store(fmt.Sprintf("%v-%v-%v", it["tipoComprobante"], it["puntoVenta"], it["numero"]), b.Cuit)
 			}
 			var res []map[string]any
 			for _, it := range b.Items {
@@ -135,7 +145,7 @@ func arcanumFalso(t *testing.T, llamadas *atomic.Int32) *httptest.Server {
 			_ = json.NewEncoder(w).Encode(cuerpo)
 		case strings.HasPrefix(r.URL.Path, "/api/apoc/"):
 			apocLlamadas.Add(1)
-			if r.URL.Query().Get("cuit") != "20222222223" {
+			if !consultantesArcanum[r.URL.Query().Get("cuit")] {
 				t.Errorf("consultante de apócrifos %q", r.URL.Query().Get("cuit"))
 			}
 			cuit := strings.TrimPrefix(r.URL.Path, "/api/apoc/")

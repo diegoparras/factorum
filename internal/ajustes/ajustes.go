@@ -105,7 +105,7 @@ func campo(clave, seccion, etiqueta string, tipo Tipo, env, ayuda, ejemplo strin
 }
 
 // Secciones, en el orden de la pantalla.
-var Secciones = []string{"general", "arcanum", "lockatus", "telegram", "whatsapp", "webhook", "correo_entrada", "correo_salida", "avisos", "ia", "r2", "copias", "clientes"}
+var Secciones = []string{"general", "arcanum", "lockatus", "telegram", "whatsapp", "webhook", "correo_entrada", "correo_salida", "avisos", "ia", "r2", "copias", "papelera", "clientes"}
 
 // Campos es todo lo que se configura desde la pantalla.
 var Campos = func() []Campo {
@@ -178,6 +178,12 @@ var Campos = func() []Campo {
 	g, s = entero(func(c *config.Config) *int { return &c.CopiasMensuales })
 	d = campo("copias.mensuales", "copias", "Mensuales que se guardan", Entero, "FACTORUM_COPIAS_MENSUALES", "Además, la primera copia de cada uno de los últimos meses.", "12", g, s)
 	d.Max = 120
+	add(d)
+
+	g, s = entero(func(c *config.Config) *int { return &c.PapeleraDias })
+	d = campo("papelera.dias", "papelera", "Días antes de borrar", Entero, "FACTORUM_PAPELERA_DIAS",
+		"Lo que se borra (un lote entero o comprobantes sueltos) queda en la Papelera, donde se puede restaurar como estaba. Pasados estos días, se borra para siempre, con sus archivos.", "30", g, s)
+	d.Min, d.Max = 1, 365
 	add(d)
 
 	add(campo("clientes.canales", "clientes", "Remitente y CUIT del cliente", Clientes, "FACTORUM_CANAL_CLIENTES",

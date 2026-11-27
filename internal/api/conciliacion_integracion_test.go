@@ -126,6 +126,25 @@ func TestConciliacionPuntaAPunta(t *testing.T) {
 		t.Fatalf("refrescar: %v, llamadas %d", m["de_cache"], recibidosLlamadas.Load())
 	}
 
+	// Lo que está en la papelera no cuenta: la que coincidía pasa a «Falta cargar».
+	st, _, raw = e.pedir(t, "POST", "/api/comprobantes/borrar", claveOp, strings.NewReader(fmt.Sprintf(`{"ids":[%v]}`, fa["id"])), "application/json")
+	if st != 200 {
+		t.Fatalf("borrar: %d %s", st, raw)
+	}
+	_, m, _ = e.pedir(t, "GET", ruta, claveLect, nil, "")
+	grupos = m["resultado"].(map[string]any)["grupos"].(map[string]any)
+	if co, fc := lista("coinciden"), lista("falta_cargar"); len(co) != 0 || len(fc) != 2 {
+		t.Fatalf("con la factura en la papelera: coinciden %v, falta cargar %v", co, fc)
+	}
+	if st, _, raw := e.pedir(t, "POST", "/api/papelera/restaurar", claveOp, strings.NewReader(fmt.Sprintf(`{"items":[{"tipo":"comprobante","id":%v}]}`, fa["id"])), "application/json"); st != 200 {
+		t.Fatalf("restaurar: %d %s", st, raw)
+	}
+	_, m, _ = e.pedir(t, "GET", ruta, claveLect, nil, "")
+	grupos = m["resultado"].(map[string]any)["grupos"].(map[string]any)
+	if co := lista("coinciden"); len(co) != 1 {
+		t.Fatalf("restaurada, vuelve a coincidir: %v", co)
+	}
+
 	// Validaciones.
 	for q, want := range map[string]int{
 		"desde=" + desde + "&hasta=" + hasta:                        400, // sin cliente, con una clave que ve todos

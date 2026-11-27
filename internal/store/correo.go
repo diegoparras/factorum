@@ -297,15 +297,15 @@ type ClientePeriodo struct {
 }
 
 // Periodo cuenta lo cargado entre desde y hasta, y lo pendiente de revisar (de cualquier fecha),
-// con el alcance de quien lo va a recibir (nil = todos).
+// con el alcance de quien lo va a recibir (nil = todos). Lo de la papelera no cuenta.
 func (s *Store) Periodo(ctx context.Context, desde, hasta time.Time, alcance []string) (*ResumenPeriodo, error) {
 	r := &ResumenPeriodo{PorEstado: map[string]int{}}
-	if err := s.Pool.QueryRow(ctx, `SELECT count(*) FROM lotes WHERE creado >= $1 AND creado < $2 AND ($3::text[] IS NULL OR cliente_cuit = ANY($3))`,
+	if err := s.Pool.QueryRow(ctx, `SELECT count(*) FROM lotes WHERE borrado_en IS NULL AND creado >= $1 AND creado < $2 AND ($3::text[] IS NULL OR cliente_cuit = ANY($3))`,
 		desde, hasta, alcance).Scan(&r.Lotes); err != nil {
 		return nil, err
 	}
 	rows, err := s.Pool.Query(ctx, `SELECT estado, count(*), count(*) FILTER (WHERE hallazgos @> '[{"codigo":"emisor_apocrifo"}]') FROM comprobantes
-		WHERE creado >= $1 AND creado < $2 AND ($3::text[] IS NULL OR cliente_cuit = ANY($3)) GROUP BY estado`, desde, hasta, alcance)
+		WHERE borrado_en IS NULL AND creado >= $1 AND creado < $2 AND ($3::text[] IS NULL OR cliente_cuit = ANY($3)) GROUP BY estado`, desde, hasta, alcance)
 	if err != nil {
 		return nil, err
 	}
@@ -320,12 +320,12 @@ func (s *Store) Periodo(ctx context.Context, desde, hasta time.Time, alcance []s
 		r.Apocrifos += a
 	}
 	rows.Close()
-	if err := s.Pool.QueryRow(ctx, `SELECT count(*) FROM comprobantes WHERE estado IN ('revisar','error') AND ($1::text[] IS NULL OR cliente_cuit = ANY($1))`,
+	if err := s.Pool.QueryRow(ctx, `SELECT count(*) FROM comprobantes WHERE borrado_en IS NULL AND estado IN ('revisar','error') AND ($1::text[] IS NULL OR cliente_cuit = ANY($1))`,
 		alcance).Scan(&r.Pendientes); err != nil {
 		return nil, err
 	}
 	rows, err = s.Pool.Query(ctx, `SELECT cliente_cuit, count(*) FILTER (WHERE creado >= $1 AND creado < $2), count(*) FILTER (WHERE estado IN ('revisar','error'))
-		FROM comprobantes WHERE ($3::text[] IS NULL OR cliente_cuit = ANY($3)) AND ((creado >= $1 AND creado < $2) OR estado IN ('revisar','error'))
+		FROM comprobantes WHERE borrado_en IS NULL AND ($3::text[] IS NULL OR cliente_cuit = ANY($3)) AND ((creado >= $1 AND creado < $2) OR estado IN ('revisar','error'))
 		GROUP BY cliente_cuit ORDER BY 2 DESC, 3 DESC LIMIT 30`, desde, hasta, alcance)
 	if err != nil {
 		return nil, err

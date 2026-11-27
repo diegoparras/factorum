@@ -62,6 +62,9 @@ type Config struct {
 	CopiasDiarias   int    // cuántas diarias se guardan
 	CopiasMensuales int    // y cuántas mensuales (la primera de cada mes)
 
+	// Papelera: cuántos días queda lo borrado antes del borrado definitivo (1 a 365).
+	PapeleraDias int
+
 	// Arcanum.
 	ArcanumURL         string // interna (http://arcanum:8094)
 	ArcanumURLPublica  string // la que ve el navegador, para el pase entre apps
@@ -223,6 +226,8 @@ func Leer() (*Config, error) {
 		CopiasDiarias:   envInt("FACTORUM_COPIAS_DIARIAS", 14),
 		CopiasMensuales: envInt("FACTORUM_COPIAS_MENSUALES", 12),
 
+		PapeleraDias: envInt("FACTORUM_PAPELERA_DIAS", DiasPapelera),
+
 		ArcanumURL:         strings.TrimRight(env("ARCANUM_URL", ""), "/"),
 		ArcanumURLPublica:  strings.TrimRight(env("ARCANUM_URL_PUBLICA", ""), "/"),
 		ArcanumAPIKey:      env("ARCANUM_API_KEY", ""),
@@ -306,6 +311,17 @@ func Leer() (*Config, error) {
 	return c, nil
 }
 
+// DiasPapelera son los días que queda lo borrado en la papelera si no se configura otra cosa.
+const DiasPapelera = 30
+
+// DiasDePapelera son los días vigentes (una configuración armada a mano, sin el campo, usa 30).
+func (c *Config) DiasDePapelera() int {
+	if c.PapeleraDias < 1 {
+		return DiasPapelera
+	}
+	return min(c.PapeleraDias, 365)
+}
+
 // Validar controla que la configuración tenga sentido (sirve para el arranque y para lo que se
 // guarda desde la pantalla).
 func (c *Config) Validar() error {
@@ -323,6 +339,9 @@ func (c *Config) Validar() error {
 	}
 	if c.CopiasMensuales < 0 || c.CopiasMensuales > 120 {
 		return fmt.Errorf("las copias mensuales que se guardan tienen que ser entre 0 y 120")
+	}
+	if c.PapeleraDias < 0 || c.PapeleraDias > 365 { // 0: la de siempre (30)
+		return fmt.Errorf("los días de la papelera tienen que ser entre 1 y 365")
 	}
 	if c.LLMBaseURL != "" && c.LLMModelo == "" {
 		return fmt.Errorf("con la URL del modelo de visión hace falta el modelo (por ejemplo qwen2.5vl:7b)")

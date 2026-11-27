@@ -687,7 +687,19 @@ func (s *Server) resumen(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) canales(w http.ResponseWriter, r *http.Request) {
-	jsonOK(w, http.StatusOK, map[string]any{"canales": s.App.Canales()})
+	jsonOK(w, http.StatusOK, map[string]any{"canales": s.canalesPara(IdentidadDe(r.Context()))})
+}
+
+// canalesPara: el QR de vinculación de WhatsApp lo ve solo un superadmin (con él se vincula un
+// teléfono a este servidor).
+func (s *Server) canalesPara(id *auth.Identidad) []canal.Estado {
+	cs := s.App.Canales()
+	if id == nil || id.Rol < auth.Superadmin {
+		for i := range cs {
+			cs[i].QR = ""
+		}
+	}
+	return cs
 }
 
 type vinculable interface {

@@ -50,7 +50,7 @@ func (s *Server) responderConfiguracion(w http.ResponseWriter, r *http.Request, 
 		}
 	}
 	cfg := s.App.Config()
-	res := map[string]any{"campos": campos, "secciones": secs, "canales": s.App.Canales(), "url_publica": cfg.URLPublica}
+	res := map[string]any{"campos": campos, "secciones": secs, "canales": s.canalesPara(id), "url_publica": cfg.URLPublica}
 	if cfg.URLPublica != "" {
 		res["webhook_entrada"] = cfg.URLPublica + "/api/canales/webhook"
 	}

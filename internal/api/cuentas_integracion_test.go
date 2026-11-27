@@ -306,6 +306,9 @@ func TestArranqueSesionesYUsuarios(t *testing.T) {
 	if st, _ := lec.pedir("GET", "/api/auditoria", nil); st != 403 {
 		t.Errorf("lectura ve la auditoría: %d", st)
 	}
+	if st, _ := lec.pedir("GET", "/api/canales/whatsapp/qr.png", nil); st != 403 {
+		t.Errorf("lectura ve el QR de WhatsApp: %d", st)
+	}
 
 	// --- Auditoría: entradas, fallidas (sin la contraseña), usuarios, configuración ---
 	st, m, raw := sup.pedirCrudo("GET", "/api/auditoria?limite=200", nil)

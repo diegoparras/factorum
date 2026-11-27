@@ -81,11 +81,12 @@
           <span class="zona-btn">Elegir archivo</span>
           <span class="zona-ayuda">PDF o foto (JPG, PNG)</span>
         </label>
-        <div class="fila">
-          <label>CUIT consultante (opcional)<input id="cuitConsultante" placeholder="El cliente con certificado en Arcanum" inputmode="numeric"></label>
+        <div class="fila pie-form">
+          <label class="corto" title="El cliente con certificado en Arcanum">CUIT consultante (opcional)<input id="cuitConsultante" placeholder="20-12345678-9" inputmode="numeric" maxlength="13"></label>
           <label class="chk"><input type="checkbox" id="iaVerificar" checked> Usar IA si hace falta</label>
+          <span class="sp"></span>
+          <button type="submit">Verificar</button>
         </div>
-        <button type="submit">Verificar</button>
       </form>
       <div id="resVerificar"></div>
     </section>
@@ -103,14 +104,15 @@
           <span class="zona-ayuda">PDFs, fotos o un ZIP. Pueden ser cientos.</span>
         </label>
         <div class="fila">
-          <label>Nombre del lote<input id="loteNombre" placeholder="Ej.: Compras noviembre"></label>
-          <label>CUIT del cliente<input id="loteCliente" placeholder="Opcional" inputmode="numeric"></label>
+          <label class="medio">Nombre del lote<input id="loteNombre" placeholder="Ej.: Compras noviembre"></label>
+          <label class="corto">CUIT del cliente (opcional)<input id="loteCliente" placeholder="20-12345678-9" inputmode="numeric" maxlength="13"></label>
         </div>
-        <div class="fila">
+        <div class="fila pie-form">
           <label class="chk"><input type="checkbox" id="loteIA" checked> Usar IA si hace falta</label>
           <label class="chk"><input type="checkbox" id="loteConstatar" checked> Constatar con ARCA al terminar</label>
+          <span class="sp"></span>
+          <button type="submit">Cargar</button>
         </div>
-        <button type="submit">Cargar</button>
         <div class="prog hidden" id="progSubir"><div></div></div>
       </form>
     </section>

@@ -133,7 +133,10 @@ func duracion(seg int64) string {
 
 // lineaPase es el avance en una línea.
 func lineaPase(e *mudanza.Estado) string {
-	if e.Estado == mudanza.Liberando || e.Estado == mudanza.Liberada {
+	if e.Estado == mudanza.Liberada {
+		return fmt.Sprintf("Disco liberado: %d objetos (%s) están solo en R2.", e.Liberados.Objetos, tamano(e.Liberados.Bytes))
+	}
+	if e.Estado == mudanza.Liberando {
 		return fmt.Sprintf("Liberando el disco: %d de %d objetos borrados del disco (%s), %d por borrar.",
 			e.Liberados.Objetos, e.Liberados.Objetos+e.ParaLiberar.Objetos, tamano(e.Liberados.Bytes), e.ParaLiberar.Objetos)
 	}

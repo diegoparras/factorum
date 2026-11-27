@@ -1,0 +1,2 @@
+# Los golden files del Libro IVA Digital van en ISO 8859-1 con CRLF: git no los toca.
+internal/libroiva/testdata/*.golden -text

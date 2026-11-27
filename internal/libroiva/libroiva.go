@@ -595,6 +595,8 @@ func Generar(es []Entrada, o Opciones) (*Resultado, error) {
 			return g[i].e.ID < g[j].e.ID
 		})
 		for _, a := range g[1:] {
+			// La copia que sobra solo se informa como duplicada: lo demás ya se ve en la que va.
+			a.probs = nil
 			a.add("duplicado", "Es el mismo que el %d, que es el que va.", g[0].e.ID)
 		}
 	}

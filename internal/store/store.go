@@ -604,6 +604,25 @@ func (s *Store) DelCliente(ctx context.Context, cliente, desde, hasta string, to
 	return res, sinFecha, err
 }
 
+// SinFechaDelCliente trae los comprobantes de un cliente que no tienen fecha (no caen en ningún
+// período), hasta tope.
+func (s *Store) SinFechaDelCliente(ctx context.Context, cliente string, tope int) ([]Cbte, error) {
+	rows, err := s.Pool.Query(ctx, selCbte+` WHERE c.cliente_cuit=$1 AND c.borrado_en IS NULL AND c.fecha IS NULL ORDER BY c.id LIMIT $2`, cliente, tope)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	res := []Cbte{}
+	for rows.Next() {
+		c, err := scanCbte(rows)
+		if err != nil {
+			return nil, err
+		}
+		res = append(res, *c)
+	}
+	return res, rows.Err()
+}
+
 // ClienteConComprobantes es un CUIT de cliente con algo cargado: cuántos comprobantes tiene y el
 // nombre con el que figura como receptor (el que más se repite).
 type ClienteConComprobantes struct {

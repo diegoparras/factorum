@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/diegoparras/factorum/internal/arca"
@@ -26,6 +27,9 @@ type Vision struct {
 	Modelo  string
 	Timeout time.Duration
 	HTTP    *http.Client
+
+	// sinTemperatura: el modelo rechazó temperature 0 y se le pide sin ella.
+	sinTemperatura atomic.Bool
 }
 
 // Local indica si el modelo corre en la misma red (no manda datos afuera). Se usa para avisar.
@@ -137,40 +141,32 @@ func (v *Vision) Extraer(ctx context.Context, imagen []byte, mime string, texto 
 			"json_schema": map[string]any{"name": "comprobante", "strict": true, "schema": esquemaVision},
 		},
 	}
-	b, _ := json.Marshal(cuerpo)
 	timeout := v.Timeout
 	if timeout <= 0 {
 		timeout = 180 * time.Second
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(v.BaseURL, "/")+"/chat/completions", bytes.NewReader(b))
+	if v.sinTemperatura.Load() {
+		delete(cuerpo, "temperature")
+	}
+	status, crudo, err := v.pedir(ctx, cuerpo, timeout)
+	// Algunos modelos (los de razonamiento de OpenAI, por ejemplo) solo aceptan la temperatura por
+	// defecto y rechazan el pedido con 400: se repite sin ella y se recuerda para los que siguen.
+	if err == nil && status == http.StatusBadRequest && cuerpo["temperature"] != nil && strings.Contains(strings.ToLower(string(crudo)), "temperature") {
+		v.sinTemperatura.Store(true)
+		delete(cuerpo, "temperature")
+		status, crudo, err = v.pedir(ctx, cuerpo, timeout)
+	}
 	if err != nil {
 		return modelo.Comprobante{}, err
 	}
-	req.Header.Set("Content-Type", "application/json")
-	if v.APIKey != "" {
-		req.Header.Set("Authorization", "Bearer "+v.APIKey)
-	}
-	cli := v.HTTP
-	if cli == nil {
-		cli = http.DefaultClient
-	}
-	res, err := cli.Do(req)
-	if err != nil {
-		if ctx.Err() != nil {
-			return modelo.Comprobante{}, fmt.Errorf("el modelo %s no respondió en %s", v.Modelo, timeout)
-		}
-		return modelo.Comprobante{}, fmt.Errorf("no se pudo hablar con el modelo: %w", err)
-	}
-	defer res.Body.Close()
-	crudo, _ := io.ReadAll(io.LimitReader(res.Body, 4<<20))
-	if res.StatusCode >= 300 {
+	if status >= 300 {
 		msg := string(crudo)
 		if len(msg) > 300 {
 			msg = msg[:300]
 		}
-		return modelo.Comprobante{}, fmt.Errorf("el modelo respondió %d: %s", res.StatusCode, msg)
+		return modelo.Comprobante{}, fmt.Errorf("el modelo respondió %d: %s", status, msg)
 	}
 	var cr struct {
 		Choices []struct {
@@ -183,6 +179,33 @@ func (v *Vision) Extraer(ctx context.Context, imagen []byte, mime string, texto 
 		return modelo.Comprobante{}, errors.New("respuesta del modelo sin contenido")
 	}
 	return desdeRespuesta(cr.Choices[0].Message.Content)
+}
+
+// pedir manda un pedido al endpoint de chat y devuelve el código y el cuerpo de la respuesta.
+func (v *Vision) pedir(ctx context.Context, cuerpo map[string]any, timeout time.Duration) (int, []byte, error) {
+	b, _ := json.Marshal(cuerpo)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(v.BaseURL, "/")+"/chat/completions", bytes.NewReader(b))
+	if err != nil {
+		return 0, nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if v.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+v.APIKey)
+	}
+	cli := v.HTTP
+	if cli == nil {
+		cli = http.DefaultClient
+	}
+	res, err := cli.Do(req)
+	if err != nil {
+		if ctx.Err() != nil {
+			return 0, nil, fmt.Errorf("el modelo %s no respondió en %s", v.Modelo, timeout)
+		}
+		return 0, nil, fmt.Errorf("no se pudo hablar con el modelo: %w", err)
+	}
+	defer res.Body.Close()
+	crudo, _ := io.ReadAll(io.LimitReader(res.Body, 4<<20))
+	return res.StatusCode, crudo, nil
 }
 
 func desdeRespuesta(s string) (modelo.Comprobante, error) {

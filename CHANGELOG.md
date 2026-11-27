@@ -2,6 +2,12 @@
 
 Cada versión publicada tiene su sección. La imagen Docker toma la versión de la primera.
 
+## [0.7.1] - 2026-11-27
+
+### Arreglos
+
+- La IA (visión) anda con los modelos nuevos de OpenAI, como gpt-6-luna, que solo aceptan la temperatura por defecto. Antes Factorum les pedía temperatura 0 y respondían error siempre; ahora, si el modelo la rechaza, Factorum repite el pedido sin ella y lo recuerda para los siguientes.
+
 ## [0.7.0] - 2026-11-27
 
 ### Borrar lo que se cargó mal

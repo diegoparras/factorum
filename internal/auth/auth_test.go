@@ -128,3 +128,20 @@ func TestCupo(t *testing.T) {
 		t.Fatal("pasada la hora, vuelve a haber lugar")
 	}
 }
+
+func TestRolDeLockatus(t *testing.T) {
+	casos := []struct {
+		claim any
+		rol   Rol
+	}{
+		{"superadmin", Superadmin}, {"Admin", Admin}, {"operador", Usuario}, {"usuario", Usuario}, {"editor", Usuario},
+		{"lectura", Lectura}, {"lector", Lectura}, {"readonly", Lectura},
+		{"lectura admin", Admin}, {"lector,operador", Usuario}, {[]any{"lector", "superadmin"}, Superadmin}, {[]string{"lectura"}, Lectura},
+		{"administrador", Ninguno}, {"no-admin", Ninguno}, {"", Ninguno}, {nil, Ninguno}, {42.0, Ninguno}, {[]any{1.0, "jefa"}, Ninguno},
+	}
+	for _, c := range casos {
+		if r := RolDeLockatus(c.claim); r != c.rol {
+			t.Errorf("RolDeLockatus(%#v) = %s, quería %s", c.claim, r, c.rol)
+		}
+	}
+}

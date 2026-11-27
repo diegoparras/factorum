@@ -72,6 +72,19 @@ type Config struct {
 	// Suite: si una persona que no existe llega con un pase desde otra app, se la crea.
 	SuiteCrearUsuarios bool
 
+	// Lockatus (u otro proveedor OIDC): inicio de sesión único.
+	OIDCEmisor         string // el issuer (https://lockatus.estudio.com.ar)
+	OIDCClienteID      string
+	OIDCClienteSecreto string
+	OIDCScope          string // vacío = "openid profile email"
+	OIDCClaimRol       string // vacío = "role"
+	OIDCRolPorDefecto  string // para quien no trae un rol conocido; vacío = lectura
+	OIDCCrearUsuarios  bool   // crear la cuenta de quien entra por primera vez
+	OIDCSolo           bool   // solo se entra con Lockatus (el servidor rechaza el login local)
+	// LoginLocal es la salida de emergencia (FACTORUM_LOGIN_LOCAL=1, solo por el entorno): con
+	// «Solo se entra con Lockatus» activo, igual deja entrar con email y contraseña.
+	LoginLocal bool
+
 	// Canales.
 	TelegramToken      string
 	TelegramPermitidos []string // ids de usuario o chat; vacío = nadie
@@ -183,6 +196,15 @@ func Leer() (*Config, error) {
 
 		ConstatarPorDefecto: envBool("FACTORUM_CONSTATAR_POR_DEFECTO", true),
 		SuiteCrearUsuarios:  envBool("FACTORUM_SUITE_CREAR_USUARIOS", true),
+		OIDCEmisor:          strings.TrimRight(env("FACTORUM_OIDC_ISSUER", ""), "/"),
+		OIDCClienteID:       env("FACTORUM_OIDC_CLIENT_ID", ""),
+		OIDCClienteSecreto:  env("FACTORUM_OIDC_CLIENT_SECRET", ""),
+		OIDCScope:           env("FACTORUM_OIDC_SCOPE", "openid profile email"),
+		OIDCClaimRol:        env("FACTORUM_OIDC_ROLE_CLAIM", "role"),
+		OIDCRolPorDefecto:   strings.ToLower(env("FACTORUM_OIDC_DEFAULT_ROLE", "lectura")),
+		OIDCCrearUsuarios:   envBool("FACTORUM_OIDC_CREAR_USUARIOS", true),
+		OIDCSolo:            envBool("FACTORUM_OIDC_SOLO", false),
+		LoginLocal:          envBool("FACTORUM_LOGIN_LOCAL", false),
 		LLMBaseURL:          env("LLM_API_BASE_URL", ""),
 		LLMAPIKey:           env("LLM_API_KEY", ""),
 		LLMModelo:           env("LLM_MODEL", ""),
@@ -305,8 +327,82 @@ func (c *Config) Validar() error {
 	if c.LLMBaseURL != "" && c.LLMModelo == "" {
 		return fmt.Errorf("con la URL del modelo de visión hace falta el modelo (por ejemplo qwen2.5vl:7b)")
 	}
+	if err := c.validarOIDC(); err != nil {
+		return err
+	}
 	return c.validarCorreo()
 }
+
+// validarOIDC controla lo de Lockatus. Un vacío es «el de fábrica».
+func (c *Config) validarOIDC() error {
+	switch {
+	case !uno(c.OIDCRolPorDefecto, "lectura", "usuario", "admin", "superadmin"):
+		return fmt.Errorf("el rol por defecto de Lockatus tiene que ser lectura, usuario, admin o superadmin")
+	case !claimValido(c.OIDCClaimRol):
+		return fmt.Errorf("el claim del rol tiene que ser un nombre como role o realm_access.roles")
+	case strings.ContainsAny(c.OIDCScope, "\"\\<>"):
+		return fmt.Errorf("el scope de Lockatus tiene que ser una lista de palabras separadas por espacios")
+	case c.OIDCSolo && !c.OIDCConfigurado():
+		return fmt.Errorf("para que solo se entre con Lockatus hacen falta el emisor, el client ID y el client secret")
+	}
+	return nil
+}
+
+func claimValido(s string) bool {
+	if len(s) > 100 {
+		return false
+	}
+	for _, r := range s {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("._-:/", r)) {
+			return false
+		}
+	}
+	return true
+}
+
+// OIDCConfigurado dice si están los datos de Lockatus (emisor, client ID y secret).
+func (c *Config) OIDCConfigurado() bool {
+	return c.OIDCEmisor != "" && c.OIDCClienteID != "" && c.OIDCClienteSecreto != ""
+}
+
+// OIDCListo dice si se puede entrar con Lockatus: los datos y la URL pública (a la que vuelve).
+func (c *Config) OIDCListo() bool { return c.OIDCConfigurado() && c.URLPublica != "" }
+
+// OIDCRedirect es la dirección a la que Lockatus vuelve con el código.
+func (c *Config) OIDCRedirect() string {
+	if c.URLPublica == "" {
+		return ""
+	}
+	return strings.TrimRight(c.URLPublica, "/") + "/api/auth/oidc/callback"
+}
+
+// OIDCScopes son los scopes que se piden (siempre con openid).
+func (c *Config) OIDCScopes() []string {
+	l := strings.Fields(c.OIDCScope)
+	if len(l) == 0 {
+		l = []string{"openid", "profile", "email"}
+	}
+	hay := false
+	for _, x := range l {
+		hay = hay || x == "openid"
+	}
+	if !hay {
+		l = append([]string{"openid"}, l...)
+	}
+	return l
+}
+
+// OIDCClaim es el claim del que sale el rol ("role" si no se dijo).
+func (c *Config) OIDCClaim() string {
+	if c.OIDCClaimRol == "" {
+		return "role"
+	}
+	return c.OIDCClaimRol
+}
+
+// SoloLockatus dice si el servidor rechaza el login con email y contraseña: «Solo se entra con
+// Lockatus» activo, Lockatus listo y sin la salida de emergencia (FACTORUM_LOGIN_LOCAL=1).
+func (c *Config) SoloLockatus() bool { return c.OIDCSolo && c.OIDCListo() && !c.LoginLocal }
 
 // uno: el valor vacío (el de fábrica) o uno de los de la lista.
 func uno(v string, ok ...string) bool {

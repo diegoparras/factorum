@@ -105,7 +105,7 @@ func campo(clave, seccion, etiqueta string, tipo Tipo, env, ayuda, ejemplo strin
 }
 
 // Secciones, en el orden de la pantalla.
-var Secciones = []string{"general", "arcanum", "telegram", "whatsapp", "webhook", "correo_entrada", "correo_salida", "avisos", "ia", "r2", "copias", "clientes"}
+var Secciones = []string{"general", "arcanum", "lockatus", "telegram", "whatsapp", "webhook", "correo_entrada", "correo_salida", "avisos", "ia", "r2", "copias", "clientes"}
 
 // Campos es todo lo que se configura desde la pantalla.
 var Campos = func() []Campo {
@@ -130,6 +130,8 @@ var Campos = func() []Campo {
 	add(campo("arcanum.cuit_consultante", "arcanum", "CUIT consultante", CUIT, "ARCANUM_CUIT_CONSULTANTE", "El CUIT con certificado y WSCDC habilitado en Arcanum, para cuando el lote no tiene cliente.", "20-12345678-9", g, s))
 	g, s = booleano(func(c *config.Config) *bool { return &c.SuiteCrearUsuarios })
 	add(campo("arcanum.suite_crear_usuarios", "arcanum", "Crear la cuenta de quien llega desde otra app", Bool, "FACTORUM_SUITE_CREAR_USUARIOS", "Si alguien de Arcanum entra con el pase y no tiene cuenta acá, se la crea con su rol (topeado por la clave). Apagado, solo entran los que ya existen.", "", g, s))
+
+	camposLockatus(add)
 
 	g, s = texto(func(c *config.Config) *string { return &c.TelegramToken })
 	add(campo("telegram.token", "telegram", "Token del bot", Secreto, "FACTORUM_TELEGRAM_TOKEN", "El que te da @BotFather.", "123456789:AA...", g, s))
@@ -184,6 +186,36 @@ var Campos = func() []Campo {
 		func(c *config.Config, v any) { c.CanalClienteCUIT = maps.Clone(v.(map[string]string)) }))
 	return cs
 }()
+
+// RolesLockatus son los roles que se pueden elegir para quien entra con Lockatus sin un rol conocido.
+var RolesLockatus = []OpcionCampo{{"lectura", "Lectura (solo mira)"}, {"usuario", "Usuario (carga, revisa y aprueba)"},
+	{"admin", "Admin (además personas, claves y clientes)"}, {"superadmin", "Superadmin (todo)"}}
+
+// camposLockatus: el inicio de sesión único con Lockatus (OIDC).
+func camposLockatus(add func(Campo)) {
+	const sec = "lockatus"
+	g, s := texto(func(c *config.Config) *string { return &c.OIDCEmisor })
+	add(campo("lockatus.emisor", sec, "Emisor (issuer)", URL, "FACTORUM_OIDC_ISSUER",
+		"La dirección de Lockatus, tal como la publica en /.well-known/openid-configuration.", "https://lockatus.estudio.com.ar", g, s))
+	g, s = texto(func(c *config.Config) *string { return &c.OIDCClienteID })
+	add(campo("lockatus.client_id", sec, "Client ID", Texto, "FACTORUM_OIDC_CLIENT_ID", "El del cliente que registraste en Lockatus para Factorum.", "factorum", g, s))
+	g, s = texto(func(c *config.Config) *string { return &c.OIDCClienteSecreto })
+	add(campo("lockatus.client_secret", sec, "Client secret", Secreto, "FACTORUM_OIDC_CLIENT_SECRET", "El secreto de ese cliente (confidencial).", "", g, s))
+	g, s = texto(func(c *config.Config) *string { return &c.OIDCScope })
+	add(campo("lockatus.scope", sec, "Scope", Texto, "FACTORUM_OIDC_SCOPE", "Separados por espacios. Hace falta email: la persona se reconoce por su email verificado.", "openid profile email", g, s))
+	g, s = texto(func(c *config.Config) *string { return &c.OIDCClaimRol })
+	add(campo("lockatus.claim_rol", sec, "Claim del rol", Texto, "FACTORUM_OIDC_ROLE_CLAIM",
+		"De qué claim del id_token sale el rol de quien entra por primera vez (superadmin, admin, usuario u operador, lectura).", "role", g, s))
+	g, s = texto(func(c *config.Config) *string { return &c.OIDCRolPorDefecto })
+	add(opcion("lockatus.rol_por_defecto", sec, "Rol para quien no trae uno conocido", "FACTORUM_OIDC_DEFAULT_ROLE",
+		"Solo para cuentas nuevas. Lectura es lo más seguro.", RolesLockatus, g, s))
+	g2, s2 := booleano(func(c *config.Config) *bool { return &c.OIDCCrearUsuarios })
+	add(campo("lockatus.crear_usuarios", sec, "Crear la cuenta de quien entra por primera vez", Bool, "FACTORUM_OIDC_CREAR_USUARIOS",
+		"Con el rol que trae (o el de arriba). Admin y superadmin ven todos los clientes; usuario y lectura, ninguno hasta que un admin se los asigne. Apagado, solo entran los que ya tienen cuenta acá.", "", g2, s2))
+	g2, s2 = booleano(func(c *config.Config) *bool { return &c.OIDCSolo })
+	add(campo("lockatus.solo", sec, "Solo se entra con Lockatus", Bool, "FACTORUM_OIDC_SOLO",
+		"El login con email y contraseña desaparece y el servidor lo rechaza. Las claves de API y el pase de la suite siguen andando. Si Lockatus se cae, la salida de emergencia es FACTORUM_LOGIN_LOCAL=1.", "", g2, s2))
+}
 
 // CampoPorClave busca un campo.
 func CampoPorClave(k string) (Campo, bool) {

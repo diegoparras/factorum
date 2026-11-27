@@ -100,6 +100,49 @@ func RolDeApp(app, rol string) (Rol, bool) {
 	return Ninguno, false
 }
 
+// rolesLockatus traduce cada palabra del claim del rol de Lockatus a un rol de Factorum. Se compara
+// la palabra entera (no «contiene admin»); operador y editor son usuario; lector, read y readonly
+// son lectura.
+var rolesLockatus = map[string]Rol{
+	"superadmin": Superadmin, "admin": Admin,
+	"usuario": Usuario, "operador": Usuario, "editor": Usuario,
+	"lectura": Lectura, "lector": Lectura, "read": Lectura, "readonly": Lectura,
+}
+
+// RolDeLockatus lee el rol del claim de Lockatus: un texto (con una o varias palabras separadas por
+// espacios, comas o punto y coma) o una lista. Si hay varios roles conocidos, gana el mayor; si no
+// hay ninguno, Ninguno.
+func RolDeLockatus(claim any) Rol {
+	var palabras []string
+	var juntar func(v any)
+	juntar = func(v any) {
+		switch x := v.(type) {
+		case string:
+			palabras = append(palabras, strings.FieldsFunc(strings.ToLower(x), func(r rune) bool {
+				return r == ' ' || r == ',' || r == ';' || r == '\t' || r == '\n'
+			})...)
+		case []any:
+			for _, y := range x {
+				if _, ok := y.(string); ok {
+					juntar(y)
+				}
+			}
+		case []string:
+			for _, y := range x {
+				juntar(y)
+			}
+		}
+	}
+	juntar(claim)
+	res := Ninguno
+	for _, p := range palabras {
+		if r, ok := rolesLockatus[p]; ok && r > res {
+			res = r
+		}
+	}
+	return res
+}
+
 // NombreEnApp es el nombre de un rol de Factorum en otra app de la suite.
 func NombreEnApp(app string, r Rol) string {
 	if strings.ToLower(app) == "arcanum" && r == Usuario {

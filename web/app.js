@@ -37,11 +37,14 @@ const I = {
   copiar: svg('<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/>'),
   persona: svg('<circle cx="12" cy="8" r="3.5"/><path d="M5 20c.8-3.7 3.6-6 7-6s6.2 2.3 7 6"/>'),
   externo: svg('<path d="M14 4h6v6M20 4l-9 9"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>'),
+  correo: svg('<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3.5 6.5l8.5 6 8.5-6"/>'),
+  retenido: svg('<path d="M20 12V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h8"/><path d="M3.5 6.5l8.5 6 8.5-6"/><path d="M17 15v5M21 15v5"/>'),
+  enviar: svg('<path d="M21 3L10 14"/><path d="M21 3l-7 18-4-7-7-4z"/>'),
 };
 
 // Cada sección dice qué permiso hace falta para verla (el servidor lo hace cumplir igual).
 const NAV_TODO = [
-  ['Trabajo', [['inicio', 'Inicio'], ['revisar', 'Revisar'], ['verificar', 'Verificar'], ['subir', 'Cargar facturas', 'cargar']]],
+  ['Trabajo', [['inicio', 'Inicio'], ['revisar', 'Revisar'], ['retenido', 'Correo retenido', 'retenido'], ['verificar', 'Verificar'], ['subir', 'Cargar facturas', 'cargar']]],
   ['Datos', [['lotes', 'Lotes'], ['comprobantes', 'Comprobantes'], ['resumen', 'Resumen']]],
   ['Configuración', [['configuracion', 'Configuración', 'clientes'], ['usuarios', 'Usuarios', 'usuarios'], ['claves', 'Claves de API', 'claves'],
     ['conectar', 'Conectar'], ['auditoria', 'Auditoría', 'auditoria']]],
@@ -50,7 +53,9 @@ const VISTAS = NAV_TODO.flatMap((g) => g[1]);
 const puede = (p) => !p || !!(YO && YO.permisos && YO.permisos[p]);
 const navVisible = () => NAV_TODO.map(([g, items]) => [g, items.filter((it) => puede(it[2]))]).filter(([, items]) => items.length);
 const vistaPermitida = (v) => VISTAS.some((it) => it[0] === v && puede(it[2]));
-const PENDIENTES = { error: 0, revisar: 0 };
+const PENDIENTES = { error: 0, revisar: 0, retenido: 0 };
+let OLVIDE = false; // el login ofrece «Olvidé mi contraseña» (hay correo saliente)
+let AVISO_GOOGLE = null; // al volver de Google: { ok, detalle }
 
 // ---------- Estado ----------
 let YO = null; // { identidad, permisos, instalacion }
@@ -123,7 +128,8 @@ function hallazgosHTML(h) {
 function pintarNav() {
   const pend = PENDIENTES.error + PENDIENTES.revisar;
   $('#nav').innerHTML = navVisible().map(([grupo, items]) => `<div class="nav-g">${grupo}</div>` + items.map(([id, t]) => {
-    const badge = id === 'revisar' && pend ? `<span class="nav-badge${PENDIENTES.error ? ' err' : ''}" aria-label="${pend} pendientes">${pend > 999 ? '999+' : pend}</span>` : '';
+    let badge = id === 'revisar' && pend ? `<span class="nav-badge${PENDIENTES.error ? ' err' : ''}" aria-label="${pend} pendientes">${pend > 999 ? '999+' : pend}</span>` : '';
+    if (id === 'retenido' && PENDIENTES.retenido) badge = `<span class="nav-badge" aria-label="${PENDIENTES.retenido} retenidos">${PENDIENTES.retenido > 999 ? '999+' : PENDIENTES.retenido}</span>`;
     return `<button type="button" class="nav-it${id === vista ? ' active' : ''}" data-accion="ir" data-vista="${id}" title="${t}" aria-label="${t}"${id === vista ? ' aria-current="page"' : ''}>${I[id]}<span>${t}</span>${badge}</button>`;
   }).join('')).join('');
 }
@@ -132,6 +138,7 @@ async function actualizarPendientes() {
   try {
     const [e, r] = await Promise.all([api('/api/comprobantes?estado=error&limite=1'), api('/api/comprobantes?estado=revisar&limite=1')]);
     PENDIENTES.error = e.total; PENDIENTES.revisar = r.total;
+    if (puede('retenido')) PENDIENTES.retenido = (await api('/api/correo/retenido?limite=1')).total;
     pintarNav();
     const ce = $('#cntError'); if (ce) ce.textContent = e.total;
     const cr = $('#cntRevisar'); if (cr) cr.textContent = r.total;
@@ -139,6 +146,13 @@ async function actualizarPendientes() {
 }
 
 function ir(v) {
+  // Un link de un mail puede traer filtros: #comprobantes?lote=12
+  const [base, qs] = String(v || '').split('?');
+  v = base;
+  if (qs && v === 'comprobantes') {
+    const p = new URLSearchParams(qs);
+    Object.assign(filtro, { estado: p.get('estado') || '', clase: '', rubro: '', q: '', cliente: '', desde: '', hasta: '', lote: soloDig(p.get('lote')), offset: 0 });
+  }
   if (v === 'canales') v = 'configuracion'; // la pantalla Canales pasó a Configuración
   if (!vistaPermitida(v)) v = 'inicio';
   vista = v;
@@ -156,6 +170,7 @@ function ir(v) {
   if (v === 'auditoria') { audOffset = 0; cargarAuditoria(); }
   if (v === 'inicio') cargarInicio();
   if (v === 'revisar') cargarBandeja();
+  if (v === 'retenido') cargarRetenidos();
   const nom = (VISTAS.find(([id]) => id === v) || [])[1] || '';
   $('#crumb').textContent = v === 'inicio' ? '' : '/ ' + nom;
   document.title = v === 'inicio' ? 'Factorum' : `${nom} · Factorum`;
@@ -212,10 +227,15 @@ async function cargarSalud() {
 // ---------- Sesión ----------
 const iniciales = (t) => String(t || '?').replace(/@.*/, '').split(/[\s._-]+/).filter(Boolean).slice(0, 2).map((x) => x[0].toUpperCase()).join('') || '?';
 
-function mostrarLogin(err, aviso) {
+function mostrarTarjeta(id) {
   $('#login').classList.remove('hidden');
-  $('#loginForm').classList.remove('hidden');
-  $('#arranqueForm').classList.add('hidden');
+  for (const f of ['#loginForm', '#arranqueForm', '#olvideForm', '#restablecerForm']) $(f).classList.toggle('hidden', f !== id);
+}
+
+function mostrarLogin(err, aviso) {
+  mostrarTarjeta('#loginForm');
+  $('#olvideBtn').classList.toggle('hidden', !OLVIDE);
+  $('#olvideNota').classList.toggle('hidden', OLVIDE);
   $('#loginErr').textContent = err || '';
   $('#loginErr').classList.toggle('hidden', !err);
   $('#loginAviso').textContent = aviso || '';
@@ -224,10 +244,65 @@ function mostrarLogin(err, aviso) {
 }
 
 function mostrarArranque() {
-  $('#login').classList.remove('hidden');
-  $('#loginForm').classList.add('hidden');
-  $('#arranqueForm').classList.remove('hidden');
+  mostrarTarjeta('#arranqueForm');
   setTimeout(() => $('#arrCodigo').focus(), 50);
+}
+
+function mostrarOlvide() {
+  mostrarTarjeta('#olvideForm');
+  $('#olvideOk').classList.add('hidden'); $('#olvideErr').classList.add('hidden');
+  if (!$('#olvideEmail').value) $('#olvideEmail').value = $('#loginEmail').value;
+  setTimeout(() => $('#olvideEmail').focus(), 50);
+}
+
+async function pedirLink() {
+  const btn = $('#olvideForm button[type=submit]');
+  btn.disabled = true;
+  $('#olvideErr').classList.add('hidden');
+  try {
+    const r = await api('/api/sesion/olvide', { method: 'POST', json: { email: $('#olvideEmail').value.trim() }, sinRedirigir: true });
+    $('#olvideOk').textContent = r.mensaje; $('#olvideOk').classList.remove('hidden');
+  } catch (e) { $('#olvideErr').textContent = e.message; $('#olvideErr').classList.remove('hidden'); }
+  finally { btn.disabled = false; }
+}
+
+// El link del mail (restablecer o invitación): #restablecer?t=...
+let TOKEN_LINK = '';
+async function mostrarRestablecer(token) {
+  TOKEN_LINK = token || '';
+  mostrarTarjeta('#restablecerForm');
+  try { history.replaceState(null, '', location.pathname); } catch { /* nada */ } // el token no queda en la barra ni en el historial
+  const err = $('#restErr');
+  err.classList.add('hidden');
+  $('#restBtn').disabled = true;
+  try {
+    const r = await api('/api/sesion/link', { method: 'POST', json: { token: TOKEN_LINK }, sinRedirigir: true });
+    const inv = r.tipo === 'invitacion';
+    $('#restTitulo').textContent = inv ? 'Te damos la bienvenida' : 'Elegí una contraseña nueva';
+    $('#restSub').textContent = inv ? `Hola${r.nombre ? ' ' + r.nombre : ''}. Para entrar a Factorum como ${r.email}, elegí tu contraseña.`
+      : `Para ${r.email}. Al guardarla, se cierran las sesiones abiertas en otros navegadores.`;
+    $('#restBtn').disabled = false;
+    setTimeout(() => $('#restClave').focus(), 50);
+  } catch (e) {
+    $('#restTitulo').textContent = 'El link no sirve';
+    $('#restSub').textContent = '';
+    err.textContent = e.message; err.classList.remove('hidden');
+  }
+}
+
+async function usarLink() {
+  const err = $('#restErr');
+  err.classList.add('hidden');
+  if ($('#restClave').value !== $('#restRepetir').value) { err.textContent = 'Las dos contraseñas no coinciden'; err.classList.remove('hidden'); return; }
+  const btn = $('#restBtn');
+  btn.disabled = true;
+  try {
+    await api('/api/sesion/restablecer', { method: 'POST', json: { token: TOKEN_LINK, clave: $('#restClave').value }, sinRedirigir: true });
+    $('#restClave').value = ''; $('#restRepetir').value = ''; TOKEN_LINK = '';
+    YO = await api('/api/sesion');
+    iniciarApp();
+    toast('Listo: ya tenés tu contraseña nueva.');
+  } catch (e) { err.textContent = e.message; err.classList.remove('hidden'); btn.disabled = false; }
 }
 
 // sinSesion: la cookie venció o no hay. Si Factorum está por estrenar, la pantalla de arranque.
@@ -239,6 +314,7 @@ async function sinSesion(aviso) {
   $('#suiteWrap').classList.add('hidden');
   try {
     const a = await fetch('/api/arranque').then((r) => r.json());
+    OLVIDE = !!a.olvide;
     if (a.nombre) $$('.nombre-inst').forEach((e) => { e.textContent = a.nombre; });
     if (a.necesita) { mostrarArranque(); return; }
   } catch { /* sin conexión: login */ }
@@ -249,7 +325,15 @@ async function arrancar() {
   // Al volver de otra app con un pase que no sirvió, el servidor manda acá con ?aviso=pase.
   const q = new URLSearchParams(location.search);
   const aviso = q.get('aviso') === 'pase' ? 'El pase para entrar venció o ya se usó. Volvé a tocar el botón en la otra app.' : '';
-  if (q.has('aviso')) { try { history.replaceState(null, '', location.pathname + location.hash); } catch { /* nada */ } }
+  if (q.has('google')) AVISO_GOOGLE = { ok: q.get('google') === 'ok', detalle: q.get('detalle') || '' };
+  if (q.has('aviso') || q.has('google')) { try { history.replaceState(null, '', location.pathname + location.hash); } catch { /* nada */ } }
+  // El link de un mail para elegir contraseña no necesita sesión.
+  const h = location.hash.slice(1);
+  if (h.startsWith('restablecer')) {
+    try { OLVIDE = !!(await fetch('/api/arranque').then((r) => r.json())).olvide; } catch { /* nada */ }
+    mostrarRestablecer(new URLSearchParams(h.split('?')[1] || '').get('t'));
+    return;
+  }
   try {
     YO = await api('/api/sesion', { sinRedirigir: true });
   } catch { sinSesion(aviso); return; }
@@ -275,6 +359,10 @@ async function iniciarApp() {
   // Con la contraseña temporal no se carga nada más hasta que la cambie (el servidor tampoco deja).
   if (id.debe_cambiar) { pedirCambioClave(true); return; }
   ir(location.hash.slice(1) || 'inicio');
+  if (AVISO_GOOGLE) {
+    toast(AVISO_GOOGLE.ok ? `Gmail conectado: ${AVISO_GOOGLE.detalle}` : AVISO_GOOGLE.detalle || 'No se pudo conectar con Google', !AVISO_GOOGLE.ok);
+    AVISO_GOOGLE = null;
+  }
   actualizarPendientes();
   cargarSuite();
   verNovedades(false);
@@ -887,10 +975,271 @@ const SECCIONES = {
     como: ['En Cloudflare, R2, creá un bucket (por ejemplo factorum).', 'En «Administrar tokens de la API de R2», creá un token de lectura y escritura sobre ese bucket.',
       'Copiá el endpoint de S3 (https://<cuenta>.r2.cloudflarestorage.com), la access key y la secret key.', 'Probar guarda y borra un objeto de prueba.',
       'Al guardar, lo nuevo va a R2; lo que ya estaba en disco se sigue leyendo de ahí. Pasar lo viejo a R2 llega en una próxima versión.'] },
-  clientes: { t: 'Clientes y canales', d: 'Qué cliente es cada remitente de chat: lo que mande se carga para ese CUIT.', clave: ['clientes.canales'],
-    como: ['Una línea por remitente: el número de WhatsApp (con código de país), el id de Telegram o el chat del webhook, un igual y el CUIT del cliente.',
-      'Ejemplo: 5491155550000 = 20-22222222-3.', 'Lo que mande ese remitente se carga para ese cliente y se constata con su certificado en Arcanum.'] },
+  clientes: { t: 'Clientes y canales', d: 'Qué cliente es cada remitente de chat o de mail: lo que mande se carga para ese CUIT.', clave: ['clientes.canales'],
+    como: ['Una línea por remitente: el número de WhatsApp (con código de país), el id de Telegram, el chat del webhook, un email o @dominio, un igual y el CUIT del cliente.',
+      'Ejemplos: 5491155550000 = 20-22222222-3, juan@cliente.com.ar = 30-71111111-1, @cliente.com.ar = 30-71111111-1.',
+      'Lo que mande ese remitente se carga para ese cliente y se constata con su certificado en Arcanum. Por mail, una dirección facturas+CUIT@ le gana a esto.'] },
+  correo_entrada: { t: 'Correo entrante', d: 'Tus clientes mandan las facturas por mail y quedan cargadas. Solo se toman los adjuntos (PDF, fotos y ZIP): el texto del mail no se lee.', probar: true, clave: [] },
+  correo_salida: { t: 'Correo saliente', d: 'Para contestarle a quien manda facturas, los avisos y los links para elegir contraseña.', probar: true, clave: ['smtp.host', 'smtp.remitente'],
+    grupos: [
+      ['Gmail o Google Workspace', ['Activá la verificación en dos pasos de la cuenta y creá una contraseña de aplicación en myaccount.google.com/apppasswords (nombre: Factorum).',
+        'Servidor smtp.gmail.com, puerto 587 con STARTTLS (o 465 con TLS implícito). Usuario: el email entero. Contraseña: la de aplicación, sin espacios.',
+        'El remitente tiene que ser esa cuenta o un alias verificado en Gmail («Enviar como»). Gmail deja unos 500 mails por día.']],
+      ['Microsoft 365', ['Servidor smtp.office365.com, puerto 587 con STARTTLS. Usuario: el email entero.',
+        'En el centro de administración, en el buzón de ese usuario: Correo, Administrar aplicaciones de correo, marcá «SMTP autenticado». Con verificación en dos pasos, usá una contraseña de aplicación.',
+        'Microsoft está retirando el envío con usuario y contraseña: si deja de andar, pasate a un servicio transaccional.']],
+      ['Resend', ['Verificá tu dominio en Resend (los registros DNS que te muestra).', 'Servidor smtp.resend.com, puerto 465 con TLS implícito (o 587 con STARTTLS). Usuario: resend. Contraseña: una API key de Resend.']],
+      ['Postmark', ['Creá un servidor y verificá el remitente o el dominio (Sender Signatures).', 'Servidor smtp.postmarkapp.com, puerto 587 con STARTTLS. Usuario y contraseña: el Server API Token.']],
+      ['Mailgun', ['En el dominio, Configuración de SMTP: creá una credencial (por ejemplo postmaster@mg.tudominio.com.ar).', 'Servidor smtp.mailgun.org, puerto 587 con STARTTLS. Usuario y contraseña: los de esa credencial.']],
+      ['Brevo', ['En SMTP y API, pestaña SMTP: copiá el login (algo@smtp-brevo.com) y generá una clave SMTP.', 'Servidor smtp-relay.brevo.com, puerto 587 con STARTTLS. Usuario: ese login. Contraseña: la clave SMTP. Verificá el dominio del remitente.']],
+      ['Probar', ['Escribí tu email en «Mandar la prueba a» y tocá Probar: llega un mail de prueba. Si no llega, mirá en spam y revisá que el dominio tenga SPF y DKIM del servicio.']],
+    ] },
+  avisos: { t: 'Avisos', d: 'Mails cuando termina un lote, cuando aparece un emisor apócrifo o un PDF posiblemente adulterado, y un resumen los lunes.', clave: [],
+    como: ['Prendé cada aviso y, si hace falta, poné a quién más mandarlo (uno por línea).',
+      'Lote terminado: le llega a quien lo cargó desde la pantalla; si vino por chat, por la API o por mail, a la lista.',
+      'Apócrifos y adulterados: a los admins y superadmins que ven ese cliente, y a la lista.',
+      'Resumen semanal: los lunes a las 8 (hora de Buenos Aires), con lo de la semana anterior y lo pendiente de revisar. Sin lista, a los admins.',
+      'Cada persona de Factorum recibe solo lo de los clientes que puede ver. Una dirección de la lista que no es de nadie en Factorum recibe todo lo que se le manda.',
+      'Hace falta el correo saliente.'] },
 };
+
+// ---------- Correo entrante: las cuatro formas ----------
+const FORMAS = [
+  ['imap', 'IMAP', 'Factorum revisa una casilla cada tanto. La más fácil.'],
+  ['cloudflare', 'Cloudflare', 'Email Routing y un Worker: llega al instante.'],
+  ['proveedor', 'Proveedor', 'Mailgun, Postmark o SendGrid te pasan cada mail.'],
+  ['gmail', 'Gmail', 'Con permiso de Google, lee una etiqueta.'],
+  ['apagado', 'Apagado', 'No entra nada por mail.'],
+];
+const GRUPOS_CORREO = {
+  imap: ['imap.host', 'imap.puerto', 'imap.tls', 'imap.usuario', 'imap.clave', 'imap.carpeta', 'imap.intervalo', 'imap.procesado', 'imap.carpeta_procesado'],
+  cloudflare: ['cloudflare.secreto'],
+  proveedor: ['correo.proveedor', 'mailgun.signing_key', 'correo.token'],
+  gmail: ['google.client_id', 'google.client_secret', 'gmail.etiqueta', 'gmail.procesado', 'gmail.intervalo'],
+};
+const COMUNES_CORREO = ['correo.permitidos', 'correo.max_mb', 'correo.contestar'];
+const PROV_DE = { 'mailgun.signing_key': 'mailgun', 'correo.token': 'postmark sendgrid' };
+const COMO_CORREO = {
+  imap: [
+    ['Gmail', ['Mejor una cuenta solo para facturas (facturas@...). Activá la verificación en dos pasos.',
+      'Creá una contraseña de aplicación en myaccount.google.com/apppasswords (nombre: Factorum) y copiala sin espacios.',
+      'Servidor imap.gmail.com, puerto 993, TLS implícito. Usuario: el email entero. Contraseña: la de aplicación.',
+      'Tocá Probar: Factorum entra y cuenta los mensajes de la carpeta.']],
+    ['Outlook y Microsoft 365', ['Servidor outlook.office365.com, puerto 993, TLS implícito. Usuario: el email entero.',
+      'Microsoft ya no deja entrar con usuario y contraseña en la mayoría de las cuentas (pide OAuth). Si Probar dice que no acepta la contraseña, poné una regla en Outlook que reenvíe las facturas a otra casilla, o usá Cloudflare Email Routing.']],
+    ['Una casilla del dominio (cPanel, Hostinger, DonWeb...)', ['Creá una casilla para las facturas en el panel del hosting (facturas@tudominio.com.ar).',
+      'Servidor: el que indica el hosting (suele ser mail.tudominio.com.ar), puerto 993 con TLS implícito o 143 con STARTTLS.',
+      'Usuario: el email entero. Contraseña: la de la casilla.']],
+    ['Qué hace Factorum', ['Mira los mails sin leer de la carpeta cada tanto (60 segundos por defecto).',
+      'A los que procesó los marca como leídos o los mueve a la carpeta «Factorum» (la crea si no existe). Un mail que no se pudo guardar queda sin leer y se reintenta.']],
+  ],
+  cloudflare: [
+    ['En Cloudflare', ['El dominio tiene que estar en Cloudflare. Entrá a Email, Email Routing y activalo: Cloudflare agrega los registros MX y SPF.',
+      'Tocá Generar en «Secreto compartido» (más arriba), copialo y guardá.',
+      'En Workers y Pages, creá un Worker (por ejemplo factorum-correo), editá el código, pegá el de más arriba y desplegalo.',
+      'En el Worker, Configuración, Variables y secretos: agregá FACTORUM_URL (texto, con la dirección de más arriba) y FACTORUM_SECRETO (secreto, con el mismo secreto de acá).',
+      'En Email Routing, Reglas de enrutamiento: creá la dirección facturas@tudominio con la acción «Enviar a un Worker» y elegí el Worker.',
+      'Para el cliente por dirección (facturas+20222222223@...), activá el «subaddressing» en la configuración de Email Routing; si tu plan no lo tiene, usá la regla catch-all hacia el mismo Worker.',
+      'Si Factorum contesta con error, el Worker rechaza el mail y quien lo mandó recibe el rebote con el motivo.']],
+  ],
+  proveedor: [
+    ['Mailgun', ['Agregá un dominio o subdominio de recepción (por ejemplo mg.tudominio.com.ar) y apuntá sus MX a mxa.mailgun.org y mxb.mailgun.org.',
+      'En Configuración, API Security, copiá la «HTTP webhook signing key» y pegala acá.',
+      'En Receiving (Routes), creá una ruta: «Match Recipient» facturas@mg.tudominio.com.ar (o «Catch All»), acción Forward a la URL de más arriba, y guardá.',
+      'Factorum controla la firma de cada pedido (y que no tenga más de 5 minutos).']],
+    ['Postmark', ['Tocá Generar en «Token de la URL», guardá, y copiá la URL de más arriba (lleva el token).',
+      'En el servidor de Postmark, Default Inbound Stream, Settings: pegala en «Webhook URL». Tildá «Include raw email content».',
+      'Mandá las facturas a la dirección de entrada que te da Postmark, o configurá tu dominio (MX a inbound.postmarkapp.com) y reenviá a ella.']],
+    ['SendGrid', ['Tocá Generar en «Token de la URL», guardá, y copiá la URL de más arriba.',
+      'Apuntá el MX del subdominio de recepción a mx.sendgrid.net (prioridad 10).',
+      'En Settings, Inbound Parse, Add Host & URL: elegí el subdominio, pegá la URL y tildá «POST the raw, full MIME message».']],
+  ],
+  gmail: [
+    ['En la consola de Google Cloud', ['Entrá a console.cloud.google.com y creá un proyecto (por ejemplo «Factorum»).',
+      'En APIs y servicios, Biblioteca: buscá Gmail API y habilitala.',
+      'En la pantalla de consentimiento de OAuth (Google Auth Platform): tipo Externo (o Interno, si es Google Workspace), nombre «Factorum» y tu email. En Público, dejala «En prueba» y agregá tu cuenta como usuario de prueba.',
+      'En Acceso a los datos, agregá el permiso https://www.googleapis.com/auth/gmail.modify (leer, etiquetar y marcar; no borra ni manda).',
+      'En Clientes (Credenciales), creá un ID de cliente de OAuth de tipo «Aplicación web» y en «URI de redireccionamiento autorizados» pegá exacto el de más arriba.',
+      'Copiá el ID de cliente y el secreto acá, guardá y tocá «Conectar con Google»: elegí la cuenta y aceptá el permiso.',
+      'Ojo: en modo prueba, Google corta el permiso a los 7 días. Con Google Workspace y tipo Interno no vence; si no, cuando Factorum avise, tocá Conectar de nuevo.']],
+    ['En Gmail', ['Creá la etiqueta «Facturas» (o la que pongas acá).', 'Opcional: un filtro que se la ponga sola (por ejemplo, a lo que llega a facturas@ o de tus proveedores).',
+      'Factorum lee los mails con esa etiqueta cada 60 segundos y, al procesarlos, les saca la etiqueta o los marca como leídos.']],
+  ],
+};
+const WORKER_CF = [
+  '// Factorum: Email Worker de Cloudflare. Firma cada mail y se lo pasa a Factorum.',
+  '// Variables del Worker: FACTORUM_URL (texto) y FACTORUM_SECRETO (secreto).',
+  'export default {',
+  '  async email(message, env, ctx) {',
+  '    const crudo = new Uint8Array(await new Response(message.raw).arrayBuffer());',
+  '    const t = Math.floor(Date.now() / 1000).toString();',
+  '    const enc = new TextEncoder();',
+  '    const prefijo = enc.encode(t + "." + message.to + ".");',
+  '    const datos = new Uint8Array(prefijo.length + crudo.length);',
+  '    datos.set(prefijo, 0);',
+  '    datos.set(crudo, prefijo.length);',
+  '    const clave = await crypto.subtle.importKey("raw", enc.encode(env.FACTORUM_SECRETO),',
+  '      { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);',
+  '    const firma = new Uint8Array(await crypto.subtle.sign("HMAC", clave, datos));',
+  '    const hex = Array.from(firma, (b) => b.toString(16).padStart(2, "0")).join("");',
+  '    let res;',
+  '    try {',
+  '      res = await fetch(env.FACTORUM_URL, {',
+  '        method: "POST",',
+  '        headers: {',
+  '          "Content-Type": "message/rfc822",',
+  '          "X-Factorum-Firma": "t=" + t + ",v1=" + hex,',
+  '          "X-Factorum-Para": message.to,',
+  '        },',
+  '        body: crudo,',
+  '      });',
+  '    } catch (e) {',
+  '      message.setReject("Factorum no responde: probá de nuevo más tarde.");',
+  '      return;',
+  '    }',
+  '    if (!res.ok) {',
+  '      let motivo = "Factorum no pudo recibir el mail (" + res.status + ")";',
+  '      try { const j = await res.json(); if (j.error) motivo = j.error; } catch (e) {}',
+  '      message.setReject(motivo);',
+  '    }',
+  '  },',
+  '};',
+].join('\n');
+
+function comoHTML(cfg) {
+  if (!cfg || (!cfg.como && !cfg.grupos)) return '';
+  const ol = (l) => `<ol>${l.map((x) => `<li>${esc(x)}</li>`).join('')}</ol>`;
+  // En el proveedor, cada grupo es de uno (Mailgun, Postmark, SendGrid): se ve el del elegido.
+  const prov = (t) => (['Mailgun', 'Postmark', 'SendGrid'].includes(t) && cfg.porProveedor ? ` data-prov="${t.toLowerCase()}"` : '');
+  return `<details class="como"><summary>Cómo se configura</summary>${cfg.como ? ol(cfg.como) : ''}${(cfg.grupos || []).map(([t, l]) => `<div${prov(t)}><h4>${esc(t)}</h4>${ol(l)}</div>`).join('')}</details>`;
+}
+
+const urlCorreo = (k) => ((CONF && CONF.correo && CONF.correo.urls) || {})[k] || '';
+const sinURL = '<span class="muted">Completá la URL pública en General para ver la dirección.</span>';
+function datoCopiable(et, valor, attrs = '') {
+  return `<div class="dato-fijo"${attrs}><span class="et">${esc(et)}</span>${valor
+    ? `<div class="fila-copia"><code class="mono">${esc(valor)}</code><button type="button" class="ghost mini" data-accion="copiar" data-texto="${esc(valor)}">${I.copiar}<span>Copiar</span></button></div>` : sinURL}</div>`;
+}
+
+// La URL de Postmark y SendGrid lleva el token: solo se puede armar entera cuando lo acabás de
+// generar o escribir (después de guardarlo, Factorum no lo vuelve a mostrar).
+function urlConToken(base, token) {
+  try { const u = new URL(base); u.username = 'factorum'; u.password = token; return u.toString(); } catch { return base; }
+}
+function actualizarUrlsCorreo() {
+  const i = document.getElementById(idCampo('correo.token'));
+  const tok = i ? i.value.trim() : '';
+  $$('.url-token').forEach((el) => {
+    const base = el.dataset.base;
+    if (!base || !el.querySelector('code')) return; // sin URL pública todavía
+    const conf = (CONF.campos.find((c) => c.clave === 'correo.token') || {}).configurado;
+    const txt = tok ? urlConToken(base, tok) : base.replace('://', '://factorum:' + (conf ? '<el token que guardaste>' : '<token>') + '@');
+    el.querySelector('code').textContent = txt;
+    const b = el.querySelector('button');
+    b.dataset.texto = txt;
+    b.disabled = !tok;
+    b.title = tok ? '' : 'Generá o escribí el token para copiar la URL entera';
+  });
+}
+
+function extraForma(f) {
+  if (f === 'cloudflare') {
+    return datoCopiable('FACTORUM_URL (la dirección para el Worker)', urlCorreo('cloudflare')) + bloqueCodigo(WORKER_CF, 'El código del Email Worker (worker.js)');
+  }
+  if (f === 'proveedor') {
+    return datoCopiable('URL para Mailgun (acción Forward de la ruta)', urlCorreo('mailgun'), ' data-prov="mailgun"')
+      + ['postmark', 'sendgrid'].map((p) => `<div class="dato-fijo url-token" data-prov="${p}" data-base="${esc(urlCorreo(p))}"><span class="et">URL para ${p === 'postmark' ? 'Postmark (Webhook URL)' : 'SendGrid (Inbound Parse)'}</span>${urlCorreo(p)
+        ? `<div class="fila-copia"><code class="mono"></code><button type="button" class="ghost mini" data-accion="copiar" data-texto="">${I.copiar}<span>Copiar</span></button></div>` : sinURL}</div>`).join('');
+  }
+  if (f === 'gmail') {
+    const g = (CONF.correo && CONF.correo.google) || {};
+    const conectado = g.conectado
+      ? `<span class="est ok">Conectado${g.cuenta ? ' como ' + esc(g.cuenta) : ''}</span>${g.fijado ? '' : '<button type="button" class="ghost mini" data-accion="desconectarGoogle">Desconectar</button>'}`
+      : '<span class="est">Sin conectar</span>';
+    return datoCopiable('URI de redireccionamiento autorizado (para Google Cloud)', urlCorreo('google_redirect'))
+      + `<div class="fila google-fila">${conectado}<span class="sp"></span>${g.fijado ? '' : `<button type="button" data-accion="conectarGoogle">${g.conectado ? 'Conectar otra vez' : 'Conectar con Google'}</button>`}</div>`;
+  }
+  return '';
+}
+
+function estadoCorreoHTML() {
+  const e = (CONF.correo && CONF.correo.estado) || {};
+  if (!e.forma || e.forma === 'apagado') return '';
+  const partes = [];
+  if (e.ultima) partes.push('última revisión ' + fechaHora(e.ultima));
+  if (e.recibidos || e.retenidos) partes.push(`${e.recibidos || 0} procesado(s) y ${e.retenidos || 0} retenido(s) desde que arrancó`);
+  if (e.ultimo_mail) partes.push('último mail ' + fechaHora(e.ultimo_mail));
+  return `<div class="estado-correo${e.error ? ' mal' : ''}">${e.error ? I.alerta : I.correo}<span>${esc(e.error || (e.activo ? 'Activo' : e.detalle || 'Sin configurar'))}${partes.length ? ' · ' + esc(partes.join(' · ')) : ''}</span></div>`;
+}
+
+function cuerpoCorreoEntrada(campos) {
+  const pc = Object.fromEntries(campos.map((c) => [c.clave, c]));
+  const cf = pc['correo.forma'] || {};
+  const forma = cf.valor || 'imap';
+  const bloq = !!cf.bloqueado;
+  const radios = FORMAS.map(([v, t, d]) => `<label class="forma${v === forma ? ' on' : ''}"><input type="radio" name="correoForma" value="${v}"${v === forma ? ' checked' : ''}${bloq ? ' disabled' : ''}>
+    <span class="forma-t">${v === 'apagado' ? '' : I.correo}${esc(t)}</span><span class="forma-d">${esc(d)}</span></label>`).join('');
+  const grupo = (f) => {
+    const cs = (GRUPOS_CORREO[f] || []).map((k) => pc[k]).filter(Boolean).map((c) => {
+      const h = campoConfHTML(c);
+      return PROV_DE[c.clave] ? `<div class="prov-campo" data-prov="${PROV_DE[c.clave]}">${h}</div>` : h;
+    }).join('');
+    const cuerpo = f === 'apagado' ? '<p class="muted">No entra nada por mail. Lo que ya se cargó sigue igual.</p>'
+      : `<div class="conf-campos">${cs}</div>${extraForma(f)}${comoHTML({ grupos: COMO_CORREO[f], porProveedor: f === 'proveedor' })}`;
+    return `<div class="grupo-forma${f === forma ? '' : ' hidden'}" data-forma="${f}">${cuerpo}</div>`;
+  };
+  return `<input type="hidden" id="${idCampo('correo.forma')}" data-clave="correo.forma" data-orig="${esc(forma)}" value="${esc(forma)}"${bloq ? ' disabled' : ''}>
+    <div class="formas" role="radiogroup" aria-label="Cómo entra el correo">${radios}</div>
+    ${bloq ? `<span class="fijado">${I.llave}Fijado por el servidor (variable ${esc(cf.env)})</span>` : ''}
+    ${estadoCorreoHTML()}
+    ${FORMAS.map(([f]) => grupo(f)).join('')}
+    <h4 class="sub-conf">Para cualquier forma</h4>
+    <div class="conf-campos">${COMUNES_CORREO.map((k) => pc[k]).filter(Boolean).map(campoConfHTML).join('')}</div>
+    <p class="muted nota-conf">Para que un mail se cargue a un cliente, que lo manden a facturas+CUIT@tudominio (con el CUIT sin guiones) o asociá el remitente en Clientes y canales. Lo de remitentes fuera de la lista queda en <a class="link" href="#retenido" data-accion="ir" data-vista="retenido">Correo retenido</a>.</p>`;
+}
+
+function cambiarForma(f) {
+  const h = document.getElementById(idCampo('correo.forma'));
+  if (h) h.value = f;
+  $$('#conf-correo_entrada .forma').forEach((l) => l.classList.toggle('on', l.querySelector('input').value === f));
+  $$('#conf-correo_entrada .grupo-forma').forEach((g) => g.classList.toggle('hidden', g.dataset.forma !== f));
+  const est = $('#conf-correo_entrada .estado-correo'); // el estado es de la forma guardada
+  if (est) est.classList.toggle('hidden', f !== (h ? h.dataset.orig : f));
+  $('#conf-correo_entrada .prueba').classList.add('hidden');
+}
+
+function mostrarProveedor() {
+  const sel = document.getElementById(idCampo('correo.proveedor'));
+  const p = sel ? sel.value : 'mailgun';
+  $$('#conf-correo_entrada [data-prov]').forEach((el) => el.classList.toggle('hidden', !el.dataset.prov.split(' ').includes(p)));
+}
+
+function extraSeccion(sec) {
+  if (sec === 'webhook') return datoCopiable('URL de entrada', CONF.webhook_entrada);
+  if (sec === 'whatsapp') return '<div id="waEstado" class="wa-estado"></div>';
+  if (sec === 'correo_salida') return `<label class="campo-conf destino-prueba"><span class="et">Mandar la prueba a</span><input id="smtpDestino" type="email" placeholder="tu@email.com" autocomplete="email"><span class="ayuda">Probar manda un mail de prueba a esta dirección. Vacío: solo controla que el servidor acepte el usuario.</span></label>`;
+  if (sec === 'avisos' && !(CONF.correo && CONF.correo.smtp)) return `<div class="aviso-mini">${I.info}<span>Los avisos salen por el correo saliente, que todavía no está configurado.</span><button type="button" class="ghost mini" data-accion="saltar" data-sec="correo_salida">Configurarlo</button></div>`;
+  return '';
+}
+
+async function conectarGoogle(btn) {
+  const cambios = cambiosDe('correo_entrada', false);
+  btn.disabled = true;
+  try {
+    if (Object.keys(cambios).length) CONF = await api('/api/configuracion', { method: 'PUT', json: { cambios } });
+    const { url } = await api('/api/correo/google/conectar', { method: 'POST' });
+    location.href = url;
+  } catch (e) { toast(e, true); btn.disabled = false; }
+}
+
+async function desconectarGoogle() {
+  if (!confirm('¿Desconectar Gmail? Factorum deja de leer la etiqueta y le saca el permiso en tu cuenta de Google.')) return;
+  try {
+    const r = await api('/api/correo/google/desconectar', { method: 'POST' });
+    toast(r.aviso || 'Gmail desconectado', !!r.aviso);
+    cargarConfiguracion();
+  } catch (e) { toast(e, true); }
+}
 let CONF = null; // respuesta de /api/configuracion
 
 async function cargarConfiguracion() {
@@ -902,8 +1251,11 @@ async function cargarConfiguracion() {
 
 const idCampo = (k) => 'cf-' + k.replace(/\./g, '-');
 
+const GENERABLES = ['webhook.token', 'cloudflare.secreto', 'correo.token'];
+
 function valorCampoTexto(c) {
-  if (c.tipo === 'lista') return (c.valor || []).join('\n');
+  if (c.tipo === 'lista' || c.tipo === 'emails') return (c.valor || []).join('\n');
+  if (c.tipo === 'entero') return c.valor ? String(c.valor) : '';
   if (c.tipo === 'clientes') return Object.entries(c.valor || {}).map(([k, v]) => `${k} = ${cuit(v)}`).join('\n');
   if (c.tipo === 'cuit') return c.valor ? cuit(c.valor) : '';
   return c.valor ?? '';
@@ -923,20 +1275,38 @@ function campoConfHTML(c) {
   if (c.tipo === 'secreto') {
     const ph = c.configurado ? 'Configurado' : 'Sin configurar';
     control = `<div class="fila-secreto">${campoClave(id, `data-clave="${c.clave}" data-orig="" autocomplete="off" spellcheck="false" placeholder="${esc(ph)}"${bloq}`)}
-      ${c.clave === 'webhook.token' && !c.bloqueado ? `<button type="button" class="ghost mini" data-accion="generarToken" data-para="${id}">Generar</button>` : ''}
+      ${GENERABLES.includes(c.clave) && !c.bloqueado ? `<button type="button" class="ghost mini" data-accion="generarToken" data-para="${id}">Generar</button>` : ''}
       ${c.configurado && !c.bloqueado && c.origen === 'pantalla' ? `<button type="button" class="ghost mini" data-accion="borrarSecreto" data-clave="${c.clave}">Borrar</button>` : ''}</div>`;
-  } else if (c.tipo === 'lista' || c.tipo === 'clientes') {
+  } else if (c.tipo === 'lista' || c.tipo === 'clientes' || c.tipo === 'emails') {
     const v = valorCampoTexto(c);
     control = `<textarea id="${id}" data-clave="${c.clave}" data-orig="${esc(v)}" rows="${c.tipo === 'clientes' ? 4 : 3}" placeholder="${c.ejemplo ? 'Por ejemplo: ' + esc(c.ejemplo) : ''}" spellcheck="false"${bloq}>${esc(v)}</textarea>`;
+  } else if (c.tipo === 'opcion') {
+    const ops = c.opciones || [];
+    const v = ops.some((o) => o.valor === c.valor) ? c.valor : (ops[0] || {}).valor || '';
+    control = `<select id="${id}" data-clave="${c.clave}" data-orig="${esc(v)}"${bloq}>${ops.map((o) => `<option value="${esc(o.valor)}"${o.valor === v ? ' selected' : ''}>${esc(o.etiqueta)}</option>`).join('')}</select>`;
+  } else if (c.tipo === 'entero') {
+    const v = valorCampoTexto(c);
+    control = `<input id="${id}" type="number" inputmode="numeric" data-clave="${c.clave}" data-orig="${esc(v)}" value="${esc(v)}"${c.min ? ` min="${c.min}"` : ''}${c.max ? ` max="${c.max}"` : ''}${bloq}>`;
   } else {
     const v = valorCampoTexto(c);
     control = `<input id="${id}" data-clave="${c.clave}" data-orig="${esc(v)}" value="${esc(v)}" placeholder="${c.ejemplo ? 'Por ejemplo: ' + esc(c.ejemplo) : ''}" ${c.tipo === 'url' ? 'inputmode="url"' : ''} spellcheck="false"${bloq}>`;
   }
-  return `<label class="campo-conf${c.tipo === 'lista' || c.tipo === 'clientes' ? ' ancho' : ''}"><span class="et">${esc(c.etiqueta)}</span>${control}${ayuda}${nota}</label>`;
+  return `<label class="campo-conf${c.tipo === 'lista' || c.tipo === 'clientes' || c.clave === 'correo.permitidos' ? ' ancho' : ''}"><span class="et">${esc(c.etiqueta)}</span>${control}${ayuda}${nota}</label>`;
 }
 
 function estadoSeccion(sec, campos) {
   const cfg = SECCIONES[sec];
+  if (sec === 'correo_entrada') {
+    const e = (CONF.correo && CONF.correo.estado) || {};
+    if (e.forma === 'apagado') return '<span class="est">Apagado</span>';
+    if (e.error) return '<span class="est revisar">Con problemas</span>';
+    return e.activo ? '<span class="est ok">Activo</span>' : '<span class="est">Sin configurar</span>';
+  }
+  if (sec === 'avisos') {
+    const on = campos.filter((c) => c.tipo === 'bool' && c.valor).length;
+    if (!(CONF.correo && CONF.correo.smtp)) return '<span class="est">Falta el correo saliente</span>';
+    return on ? `<span class="est ok">${on} prendido(s)</span>` : '<span class="est">Apagados</span>';
+  }
   const porClave = Object.fromEntries(campos.map((c) => [c.clave, c]));
   const todos = campos.length && campos.every((c) => c.bloqueado);
   const ok = cfg.clave.every((k) => porClave[k] && porClave[k].configurado && (porClave[k].tipo !== 'bool' || porClave[k].valor));
@@ -953,17 +1323,14 @@ function pintarConfiguracion() {
     : 'Como admin podés cambiar qué cliente es cada remitente de chat. El resto de la configuración lo maneja un superadmin.';
   $('#confSaltos').innerHTML = secs.length > 1 ? secs.map((s) => `<a class="salto" href="#conf-${s}" data-accion="saltar" data-sec="${s}">${esc(SECCIONES[s].t)}</a>`).join('') : '';
   $('#configuracion').innerHTML = secs.map((sec) => {
-    const cfg = SECCIONES[sec];
+    const cfg = SECCIONES[sec] || { t: sec, d: '', clave: [] };
     const campos = CONF.campos.filter((c) => c.seccion === sec);
-    const extra = sec === 'webhook' ? `<div class="dato-fijo"><span class="et">URL de entrada</span>${CONF.webhook_entrada
-      ? `<div class="fila-copia"><code class="mono">${esc(CONF.webhook_entrada)}</code><button type="button" class="ghost mini" data-accion="copiar" data-texto="${esc(CONF.webhook_entrada)}">${I.copiar}<span>Copiar</span></button></div>`
-      : '<span class="muted">Completá la URL pública en General para verla acá.</span>'}</div>` : sec === 'whatsapp' ? '<div id="waEstado" class="wa-estado"></div>' : '';
     const editables = campos.some((c) => !c.bloqueado);
+    const cuerpo = sec === 'correo_entrada' ? cuerpoCorreoEntrada(campos)
+      : `<div class="conf-campos">${campos.map(campoConfHTML).join('')}</div>${extraSeccion(sec)}${comoHTML(cfg)}`;
     return `<section class="card conf" id="conf-${sec}" data-sec="${sec}">
       <div class="card-cab"><div><h3>${esc(cfg.t)}</h3><p class="muted conf-d">${esc(cfg.d)}</p></div>${estadoSeccion(sec, campos)}</div>
-      <div class="conf-campos">${campos.map(campoConfHTML).join('')}</div>
-      ${extra}
-      <details class="como"><summary>Cómo se configura</summary><ol>${cfg.como.map((p) => `<li>${esc(p)}</li>`).join('')}</ol></details>
+      ${cuerpo}
       <div class="prueba hidden"></div>
       <div class="fila pie-conf">
         ${cfg.probar ? `<button type="button" class="ghost" data-accion="probarConf" data-sec="${sec}">Probar</button>` : ''}
@@ -972,7 +1339,10 @@ function pintarConfiguracion() {
       </div></section>`;
   }).join('');
   refrescarWhatsApp();
+  if ($('#conf-correo_entrada')) { mostrarProveedor(); actualizarUrlsCorreo(); }
+  if (IR_SECCION) { const sec = IR_SECCION; IR_SECCION = ''; setTimeout(() => document.getElementById('conf-' + sec)?.scrollIntoView({ block: 'start' }), 30); }
 }
+let IR_SECCION = '';
 
 // cambiosDe junta lo que cambió en una sección (o todo lo escrito, para Probar).
 function cambiosDe(sec, todo) {
@@ -1001,6 +1371,7 @@ async function guardarConf(sec, cambios, btn) {
     CONF = await api('/api/configuracion', { method: 'PUT', json: { cambios } });
     pintarConfiguracion();
     cargarSalud(); cargarSuite();
+    api('/api/sesion').then((r) => { YO = r; }).catch(() => {}); // por si cambió el correo saliente (invitar por mail)
     toast((CONF.cambiadas || []).length ? 'Guardado: ya se está usando, sin reiniciar.' : 'No había cambios');
     document.getElementById('conf-' + sec)?.scrollIntoView({ block: 'nearest' });
   } catch (e) { toast(e, true); } finally { if (btn) btn.disabled = false; }
@@ -1011,7 +1382,8 @@ async function probarConf(sec, btn) {
   btn.disabled = true; btn.textContent = 'Probando...';
   caja.className = 'prueba'; caja.textContent = 'Probando...';
   try {
-    const r = await api('/api/configuracion/probar/' + sec, { method: 'POST', json: { cambios: cambiosDe(sec, true) } });
+    const destino = sec === 'correo_salida' && $('#smtpDestino') ? $('#smtpDestino').value.trim() : '';
+    const r = await api('/api/configuracion/probar/' + sec, { method: 'POST', json: { cambios: cambiosDe(sec, true), destino } });
     caja.className = 'prueba ' + (r.exito ? 'bien' : 'mal');
     caja.innerHTML = `${r.exito ? I.check : I.alerta}<span>${esc(r.mensaje)}</span>`;
   } catch (e) { caja.className = 'prueba mal'; caja.innerHTML = `${I.alerta}<span>${esc(e.message)}</span>`; }
@@ -1054,9 +1426,10 @@ async function cargarUsuarios() {
         const tocable = ORDEN_ROL.indexOf(u.rol) <= ORDEN_ROL.indexOf(yo.rol);
         return `<tr class="${u.activo ? '' : 'apagado'}"><td><div class="persona"><span class="avatar chico" aria-hidden="true">${esc(iniciales(u.nombre || u.email))}</span><span><strong>${esc(u.nombre)}</strong>${u.id === yo.usuario_id ? ' <span class="muted">(vos)</span>' : ''}<br><span class="muted">${esc(u.email)}</span></span></div></td>
           <td>${rolChip(u.rol)}</td><td>${cuitsHTML(u.cuits)}</td><td>${esc(ORIGEN_U[u.origen] || u.origen)}</td>
-          <td>${u.ultimo_ingreso ? fechaHora(u.ultimo_ingreso) : '<span class="muted">Nunca</span>'}${u.debe_cambiar ? '<br><span class="est revisar">Contraseña temporal</span>' : ''}</td>
+          <td>${u.ultimo_ingreso ? fechaHora(u.ultimo_ingreso) : '<span class="muted">Nunca</span>'}${u.debe_cambiar ? '<br><span class="est revisar">Contraseña temporal</span>' : ''}${!u.tiene_clave && u.origen === 'local' ? '<br><span class="est revisar">Invitación pendiente</span>' : ''}</td>
           <td>${u.activo ? '<span class="est ok">Activa</span>' : '<span class="est">Desactivada</span>'}</td>
           <td class="acciones-fila">${tocable ? `<div class="acc-apiladas"><button type="button" class="ghost mini" data-accion="editarUsuario" data-id="${u.id}">Editar</button>
+            ${YO.correo_saliente && u.activo ? `<button type="button" class="ghost mini" data-accion="linkUsuario" data-id="${u.id}" title="${u.tiene_clave ? 'Mandarle por mail un link para elegir una contraseña nueva' : 'Mandarle la invitación otra vez'}">${u.tiene_clave ? 'Link por mail' : 'Reenviar invitación'}</button>` : ''}
             <button type="button" class="ghost mini" data-accion="restablecer" data-id="${u.id}" title="Restablecer la contraseña">Nueva contraseña</button>
             ${u.id !== yo.usuario_id ? `<button type="button" class="ghost mini" data-accion="activarUsuario" data-id="${u.id}" data-activo="${u.activo ? '' : '1'}">${u.activo ? 'Desactivar' : 'Reactivar'}</button>` : ''}</div>` : '<span class="muted">Solo un superadmin</span>'}</td></tr>`;
       }).join('')}</tbody></table></div>`;
@@ -1074,6 +1447,9 @@ function formUsuario(u) {
       <span class="ayuda">Lectura solo mira. Usuario carga, revisa, corrige y aprueba. Admin además maneja personas, claves y clientes. Superadmin, todo.</span></label>
     <label>Clientes (CUITs)<textarea id="usCuits" rows="2" placeholder="${restr ? 'Uno o más de tus clientes' : 'Vacío: todos los clientes'}">${esc(cuitsTexto(u ? u.cuits : (restr ? yo.cuits : [])))}</textarea>
       <span class="ayuda">Separados por coma. Vacío: ve a todos los clientes.</span></label>
+    ${u ? '' : YO.correo_saliente ? `<label class="chk"><input type="checkbox" id="usInvitar" checked> Mandarle una invitación por mail</label>
+      <span class="ayuda">Le llega un link para elegir su contraseña (vence en 72 horas). Sin tildar, Factorum te muestra una contraseña temporal para pasársela vos.</span>`
+      : '<span class="ayuda">Para invitar por mail (en lugar de la contraseña temporal), configurá el correo saliente en Configuración.</span>'}
     <div class="login-err hidden" id="usErr"></div></form>`,
   { acciones: `<button type="button" class="ghost" data-accion="modalCerrar">Cancelar</button><button type="submit" form="fUsuario">${u ? 'Guardar' : 'Crear'}</button>` });
 }
@@ -1087,8 +1463,14 @@ async function guardarUsuario(f) {
       cerrarModal(); toast('Guardado'); cargarUsuarios();
     } else {
       cuerpo.email = $('#usEmail').value.trim();
+      cuerpo.invitar = !!($('#usInvitar') && $('#usInvitar').checked);
       const r = await api('/api/usuarios', { method: 'POST', json: cuerpo });
       cargarUsuarios();
+      if (cuerpo.invitar) {
+        if (r.invitado) { cerrarModal(); toast(`Le mandamos la invitación a ${r.usuario.email}.`); }
+        else abrirModal('Persona creada', `<p>${esc(r.aviso || 'No se pudo mandar la invitación.')}</p>`);
+        return;
+      }
       secretoUnaVez('Persona creada', `Pasale a <strong>${esc(r.usuario.email)}</strong> esta contraseña temporal. Al entrar, Factorum le pide que elija una propia.`,
         r.clave_temporal, 'Se muestra una sola vez: si la perdés, restablecela.');
     }
@@ -1105,11 +1487,67 @@ async function restablecer(id) {
   } catch (e) { toast(e, true); }
 }
 
+async function linkUsuario(id, btn) {
+  const u = USUARIOS.find((x) => String(x.id) === String(id));
+  if (!u) return;
+  btn.disabled = true;
+  try {
+    const r = await api(`/api/usuarios/${id}/link`, { method: 'POST' });
+    toast(r.tipo === 'invitacion' ? `Le mandamos la invitación otra vez a ${u.email}.` : `Le mandamos a ${u.email} un link para elegir una contraseña nueva (vence en 30 minutos).`);
+  } catch (e) { toast(e, true); } finally { btn.disabled = false; }
+}
+
 async function activarUsuario(id, activo) {
   const u = USUARIOS.find((x) => String(x.id) === String(id));
   if (!activo && !confirm(`¿Desactivar a ${u ? u.nombre || u.email : 'esta persona'}? No va a poder entrar y sus claves de API dejan de andar.`)) return;
   try { await api('/api/usuarios/' + id, { method: 'PATCH', json: { activo } }); toast(activo ? 'Reactivada' : 'Desactivada'); cargarUsuarios(); }
   catch (e) { toast(e, true); }
+}
+
+// ---------- Correo retenido ----------
+let RETENIDOS = [];
+async function cargarRetenidos() {
+  try {
+    const r = await api('/api/correo/retenido?limite=200');
+    RETENIDOS = r.retenidos;
+    PENDIENTES.retenido = r.total; pintarNav();
+    if (!RETENIDOS.length) {
+      $('#retenidos').innerHTML = vacio('retenido', 'No hay correo retenido', 'Lo que manden por mail remitentes que no están entre los permitidos aparece acá para que decidas qué hacer.');
+      return;
+    }
+    const FORMA = { imap: 'IMAP', cloudflare: 'Cloudflare', mailgun: 'Mailgun', postmark: 'Postmark', sendgrid: 'SendGrid', gmail: 'Gmail' };
+    $('#retenidos').innerHTML = `<div class="tabla-scroll"><table class="t"><thead><tr><th>De</th><th>Asunto</th><th>Llegó</th><th>Adjuntos</th><th>Cliente</th><th>Por qué quedó</th><th></th></tr></thead><tbody>
+      ${RETENIDOS.map((m) => `<tr><td><div class="persona"><span class="avatar chico" aria-hidden="true">${esc(iniciales(m.nombre || m.remitente))}</span><span>${m.nombre ? `<strong>${esc(m.nombre)}</strong><br>` : ''}<span class="mono">${esc(m.remitente)}</span></span></div></td>
+        <td>${esc(m.asunto || '(sin asunto)')}<div class="muted">a ${esc(m.destinatario || '')}</div></td>
+        <td class="nowrap">${fechaHora(m.creado)}<div class="muted">por ${esc(FORMA[m.forma] || m.forma)}</div></td>
+        <td><ul class="adj-lista">${m.adjuntos.map((a) => `<li>${I.doc}<span class="nom">${esc(a.nombre)}</span><span class="tam">${tamanio(a.tamano)}</span></li>`).join('')}</ul>${m.descartados.length ? `<div class="muted">No se leen: ${esc(m.descartados.join(', '))}</div>` : ''}</td>
+        <td class="mono">${m.cliente_cuit ? esc(cuit(m.cliente_cuit)) : '<span class="muted">Sin cliente</span>'}</td>
+        <td class="muted">${esc(m.motivo || '')}</td>
+        <td class="acciones-fila"><div class="acc-apiladas">
+          <button type="button" class="mini" data-accion="aceptarRetenido" data-id="${m.id}" data-permitir="1" title="Lo procesa y suma a ${esc(m.remitente)} a los permitidos">Aceptar y permitir</button>
+          <button type="button" class="ghost mini" data-accion="aceptarRetenido" data-id="${m.id}" title="Lo procesa esta vez">Aceptar</button>
+          <button type="button" class="ghost mini" data-accion="descartarRetenido" data-id="${m.id}">Descartar</button></div></td></tr>`).join('')}</tbody></table></div>
+      ${r.total > RETENIDOS.length ? `<p class="muted">Se muestran ${RETENIDOS.length} de ${r.total}.</p>` : ''}
+      ${r.permitidos_fijados ? '<p class="muted">La lista de remitentes permitidos la fija el servidor: «Aceptar y permitir» procesa el mail, pero no puede sumar al remitente.</p>' : ''}`;
+    tarjetas('#retenidos');
+  } catch (e) { toast(e, true); }
+}
+
+async function aceptarRetenido(id, permitir, btn) {
+  const m = RETENIDOS.find((x) => String(x.id) === String(id));
+  if (permitir && m && !confirm(`¿Aceptar el mail de ${m.remitente} y sumarlo a los remitentes permitidos? Lo próximo que mande se va a cargar solo.`)) return;
+  btn.disabled = true;
+  try {
+    const r = await api(`/api/correo/retenido/${id}/aceptar`, { method: 'POST', json: { permitir } });
+    toast(r.aviso || `Listo: se cargó el lote ${r.lote.id}${r.permitido ? ' y el remitente quedó permitido' : ''}.`, !!r.aviso);
+    cargarRetenidos();
+  } catch (e) { toast(e, true); btn.disabled = false; }
+}
+
+async function descartarRetenido(id) {
+  const m = RETENIDOS.find((x) => String(x.id) === String(id));
+  if (!confirm(`¿Descartar el mail de ${m ? m.remitente : 'este remitente'}? Se borran sus adjuntos y no se procesa.`)) return;
+  try { await api(`/api/correo/retenido/${id}/descartar`, { method: 'POST' }); toast('Descartado'); cargarRetenidos(); } catch (e) { toast(e, true); }
 }
 
 // ---------- Claves de API ----------
@@ -1266,7 +1704,8 @@ document.addEventListener('click', (ev) => {
       const i = document.getElementById(el.dataset.para);
       i.value = [...b].map((x) => x.toString(16).padStart(2, '0')).join(''); i.type = 'text';
       const t = i.parentElement.querySelector('.pass-toggle'); if (t) t.innerHTML = I.ojoNo;
-      toast('Token generado: guardá para usarlo y pasáselo a tu bot');
+      i.dispatchEvent(new Event('input', { bubbles: true }));
+      toast(i.dataset.clave === 'webhook.token' ? 'Token generado: guardá para usarlo y pasáselo a tu bot' : 'Generado: copialo donde corresponda y guardá');
       break;
     }
     case 'borrarSecreto': {
@@ -1275,6 +1714,14 @@ document.addEventListener('click', (ev) => {
       break;
     }
     case 'nuevoUsuario': formUsuario(null); break;
+    case 'linkUsuario': linkUsuario(el.dataset.id, el); break;
+    case 'aceptarRetenido': aceptarRetenido(el.dataset.id, !!el.dataset.permitir, el); break;
+    case 'descartarRetenido': descartarRetenido(el.dataset.id); break;
+    case 'conectarGoogle': conectarGoogle(el); break;
+    case 'desconectarGoogle': desconectarGoogle(); break;
+    case 'olvide': mostrarOlvide(); break;
+    case 'volverLogin': try { history.replaceState(null, '', location.pathname); } catch { /* nada */ } sinSesion(); break;
+    case 'irConf': IR_SECCION = el.dataset.sec; ir('configuracion'); break;
     case 'editarUsuario': formUsuario(USUARIOS.find((u) => String(u.id) === el.dataset.id)); break;
     case 'restablecer': restablecer(el.dataset.id); break;
     case 'activarUsuario': activarUsuario(el.dataset.id, !!el.dataset.activo); break;
@@ -1330,6 +1777,8 @@ document.addEventListener('click', (ev) => {
 document.addEventListener('submit', (ev) => {
   const f = ev.target;
   if (f.id === 'loginForm') { ev.preventDefault(); entrar($('#loginEmail').value.trim(), $('#loginClave').value); }
+  else if (f.id === 'olvideForm') { ev.preventDefault(); pedirLink(); }
+  else if (f.id === 'restablecerForm') { ev.preventDefault(); usarLink(); }
   else if (f.id === 'arranqueForm') { ev.preventDefault(); crearPrimerSuperadmin(); }
   else if (f.id === 'fClaveMia') { ev.preventDefault(); cambiarMiClave(); }
   else if (f.id === 'fUsuario') { ev.preventDefault(); guardarUsuario(f); }
@@ -1349,10 +1798,13 @@ document.addEventListener('submit', (ev) => {
 
 document.addEventListener('change', (ev) => {
   if (ev.target.id === 'ckSuite') $('#ckTopeWrap').classList.toggle('hidden', !ev.target.checked);
+  if (ev.target.name === 'correoForma') cambiarForma(ev.target.value);
+  if (ev.target.id === idCampo('correo.proveedor')) mostrarProveedor();
 });
 
 document.addEventListener('input', (ev) => {
   if (ev.target.closest('#revForm')) ev.target.classList.toggle('cambiado', ev.target.value !== ev.target.dataset.orig);
+  if (ev.target.id === idCampo('correo.token')) actualizarUrlsCorreo();
 });
 
 document.addEventListener('keydown', (ev) => {
@@ -1427,3 +1879,9 @@ for (const [zona, sel] of [['#zonaVerificar', '#archVerificar'], ['#zonaSubir', 
 // ---------- Arranque ----------
 $$('.pass-toggle').forEach((b) => { b.innerHTML = I.ojo; });
 arrancar();
+
+// Un link de «elegir contraseña» pegado en una pestaña que ya tenía Factorum abierto.
+window.addEventListener('hashchange', () => {
+  const h = location.hash.slice(1);
+  if (h.startsWith('restablecer')) mostrarRestablecer(new URLSearchParams(h.split('?')[1] || '').get('t'));
+});

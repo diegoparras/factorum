@@ -28,7 +28,34 @@
     </div>
     <button type="submit">Entrar</button>
     <div class="login-err hidden" id="loginErr"></div>
-    <p class="login-foot">Si te olvidaste la contraseña, pedile a un admin que te la restablezca.<br>Parte de la suite Escriba</p>
+    <button type="button" class="link-btn hidden" id="olvideBtn" data-accion="olvide">Olvidé mi contraseña</button>
+    <p class="login-foot"><span id="olvideNota">Si te olvidaste la contraseña, pedile a un admin que te la restablezca.<br></span>Parte de la suite Escriba</p>
+  </form>
+  <form class="login-card hidden" id="olvideForm">
+    <img class="login-logo" src="logo.svg" alt="" width="64" height="64">
+    <h2>Olvidé mi contraseña</h2>
+    <p class="login-sub">Escribí el email de tu cuenta: te mandamos un link para elegir una contraseña nueva. Vence en 30 minutos.</p>
+    <input id="olvideEmail" type="email" placeholder="Email" required autocomplete="username" aria-label="Email">
+    <button type="submit">Mandarme el link</button>
+    <div class="login-ok hidden" id="olvideOk" role="status"></div>
+    <div class="login-err hidden" id="olvideErr"></div>
+    <button type="button" class="link-btn" data-accion="volverLogin">Volver a entrar</button>
+  </form>
+  <form class="login-card hidden" id="restablecerForm">
+    <img class="login-logo" src="logo.svg" alt="" width="64" height="64">
+    <h2 id="restTitulo">Elegí una contraseña nueva</h2>
+    <p class="login-sub" id="restSub">Revisando el link...</p>
+    <div class="pass-wrap">
+      <input id="restClave" type="password" placeholder="Contraseña nueva (10 caracteres o más)" required minlength="10" autocomplete="new-password" aria-label="Contraseña nueva">
+      <button type="button" class="pass-toggle" data-accion="ojo" data-para="restClave" aria-label="Mostrar u ocultar la contraseña"></button>
+    </div>
+    <div class="pass-wrap">
+      <input id="restRepetir" type="password" placeholder="Repetila" required minlength="10" autocomplete="new-password" aria-label="Repetir la contraseña">
+      <button type="button" class="pass-toggle" data-accion="ojo" data-para="restRepetir" aria-label="Mostrar u ocultar la contraseña"></button>
+    </div>
+    <button type="submit" id="restBtn">Guardar y entrar</button>
+    <div class="login-err hidden" id="restErr"></div>
+    <button type="button" class="link-btn" data-accion="volverLogin">Volver a entrar</button>
   </form>
   <form class="login-card hidden" id="arranqueForm">
     <img class="login-logo" src="logo.svg" alt="" width="64" height="64">
@@ -89,6 +116,13 @@
         <button type="button" role="tab" data-accion="bandeja" data-estado="revisar">Para revisar <span class="cnt" id="cntRevisar">0</span></button>
       </div>
       <div id="bandeja"></div>
+    </section>
+
+    <!-- Correo retenido -->
+    <section class="vista hidden" id="v-retenido">
+      <div class="cabecera"><div><h2>Correo retenido</h2><p class="sub">Mails con facturas de remitentes que no están entre los permitidos. Factorum no los procesó ni les contestó. Aceptá los que sean de confianza (y, si querés, sumá al remitente) o descartalos. Se borran solos a los 30 días. Nunca se guarda el texto del mail: solo quién, el asunto y los adjuntos.</p></div>
+        <div class="acciones"><button type="button" class="ghost" data-accion="irConf" data-sec="correo_entrada">Remitentes permitidos</button></div></div>
+      <div id="retenidos"></div>
     </section>
 
     <!-- Verificar -->
@@ -182,7 +216,7 @@
 
     <!-- Usuarios -->
     <section class="vista hidden" id="v-usuarios">
-      <div class="cabecera"><div><h2>Usuarios</h2><p class="sub">Quién entra a Factorum, con qué rol y a qué clientes. Al crear a alguien o restablecerle la contraseña, Factorum genera una temporal que se muestra una sola vez y que obliga a cambiarla al entrar.</p></div>
+      <div class="cabecera"><div><h2>Usuarios</h2><p class="sub">Quién entra a Factorum, con qué rol y a qué clientes. Al crear a alguien, con el correo saliente configurado, Factorum le manda una invitación por mail para que elija su contraseña; si no, genera una temporal que se muestra una sola vez y obliga a cambiarla al entrar.</p></div>
         <div class="acciones"><button type="button" data-accion="nuevoUsuario">Nueva persona</button></div></div>
       <div id="usuarios"></div>
     </section>

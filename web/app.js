@@ -1528,17 +1528,19 @@ function htmlAvisoIA(a, modo) {
   const registro = {
     admin: `Al aceptar queda registrado que ${quien ? 'lo aceptaste vos (' + esc(quien) + ')' : 'lo aceptaste'}, hoy, para <code>${hostCortable(a.host)}</code>. Si cambiás de proveedor o de host, se pide de nuevo.`,
     persona: 'Se recuerda para tu cuenta: no te lo vuelve a preguntar mientras no cambie el proveedor o este aviso.',
+    prueba: `Para probar se manda solo el ticket de prueba (inventado), no comprobantes de tus clientes. Si después guardás esta IA, queda aceptado a tu nombre para <code>${hostCortable(a.host)}</code>.`,
   }[modo] || '';
   const botones = {
     admin: '<button type="button" class="ghost" data-accion="aiaCancelar">Cancelar</button><button type="button" data-accion="aiaOK">Entiendo y quiero usarla</button>',
     persona: '<button type="button" class="ghost" data-accion="aiaCancelar">Seguir sin IA</button><button type="button" data-accion="aiaOK">Entendido, usar IA</button>',
+    prueba: '<button type="button" class="ghost" data-accion="aiaCancelar">Cancelar</button><button type="button" data-accion="aiaOK">Entiendo, probar</button>',
   }[modo] || '<button type="button" data-accion="aiaCancelar">Cerrar</button>';
   return `<header class="aia-cab">
       <div class="aia-ico" aria-hidden="true">${iconoGrande('nube')}</div>
       <div class="aia-cab-txt"><span class="aia-kicker">IA externa · Qué pasa con los datos</span>
         <h3 id="aiaTit">${a.proveedor === 'desconocido' ? 'Un proveedor que Factorum no conoce' : esc(av.titulo || a.nombre)}</h3>
         <div class="aia-host"><code>${hostCortable(a.host)}</code>${region}</div></div>
-      <button type="button" class="modal-x" data-accion="aiaCancelar" aria-label="${modo === 'persona' ? 'Seguir sin IA' : modo === 'admin' ? 'Cancelar' : 'Cerrar'}">&times;</button>
+      <button type="button" class="modal-x" data-accion="aiaCancelar" aria-label="${modo === 'persona' ? 'Seguir sin IA' : modo === 'admin' || modo === 'prueba' ? 'Cancelar' : 'Cerrar'}">&times;</button>
     </header>
     <div class="aia-cuerpo">
       <p class="aia-intro" id="aiaIntro">${negrita(av.intro || '')}</p>
@@ -1551,7 +1553,7 @@ function htmlAvisoIA(a, modo) {
 }
 
 // abrirAvisoIA muestra el aviso y resuelve true si se aceptó. modo: admin (aceptar para la
-// instalación), persona (la primera vez que la usa) o lectura. Esc, la X y el fondo cancelan.
+// instalación), prueba (mandarle el ticket de prueba), persona (la primera vez que la usa) o lectura. Esc, la X y el fondo cancelan.
 function abrirAvisoIA(a, modo) {
   if (AIA) cerrarAvisoIA(false);
   return new Promise((resolver) => {
@@ -1616,12 +1618,347 @@ async function aceptarAvisoIA(btn) {
 function estadoAvisoIA() {
   const a = CONF && CONF.ia_aviso;
   if (!a || !a.configurada) return '';
-  if (a.local) return `<div class="ia-conf">${selloIA(a)}</div>`;
+  const ahora = '<span class="ia-ahora-et hidden">Ahora se usa:</span>';
+  if (a.local) return `<div class="ia-conf">${ahora}${selloIA(a)}</div>`;
   if (!a.aceptado) {
     return `<div class="aviso-mini mal ia-falta">${I.alerta}<span><strong>Factorum no está usando esta IA.</strong> Es externa (${esc(a.nombre)}, <code>${esc(a.host)}</code>) y ningún superadmin aceptó todavía el aviso de qué pasa con los datos. Hasta entonces no se usa: ni en la pantalla, ni en los chats, ni por MCP.</span>${a.puede_aceptar ? '<button type="button" class="mini" data-accion="aceptarAvisoIA">Ver el aviso y aceptarla</button>' : ''}</div>`;
   }
   const ac = a.aceptacion || {};
-  return `<div class="ia-conf">${selloIA(a)}<span class="muted">Aviso aceptado${ac.por ? ' por ' + esc(ac.por) : ''}${ac.cuando ? ' (' + fechaHora(ac.cuando) + ')' : ''}. Si cambiás de proveedor o de host, se pide de nuevo.</span></div>`;
+  return `<div class="ia-conf">${ahora}${selloIA(a)}<span class="muted">Aviso aceptado${ac.por ? ' por ' + esc(ac.por) : ''}${ac.cuando ? ' (' + fechaHora(ac.cuando) + ')' : ''}. Si cambiás de proveedor o de host, se pide de nuevo.</span></div>`;
+}
+
+// ---------- Configuración, IA (visión): elegir el proveedor y el modelo de una lista ----------
+// El proveedor completa la URL; la clave, si hace falta; y el modelo sale de la lista que el
+// servidor le pide al proveedor (POST /api/ia/modelos) con lo que está en pantalla, sin guardar.
+const IA_OTRO = '__otro';
+let IAUI = null; // { pedido, cache, lista, timer, aceptadoPrueba }
+
+const iaCat = () => (CONF && CONF.ia) || { proveedores: [], recomendados: [] };
+const iaProvDe = (id) => iaCat().proveedores.find((p) => p.id === id);
+const iaCampo = (k) => (CONF.campos || []).find((c) => c.clave === k) || {};
+const iaEl = (k) => document.getElementById(idCampo(k));
+// Lo guardado (o del entorno): el punto de partida de cada proveedor.
+const iaGuardado = () => ({ prov: iaCat().proveedor || '', url: iaCampo('ia.url').valor || '', modelo: iaCampo('ia.modelo').valor || '' });
+const iaRecosDe = (prov) => {
+  const r = (IAUI && IAUI.lista && IAUI.lista.proveedor === prov && IAUI.lista.recomendados) || null;
+  if (r) return r;
+  return iaCat().recomendados.flatMap((x) => (x.proveedor === prov ? [x] : prov === 'openrouter' && x.proveedor === 'openai'
+    ? [{ ...x, modelo: 'openai/' + x.modelo, texto: x.texto + ' (medido con OpenAI directo)' }] : []));
+};
+const fijadoHTML = (c) => (c.bloqueado ? `<span class="fijado">${I.llave}Fijado por el servidor (variable ${esc(c.env)})</span>` : '');
+
+function cuerpoIA() {
+  IAUI = { pedido: 0, cache: new Map(), lista: null, timer: 0, aceptadoPrueba: (IAUI && IAUI.aceptadoPrueba) || null };
+  const g = iaGuardado();
+  const cp = iaCampo('ia.proveedor'), cu = iaCampo('ia.url'), cm = iaCampo('ia.modelo'), ck = iaCampo('ia.api_key');
+  const bloqProv = cp.bloqueado || cu.bloqueado;
+  const ops = [['', 'Sin IA'], ...iaCat().proveedores.map((p) => [p.id, p.nombre])];
+  const sel = `<select id="${idCampo('ia.proveedor')}" data-orig="${esc(g.prov)}"${bloqProv ? ' disabled' : ''}>${ops.map(([v, t]) => `<option value="${esc(v)}"${v === g.prov ? ' selected' : ''}>${esc(t)}</option>`).join('')}</select>`;
+  const regiones = (iaProvDe('openai') || {}).regiones || [];
+  const region = `<select id="iaRegion"${cu.bloqueado ? ' disabled' : ''}>${regiones.map((r) => `<option value="${esc(r.codigo)}"${r.codigo === (iaCat().region || '') ? ' selected' : ''}>${esc(r.nombre)}</option>`).join('')}</select>`;
+  const ayudaClave = ck.configurado ? `Configurada${ck.ultimos ? ', termina en ' + esc(ck.ultimos) : ''}. Escribí para reemplazarla.` : '';
+  return `<div class="ia-elegir">
+    <div class="conf-campos ia-campos">
+      <label class="campo-conf"><span class="et">Proveedor</span>${sel}<span class="ayuda" id="iaProvAyuda"></span>${cp.bloqueado ? fijadoHTML(cp) : cu.bloqueado ? fijadoHTML(cu) : ''}</label>
+      <div class="campo-conf" id="iaClaveWrap"><label class="et" for="${idCampo('ia.api_key')}">Clave de API</label>
+        <div class="fila-secreto">${campoClave(idCampo('ia.api_key'), `autocomplete="off" spellcheck="false" placeholder="${ck.configurado ? 'Configurada' : 'Pegá la clave'}"${ck.bloqueado ? ' disabled' : ''}`)}</div>
+        <span class="ayuda"><strong id="iaClaveGuardada" data-texto="${esc(ayudaClave)}">${ayudaClave}</strong> <span id="iaClaveDonde"></span></span>${fijadoHTML(ck)}</div>
+      <label class="campo-conf" id="iaRegionWrap"><span class="et">Región de los datos</span>${region}
+        <span class="ayuda">Con una región, OpenAI guarda los datos ahí (y en la mayoría, también los procesa). Hay que habilitar la residencia de datos en el proyecto de OpenAI; si no, el dominio regional rechaza la clave. Usa <code id="iaRegionUrl"></code>.</span></label>
+      <label class="campo-conf" id="iaUrlWrap"><span class="et">URL</span>
+        <input id="${idCampo('ia.url')}" data-orig="${esc(g.url)}" value="${esc(g.url)}" inputmode="url" spellcheck="false" autocomplete="off"${cu.bloqueado ? ' disabled' : ''}>
+        <span class="ayuda" id="iaUrlAyuda"></span>${cu.bloqueado && !cp.bloqueado ? '' : ''}</label>
+    </div>
+    <div class="ia-modelo" id="iaModeloWrap">
+      <div class="campo-conf"><label class="et" for="iaModeloSel">Modelo</label>
+        <div class="fila-modelo"><select id="iaModeloSel"${cm.bloqueado ? ' disabled' : ''}></select>
+          <button type="button" class="ghost mini" data-accion="iaRecargar" title="Volver a pedirle la lista al proveedor" aria-label="Actualizar la lista de modelos"${cm.bloqueado ? ' disabled' : ''}>${I.restaurar}<span>Actualizar</span></button></div>
+        <input id="iaModeloMano" class="hidden" placeholder="El nombre exacto del modelo, como lo escribe el proveedor" spellcheck="false" autocomplete="off" aria-label="Otro modelo">
+        <input type="hidden" id="${idCampo('ia.modelo')}" data-orig="${esc(g.modelo)}" value="${esc(g.modelo)}">
+        <div id="iaModeloEstado" class="ia-estado" aria-live="polite"></div>${fijadoHTML(cm)}</div>
+      <div id="iaRecos" class="ia-recos"></div>
+    </div>
+    <div id="iaSinIA" class="ia-sin hidden">${I.info}<span>Sin IA, Factorum lee con el QR, el texto del PDF y el OCR. Lo que no pueda leer queda para completar a mano.</span></div>
+    <div id="iaDestino" class="ia-destino"></div>
+  </div>`;
+}
+
+// iaIniciar arma la sección con lo guardado (sin tocar nada) y pide la lista de modelos.
+function iaIniciar() {
+  if (!$('#conf-ia') || !IAUI) return;
+  iaAplicarProveedor(false);
+}
+
+// iaAplicarProveedor muestra lo que corresponde al proveedor elegido. Con nuevo, además completa la
+// URL y vacía la clave y el modelo (salvo que se vuelva al proveedor guardado).
+function iaAplicarProveedor(nuevo) {
+  const prov = iaEl('ia.proveedor').value;
+  const p = iaProvDe(prov);
+  const g = iaGuardado();
+  const url = iaEl('ia.url'), clave = iaEl('ia.api_key'), modelo = iaEl('ia.modelo');
+  const vuelve = prov === g.prov;
+  if (nuevo && !iaCampo('ia.url').bloqueado) {
+    url.value = vuelve ? g.url : (p && p.url) || '';
+    if (prov === 'openai') $('#iaRegion').value = vuelve ? (iaCat().region || '') : '';
+  }
+  if (nuevo) {
+    if (clave && !clave.disabled) clave.value = '';
+    modelo.value = vuelve ? g.modelo : '';
+    IAUI.lista = null;
+  }
+  const hay = !!p;
+  ['#iaModeloWrap', '#iaDestino'].forEach((s) => $(s).classList.toggle('hidden', !hay));
+  $('#iaUrlWrap').classList.toggle('hidden', !hay || prov === 'openai'); // en OpenAI la URL sale de la región
+  $('#iaRegionUrl').textContent = url.value;
+  $('#iaSinIA').classList.toggle('hidden', hay);
+  $('#iaRegionWrap').classList.toggle('hidden', prov !== 'openai');
+  $('#iaClaveWrap').classList.toggle('hidden', !p || p.clave === 'no');
+  $('#iaProvAyuda').textContent = p ? p.ayuda : 'Factorum no usa ninguna IA.';
+  // La URL se escribe solo donde tiene sentido (Ollama en otra máquina, otro servidor).
+  const editable = p && p.editable && !iaCampo('ia.url').bloqueado;
+  url.readOnly = !editable;
+  url.classList.toggle('solo-lectura', !editable);
+  url.placeholder = prov === 'otro' ? 'Por ejemplo: http://lmstudio:1234/v1' : '';
+  $('#iaUrlAyuda').textContent = !p ? '' : prov === 'ollama' ? 'Con el compose de Factorum es http://ollama:11434/v1. Si Ollama corre en otra máquina, cambiala.'
+    : prov === 'otro' ? 'La de la API compatible con OpenAI; suele terminar en /v1.' : prov === 'openai' ? 'La completa la región.' : `La de ${p.corto}: no hace falta cambiarla.`;
+  // La clave: dónde se saca y si la guardada sirve para este proveedor.
+  const g2 = $('#iaClaveGuardada');
+  if (g2) g2.innerHTML = vuelve ? g2.dataset.texto : (iaCampo('ia.api_key').configurado ? 'La clave guardada es de otro proveedor: escribí la nueva.' : '');
+  if (clave && !clave.disabled) clave.placeholder = vuelve && iaCampo('ia.api_key').configurado ? 'Configurada' : 'Pegá la clave';
+  $('#iaClaveDonde').innerHTML = p && p.clave_url ? `Se saca en <a class="link" href="${esc(p.clave_url)}" target="_blank" rel="noopener noreferrer">${esc(p.clave_donde)}${I.externo}</a>.`
+    : p && p.clave === 'opcional' ? 'Solo si tu servidor la pide.' : '';
+  iaPintarDestino();
+  iaPintarRecos();
+  iaPintarModelos();
+  if (hay) iaPedirModelos(false);
+}
+
+// iaPintarDestino: a dónde irían los comprobantes con lo que está en pantalla (el sello de verdad
+// lo calcula el servidor con el host; acá se muestra el que vino con la lista).
+function iaPintarDestino() {
+  const caja = $('#iaDestino');
+  const l = IAUI.lista;
+  if (!caja) return;
+  const a = CONF.ia_aviso || {};
+  // Si es lo mismo que ya se usa, el estado de abajo alcanza.
+  const igual = !l || !l.sello || (a.configurada && a.host && iaHost(l.url) === a.host);
+  $$('#conf-ia .ia-ahora-et').forEach((e) => e.classList.toggle('hidden', !!igual));
+  if (igual) { caja.innerHTML = ''; return; }
+  const yaAceptado = !l.local && a.aceptado && a.host && iaHost(l.url) === a.host;
+  caja.innerHTML = '<span class="ia-destino-et">Con lo que elegiste:</span>' + (l.local
+    ? `<span class="sello-ia local">${I.servidor}<span>${esc(l.sello)}</span></span>`
+    : `<span class="sello-ia externa">${I.nube}<span>${esc(l.sello)}</span></span><span class="muted">${yaAceptado ? 'El aviso de qué pasa con los datos ya está aceptado para este host.' : 'Antes de guardarla (o de probarla) vas a ver qué pasa con los datos y tenés que aceptarlo.'}</span>`);
+}
+// conPunto: los mensajes del servidor no siempre terminan en punto.
+const conPunto = (t) => (/[.!?…:)]$/.test(String(t || '').trim()) ? String(t).trim() : String(t || '').trim() + '.');
+const iaHost = (u) => { try { return new URL(u).host.toLowerCase(); } catch { return ''; } };
+
+// iaPedirModelos le pide la lista al servidor, que se la pide al proveedor. Lo último que se pidió
+// gana; lo ya pedido con los mismos datos sale del cache (Actualizar lo vuelve a pedir).
+async function iaPedirModelos(forzar) {
+  const prov = iaEl('ia.proveedor').value;
+  const p = iaProvDe(prov);
+  if (!p || !IAUI) return;
+  const url = iaEl('ia.url').value.trim();
+  const ce = iaEl('ia.api_key');
+  const clave = ce && !ce.disabled && p.clave !== 'no' ? ce.value.trim() : '';
+  if (p.editable && !url) { IAUI.lista = { proveedor: prov, exito: false, motivo: 'url', mensaje: 'Escribí la URL para ver los modelos.' }; iaPintarModelos(); return; }
+  const k = [prov, url, clave].join('\n');
+  const n = ++IAUI.pedido;
+  if (!forzar && IAUI.cache.has(k)) { IAUI.lista = IAUI.cache.get(k); iaPintarDestino(); iaPintarRecos(); iaPintarModelos(); return; }
+  IAUI.lista = { proveedor: prov, cargando: true };
+  iaPintarModelos();
+  let r;
+  try {
+    r = await api('/api/ia/modelos', { method: 'POST', json: { proveedor: prov, url, clave } });
+  } catch (e) { r = { proveedor: prov, exito: false, motivo: 'respuesta', mensaje: e.message }; }
+  if (!IAUI || n !== IAUI.pedido) return; // ya se pidió otra cosa
+  if (r.exito || r.motivo === 'clave' || r.motivo === 'vacia') IAUI.cache.set(k, r);
+  IAUI.lista = r;
+  iaPintarDestino();
+  iaPintarRecos();
+  iaPintarModelos();
+}
+
+// La etiqueta de cada opción: el nombre, el tamaño (Ollama) y, si Factorum lo probó, el resultado.
+function iaEtiqueta(m) {
+  let t = m.nombre && m.nombre !== m.id ? `${m.nombre} (${m.id})` : m.id;
+  if (m.recomendado && m.imagenes) return `${t} · probado: ${m.recomendado.porcentaje} %`;
+  if (m.detalle) t += ` · ${m.detalle}`;
+  if (!m.imagenes) t += ' · no lee imágenes';
+  return t;
+}
+
+function iaPintarModelos() {
+  const sel = $('#iaModeloSel');
+  if (!sel || !IAUI) return;
+  const l = IAUI.lista || {};
+  const actual = iaEl('ia.modelo').value;
+  const est = $('#iaModeloEstado');
+  const p = iaProvDe(iaEl('ia.proveedor').value) || {};
+  const opt = (m, dis) => `<option value="${esc(m.id)}"${dis ? ' disabled' : ''}>${esc(iaEtiqueta(m))}</option>`;
+  let h = '';
+  const ms = l.exito ? l.modelos || [] : [];
+  if (l.cargando) h = '<option value="">Pidiendo la lista…</option>';
+  else if (ms.length) {
+    // Los probados arriba, en el orden de la prueba (el mejor primero), y no se repiten abajo.
+    const orden = iaRecosDe(p.id).map((r) => r.modelo);
+    const recos = ms.filter((m) => m.recomendado && m.imagenes).sort((a, b) => orden.indexOf(a.id) - orden.indexOf(b.id));
+    const lee = ms.filter((m) => m.imagenes && !recos.includes(m)), no = ms.filter((m) => !m.imagenes);
+    const total = recos.length + lee.length;
+    h = `<option value="">Elegí un modelo (${total} ${total === 1 ? 'lee' : 'leen'} imágenes)</option>`;
+    if (recos.length) h += `<optgroup label="Probados por Factorum">${recos.map((m) => opt(m)).join('')}</optgroup>`;
+    if (p.id === 'openrouter') {
+      const grupos = [...new Set(lee.map((m) => m.grupo || 'Otros'))];
+      h += grupos.map((g) => `<optgroup label="${esc(g)}">${lee.filter((m) => (m.grupo || 'Otros') === g).map((m) => opt(m)).join('')}</optgroup>`).join('');
+    } else {
+      if (lee.length) h += `<optgroup label="${recos.length ? 'Los demás' : 'Leen imágenes'}">${lee.map((m) => opt(m)).join('')}</optgroup>`;
+    }
+    if (no.length) h += `<optgroup label="No leen imágenes">${no.map((m) => opt(m, true)).join('')}</optgroup>`;
+  } else {
+    h = `<option value="">${actual ? 'Elegí un modelo' : 'Sin lista: escribí el modelo'}</option>`;
+    if (actual) h += `<option value="${esc(actual)}">${esc(actual)}</option>`;
+  }
+  h += `<option value="${IA_OTRO}">Otro modelo…</option>`;
+  sel.innerHTML = h;
+  sel.disabled = !!l.cargando || iaCampo('ia.modelo').bloqueado;
+  const enLista = actual && [...sel.options].some((o) => o.value === actual && !o.disabled);
+  const mano = $('#iaModeloMano');
+  if (l.cargando) { sel.value = ''; }
+  else if (IAUI.aMano || (actual && !enLista)) { sel.value = IA_OTRO; mano.classList.remove('hidden'); if (document.activeElement !== mano) mano.value = actual; }
+  else { sel.value = actual || ''; mano.classList.add('hidden'); }
+  // Debajo: lo que pasa con la lista o el resultado de Factorum con el elegido.
+  if (l.cargando) { est.className = 'ia-estado cargando'; est.innerHTML = `<span class="girando" aria-hidden="true"></span><span>Pidiendo los modelos a ${esc(p.corto || 'el proveedor')}…</span>`; return; }
+  if (l.exito === false) {
+    const masClave = (l.motivo === 'clave' || l.motivo === 'sin_clave') && p.clave_url ? ` <a class="link" href="${esc(p.clave_url)}" target="_blank" rel="noopener noreferrer">Sacar una clave${I.externo}</a>` : '';
+    est.className = 'ia-estado ' + (l.motivo === 'sin_clave' || l.motivo === 'url' ? 'info' : 'mal');
+    const aMano = ['red', 'respuesta', 'vacia'].includes(l.motivo) ? ' También podés elegir «Otro modelo…» y escribirlo.' : '';
+    est.innerHTML = `${l.motivo === 'sin_clave' || l.motivo === 'url' ? I.info : I.alerta}<span>${esc(conPunto(l.mensaje))}${masClave}${aMano}</span>`;
+    return;
+  }
+  const m = ms.find((x) => x.id === actual);
+  const r = (m && m.recomendado) || iaRecosDe(p.id).find((x) => x.modelo === actual);
+  if (r) {
+    est.className = 'ia-estado ok';
+    est.innerHTML = `<span class="sello-prueba">${I.check}<span>${esc(r.texto)}</span></span><span class="muted">${esc(r.nota)} Es una prueba chica: el detalle está en «Probados por Factorum».</span>`;
+  } else if (ms.length && !ms.some((x) => x.imagenes)) {
+    est.className = 'ia-estado mal';
+    est.innerHTML = `${I.alerta}<span>Ninguno de tus modelos lee imágenes. Bajá uno, por ejemplo: <code>ollama pull qwen3-vl:4b-instruct</code></span>`;
+  } else if (m && m.nota) {
+    est.className = 'ia-estado'; est.innerHTML = `${I.info}<span>${esc(m.nota)}.</span>`;
+  } else if (actual && sel.value === IA_OTRO) {
+    est.className = 'ia-estado'; est.innerHTML = `${I.info}<span>Escrito a mano: tocá Probar para ver si lo lee.</span>`;
+  } else {
+    const n = ms.filter((x) => x.imagenes).length;
+    const filtro = { openai: ' (sin los de audio, voz, imágenes, embeddings y los que no son de chat)', openrouter: ' (los que reciben imágenes)', gemini: ' (sin los de audio, voz, imágenes y embeddings)', ollama: '' }[p.id] || '';
+    est.className = 'ia-estado'; est.innerHTML = ms.length ? `<span class="muted">Lista de ${esc(p.corto)}: ${n} ${n === 1 ? 'modelo' : 'modelos'}${p.id === 'otro' ? '' : ' que leen imágenes'}${filtro}${l.clave_guardada ? ', con la clave guardada' : ''}.</span>` : '';
+  }
+}
+
+// iaPintarRecos: los modelos que Factorum probó para este proveedor, con un botón para usarlos.
+function iaPintarRecos() {
+  const caja = $('#iaRecos');
+  if (!caja || !IAUI) return;
+  const prov = iaEl('ia.proveedor').value;
+  const p = iaProvDe(prov);
+  if (!p) { caja.innerHTML = ''; return; }
+  const rs = iaRecosDe(prov);
+  const l = IAUI.lista || {};
+  const lista = l.exito ? l.modelos || [] : null;
+  if (!rs.length) {
+    caja.innerHTML = `<p class="muted ia-recos-nada">${I.info}<span>Factorum todavía no probó modelos ${esc(iaDel(p))}. Elegí uno que lea imágenes y tocá <strong>Probar</strong>: manda un ticket de prueba y te dice qué leyó y cuánto tardó.</span></p>`;
+    return;
+  }
+  const filas = rs.map((r) => {
+    const esta = !lista || lista.some((m) => m.id === r.modelo && m.imagenes);
+    const elegido = iaEl('ia.modelo').value === r.modelo;
+    const accion = elegido ? `<span class="ia-elegido">${I.check}Elegido</span>`
+      : esta ? `<button type="button" class="ghost mini" data-accion="iaUsar" data-modelo="${esc(r.modelo)}">Usar</button>`
+      : prov === 'ollama' ? `<span class="ia-falta-modelo"><span class="muted">No está en tu Ollama:</span> <code>ollama pull ${esc(r.modelo)}</code><button type="button" class="ghost mini" data-accion="copiar" data-texto="ollama pull ${esc(r.modelo)}">${I.copiar}<span>Copiar</span></button></span>`
+        : '<span class="muted">No está en tu lista</span>';
+    return `<li><span class="ia-reco-mod mono">${esc(r.modelo)}</span>
+      <span class="ia-reco-pct" title="${esc(r.nota)}"><span class="prog mini-prog"><div style="width:${r.porcentaje}%"></div></span><strong>${r.porcentaje} %</strong></span>
+      <span class="ia-reco-t">${esc(r.tiempo)} por imagen${r.cpu ? ' en 4 núcleos sin GPU' : ''}${r.mitad ? ' · en la mitad de la prueba' : ''}</span>
+      <span class="ia-reco-acc">${accion}</span></li>`;
+  }).join('');
+  caja.innerHTML = `<h4>Probados por Factorum</h4><ul>${filas}</ul><p class="muted ia-recos-pie">${esc(iaCat().prueba || '')}</p>`;
+}
+const iaDel = (p) => (p.corto.startsWith('el ') ? 'del ' + p.corto.slice(3) : 'de ' + p.corto);
+
+function iaElegirModelo(v) {
+  const mano = $('#iaModeloMano');
+  if (v === IA_OTRO) {
+    IAUI.aMano = true;
+    mano.classList.remove('hidden');
+    mano.focus();
+    iaEl('ia.modelo').value = mano.value.trim();
+  } else {
+    IAUI.aMano = false;
+    mano.classList.add('hidden');
+    iaEl('ia.modelo').value = v;
+  }
+  $('#conf-ia .prueba').classList.add('hidden');
+  iaPintarModelos();
+  iaPintarRecos();
+}
+
+function iaUsar(modelo) {
+  const sel = $('#iaModeloSel');
+  const esta = [...sel.options].some((o) => o.value === modelo && !o.disabled);
+  IAUI.aMano = !esta;
+  iaEl('ia.modelo').value = modelo;
+  $('#iaModeloMano').value = modelo;
+  iaPintarModelos();
+  iaPintarRecos();
+  sel.focus();
+}
+
+// Lo que cambió en la sección IA (o todo lo de la pantalla, para Probar).
+function cambiosIA(todo) {
+  const out = {};
+  const prov = iaEl('ia.proveedor').value;
+  const libre = (k) => !iaCampo(k).bloqueado;
+  if (!prov) { // sin IA: vuelve a lo del servidor (o a nada)
+    ['ia.proveedor', 'ia.url', 'ia.modelo', 'ia.api_key'].forEach((k) => { if (libre(k) && iaCampo(k).origen === 'pantalla') out[k] = null; });
+    return out;
+  }
+  const val = { 'ia.proveedor': prov, 'ia.url': iaEl('ia.url').value.trim(), 'ia.modelo': iaEl('ia.modelo').value.trim() };
+  for (const [k, v] of Object.entries(val)) {
+    if (libre(k) && (todo || v !== iaEl(k).dataset.orig)) out[k] = v;
+  }
+  const ce = iaEl('ia.api_key');
+  if (ce && !ce.disabled && (iaProvDe(prov) || {}).clave !== 'no' && ce.value.trim()) out['ia.api_key'] = ce.value.trim();
+  return out;
+}
+
+// Probar la IA: lo que está en pantalla, con el ticket de prueba. Si es externa y no está
+// aceptada, primero el aviso.
+async function probarIA(btn) {
+  const caja = $('#conf-ia .prueba');
+  const cambios = cambiosIA(true);
+  const prov = iaProvDe(iaEl('ia.proveedor').value);
+  if (!prov) { caja.className = 'prueba mal'; caja.innerHTML = `${I.alerta}<span>Elegí un proveedor.</span>`; return; }
+  btn.disabled = true; btn.textContent = 'Probando...';
+  const lento = prov.id === 'ollama' ? ' Con Ollama sin GPU puede tardar uno o dos minutos.' : '';
+  caja.className = 'prueba'; caja.innerHTML = `<span class="girando" aria-hidden="true"></span><span>Mandándole el ticket de prueba a ${esc(prov.corto)}…${lento}</span>`;
+  const pedir = (acepta) => api('/api/configuracion/probar/ia', { method: 'POST', json: { cambios, aceptar_aviso_ia: acepta || undefined } });
+  try {
+    let r;
+    const ac = IAUI.aceptadoPrueba;
+    try {
+      r = await pedir(ac);
+    } catch (e) {
+      if (!(e.datos && e.datos.codigo === 'aviso_ia')) throw e;
+      const a = e.datos.aviso_ia;
+      if (!(await abrirAvisoIA(a, 'prueba'))) { caja.className = 'prueba'; caja.innerHTML = `${I.info}<span>No se probó: es una IA externa y no aceptaste el aviso.</span>`; return; }
+      IAUI.aceptadoPrueba = { host: a.host, version: a.version };
+      r = await pedir(IAUI.aceptadoPrueba);
+    }
+    caja.className = 'prueba ' + (r.exito ? 'bien' : 'mal');
+    const filas = (r.leido || []).map((f) => `<tr><th scope="row">${esc(f.campo)}</th><td class="mono">${esc(f.valor)}</td><td>${f.bien === true ? `<span class="ia-ok">${I.check}Bien</span>` : f.bien === false ? `<span class="ia-mal">${I.cruz}Era ${esc(f.esperado)}</span>` : ''}</td></tr>`).join('');
+    caja.innerHTML = `${r.exito ? I.check : I.alerta}<div class="prueba-ia"><span>${esc(r.mensaje)}</span>${filas ? `<table class="ia-leido"><caption>Qué leyó del ticket de prueba</caption><tbody>${filas}</tbody></table>` : ''}</div>`;
+  } catch (e) { caja.className = 'prueba mal'; caja.innerHTML = `${I.alerta}<span>${esc(e.message)}</span>`; }
+  finally { btn.disabled = false; btn.textContent = 'Probar'; }
 }
 
 // ---------- Ventana: Novedades y Acerca de ----------
@@ -1769,11 +2106,12 @@ const SECCIONES = {
       'Si querés el aviso de fin de lote, poné la URL de salida: llega un POST {chat, texto} firmado con HMAC-SHA256 en X-Factorum-Firma.',
       'Probar manda un aviso de prueba firmado a la URL de salida.'] },
   ia: { t: 'IA (visión)', d: 'Último recurso: solo completa lo que el QR, el texto y el OCR no pudieron leer.', probar: true, clave: ['ia.url', 'ia.modelo'],
-    como: ['Con Ollama en el mismo compose: docker compose --profile ia up -d y después docker compose exec ollama ollama pull qwen2.5vl:7b.',
-      'Endpoint: http://ollama:11434/v1. Modelo: qwen2.5vl:7b. Sin clave.',
-      'Con otro proveedor compatible con OpenAI (OpenAI, Anthropic, Google Gemini u otro), poné su endpoint, el modelo y la clave. Los comprobantes que necesiten IA van a salir del servidor: antes de guardar, Factorum te muestra a dónde viajan, cuánto tiempo se guardan y si entrenan con ellos, y tenés que aceptarlo. Sin esa aceptación no la usa.',
-      'Cada persona, la primera vez que marca «Usar IA si hace falta», ve el mismo aviso. Si cambiás de proveedor o de host, se pide de nuevo.',
-      'Probar lista los modelos del endpoint y controla que esté el elegido.'] },
+    como: ['Elegí el proveedor. La URL se completa sola; en Ollama y en «Otro» se puede cambiar.',
+      'Local: Ollama en tu servidor (docker compose --profile ia up -d y después docker compose exec ollama ollama pull qwen3-vl:4b-instruct). Las imágenes no salen, pero sin GPU tarda cerca de un minuto por imagen.',
+      'Externa: OpenAI, Anthropic, Google Gemini u OpenRouter, con su clave de API. Es rápida y lee mejor, pero los comprobantes que necesiten IA salen de tu servidor: antes de guardar, Factorum te muestra a dónde viajan, cuánto tiempo se guardan y si entrenan con ellos, y tenés que aceptarlo.',
+      'Con el proveedor (y la clave, si la pide), Factorum le pide la lista de modelos y deja solo los que leen imágenes. Los «Probados por Factorum» salen de una prueba chica con tickets de compra. Si el tuyo no está, elegí «Otro modelo…» y escribilo.',
+      'Probar manda un ticket de prueba (inventado) con lo que está en pantalla, aunque no lo hayas guardado, y te dice qué leyó y cuánto tardó.',
+      'Cada persona, la primera vez que marca «Usar IA si hace falta», ve el mismo aviso. Si cambiás de proveedor o de host, se pide de nuevo.'] },
   r2: { t: 'Almacenamiento R2', d: 'Dónde se guardan los archivos. Sin R2, en el disco del servidor. Siempre comprimidos y cifrados.', probar: true, clave: ['r2.endpoint', 'r2.bucket', 'r2.access_key', 'r2.secret_key'],
     como: ['En Cloudflare, R2, creá un bucket (por ejemplo factorum).', 'En «Administrar tokens de la API de R2», creá un token de lectura y escritura sobre ese bucket.',
       'Copiá el endpoint de S3 (https://<cuenta>.r2.cloudflarestorage.com), la access key y la secret key.', 'Probar guarda y borra un objeto de prueba.',
@@ -2157,7 +2495,8 @@ function pintarConfiguracion() {
     const campos = CONF.campos.filter((c) => c.seccion === sec);
     const editables = campos.some((c) => !c.bloqueado);
     const cuerpo = sec === 'correo_entrada' ? cuerpoCorreoEntrada(campos)
-      : `<div class="conf-campos">${campos.map(campoConfHTML).join('')}</div>${extraSeccion(sec)}${comoHTML(cfg)}`;
+      : sec === 'ia' && CONF.ia ? `${cuerpoIA()}${extraSeccion(sec)}${comoHTML(cfg)}`
+        : `<div class="conf-campos">${campos.map(campoConfHTML).join('')}</div>${extraSeccion(sec)}${comoHTML(cfg)}`;
     return `<section class="card conf" id="conf-${sec}" data-sec="${sec}">
       <div class="card-cab"><div><h3>${esc(cfg.t)}</h3><p class="muted conf-d">${esc(cfg.d)}</p></div>${estadoSeccion(sec, campos)}</div>
       ${cuerpo}
@@ -2170,6 +2509,7 @@ function pintarConfiguracion() {
   }).join('');
   refrescarWhatsApp();
   if ($('#conf-correo_entrada')) { mostrarProveedor(); actualizarUrlsCorreo(); }
+  iaIniciar();
   if (IR_SECCION) { const sec = IR_SECCION; IR_SECCION = ''; setTimeout(() => document.getElementById('conf-' + sec)?.scrollIntoView({ block: 'start' }), 30); }
   refrescarPase();
   cargarCopias();
@@ -2196,7 +2536,7 @@ function cambiosDe(sec, todo) {
 }
 
 async function guardarConf(sec, cambios, btn) {
-  cambios = cambios || cambiosDe(sec, false);
+  cambios = cambios || (sec === 'ia' && IAUI && $('#conf-ia') ? cambiosIA(false) : cambiosDe(sec, false));
   if (!Object.keys(cambios).length) { toast('No hay cambios'); return; }
   if (btn) btn.disabled = true;
   try {
@@ -2206,7 +2546,10 @@ async function guardarConf(sec, cambios, btn) {
       // Una IA externa nueva (o de otro host): antes de guardarla, el aviso de qué pasa con los datos.
       if (!(e.datos && e.datos.codigo === 'aviso_ia')) throw e;
       const a = e.datos.aviso_ia;
-      if (!(await abrirAvisoIA(a, 'admin'))) { toast('No se guardó. La IA externa no se usa hasta que aceptes el aviso.'); return; }
+      // Si lo acaba de aceptar para probarla (el mismo host y el mismo aviso), no se lo pide de nuevo.
+      const ap = IAUI && IAUI.aceptadoPrueba;
+      const yaVisto = ap && ap.host === a.host && ap.version === a.version;
+      if (!yaVisto && !(await abrirAvisoIA(a, 'admin'))) { toast('No se guardó. La IA externa no se usa hasta que aceptes el aviso.'); return; }
       CONF = await api('/api/configuracion', { method: 'PUT', json: { cambios, aceptar_aviso_ia: { host: a.host, version: a.version } } });
     }
     pintarConfiguracion();
@@ -2218,6 +2561,7 @@ async function guardarConf(sec, cambios, btn) {
 }
 
 async function probarConf(sec, btn) {
+  if (sec === 'ia' && IAUI && $('#conf-ia')) { probarIA(btn); return; }
   const caja = $(`#conf-${sec} .prueba`);
   btn.disabled = true; btn.textContent = 'Probando...';
   caja.className = 'prueba'; caja.textContent = 'Probando...';
@@ -2645,9 +2989,27 @@ function pintarConectar() {
         <p class="muted">En Claude Desktop: Configuración, Desarrollador, Editar configuración. Pegá el bloque, reemplazá <code>${clave}</code> por tu clave y reiniciá Claude. Hace falta Node (npx).</p>
       </section>
     </div>
-    ${AVISO_IA && AVISO_IA.configurada && AVISO_IA.en_uso ? `<section class="card ia-conectar"><div class="card-cab"><h3>IA</h3></div>
-      <p class="muted">${SALUD && SALUD.ia_por_defecto === false ? 'Por la API se puede pedir la IA con <code>ia=true</code>; los chats, el correo y MCP no la usan (está apagada en Configuración, General).' : 'Lo que llega por los chats, el correo, MCP y la API (salvo que mande <code>ia=false</code>) usa la IA cuando el QR, el texto y el OCR no alcanzan.'}</p>
-      <div class="ia-conf">${selloIA(AVISO_IA)}</div></section>` : ''}`;
+    ${conectarIA()}`;
+}
+
+// En Conectar: qué IA se usa y cómo elegirla (local o externa), con lo que Factorum probó.
+function conectarIA() {
+  const a = AVISO_IA || {};
+  const recos = a.recomendados || [];
+  const usa = a.configurada && a.en_uso;
+  const estado = usa ? `<div class="ia-conf">${selloIA(a)}${a.modelo ? `<span class="muted">Modelo <code>${esc(a.modelo)}</code></span>` : ''}</div>
+      <p class="muted">${SALUD && SALUD.ia_por_defecto === false ? 'Por la API se puede pedir la IA con <code>ia=true</code>; los chats, el correo y MCP no la usan (está apagada en Configuración, General).' : 'Lo que llega por los chats, el correo, MCP y la API (salvo que mande <code>ia=false</code>) usa la IA cuando el QR, el texto y el OCR no alcanzan.'}</p>`
+    : `<p class="muted">${a.configurada ? 'Hay una IA externa configurada, pero no se usa hasta que un superadmin acepte el aviso de qué pasa con los datos.' : 'Factorum no usa ninguna IA: lee con el QR, el texto del PDF y el OCR. La IA es opcional y es el último recurso.'}</p>`;
+  const fila = (r) => `<li><code>${esc(r.modelo)}</code><span><strong>${esc(r.porcentaje)} %</strong> · ${esc(r.tiempo)} por imagen${r.cpu ? ' en 4 núcleos sin GPU' : ''}${r.mitad ? ' (en la mitad de la prueba)' : ''}</span></li>`;
+  const de = (p) => recos.filter((r) => r.proveedor === p).map(fila).join('');
+  const elegir = miRol() === 'superadmin' ? '<button type="button" class="ghost mini" data-accion="irConf" data-sec="ia">Elegir la IA</button>' : '';
+  return `<section class="card ia-conectar"><div class="card-cab"><h3>IA (visión)</h3>${elegir}</div>
+      ${estado}
+      <div class="ia-como">
+        <div class="ia-como-col"><h4>${I.servidor}Local: Ollama en tu servidor</h4><p class="muted">Las imágenes no salen de tu servidor. Sin GPU es lento y lee menos.</p>${de('ollama') ? `<ul>${de('ollama')}</ul>` : ''}</div>
+        <div class="ia-como-col"><h4>${I.nube}Externa: OpenAI, Anthropic, Gemini, OpenRouter</h4><p class="muted">Rápida y lee mejor, pero los comprobantes que necesitan IA salen de tu servidor: antes de usarla hay que aceptar el aviso.</p>${de('openai') ? `<ul>${de('openai')}</ul>` : ''}</div>
+      </div>
+      ${a.prueba ? `<p class="muted ia-como-pie">${esc(a.prueba)}</p>` : ''}</section>`;
 }
 
 // ---------- Auditoría ----------
@@ -2657,6 +3019,8 @@ const ACCIONES = {
   'usuario.crear': 'Alta de persona', 'usuario.editar': 'Cambio de persona', 'usuario.desactivar': 'Desactivó a una persona',
   'usuario.reactivar': 'Reactivó a una persona', 'usuario.restablecer': 'Restableció una contraseña', 'usuario.cambiar_clave': 'Cambió su contraseña',
   'clave.crear': 'Creó una clave de API', 'clave.revocar': 'Revocó una clave de API', 'config.cambiar': 'Cambió la configuración',
+  'config.probar_ia': 'Probó la IA', 'ia.aviso_aceptado': 'Aceptó el aviso de la IA externa', 'ia.aviso_visto': 'Vio el aviso de la IA externa',
+  'ia.aviso_aceptado_prueba': 'Aceptó el aviso de la IA para probarla',
   'config.whatsapp_desvincular': 'Desvinculó WhatsApp', 'comprobante.corregir': 'Corrigió un comprobante', 'comprobante.aprobar': 'Aprobó un comprobante',
   'exportar': 'Exportó', 'lote.crear': 'Cargó un lote', 'suite.pase_emitido': 'Pase de la suite emitido', 'suite.pase_usado': 'Entró con un pase de la suite',
   'suite.pase_rechazado': 'Pase de la suite rechazado', 'suite.abrir': 'Abrió otra app de la suite', 'suite.abrir_fallido': 'No pudo abrir otra app',
@@ -2731,6 +3095,8 @@ document.addEventListener('click', (ev) => {
     case 'hacerCopia': hacerCopia(el); break;
     case 'verCopias': ir('configuracion'); setTimeout(() => document.getElementById('conf-copias')?.scrollIntoView({ block: 'start' }), 400); break;
     case 'probarConf': probarConf(el.dataset.sec, el); break;
+    case 'iaRecargar': iaPedirModelos(true); break;
+    case 'iaUsar': iaUsar(el.dataset.modelo); break;
     case 'generarToken': {
       const b = new Uint8Array(24); crypto.getRandomValues(b);
       const i = document.getElementById(el.dataset.para);
@@ -2883,6 +3249,9 @@ document.addEventListener('change', (ev) => {
   if (ev.target.id === 'ckSuite') $('#ckTopeWrap').classList.toggle('hidden', !ev.target.checked);
   if (ev.target.name === 'correoForma') cambiarForma(ev.target.value);
   if (ev.target.id === idCampo('correo.proveedor')) mostrarProveedor();
+  if (ev.target.id === idCampo('ia.proveedor')) { IAUI.aMano = false; $('#conf-ia .prueba').classList.add('hidden'); iaAplicarProveedor(true); }
+  if (ev.target.id === 'iaRegion') { const r = ((iaProvDe('openai') || {}).regiones || []).find((x) => x.codigo === ev.target.value); if (r) { iaEl('ia.url').value = r.url; $('#iaRegionUrl').textContent = r.url; } iaPedirModelos(false); }
+  if (ev.target.id === 'iaModeloSel') iaElegirModelo(ev.target.value);
   if (ev.target.id === 'concCliente') { $('#concOtroWrap').classList.toggle('hidden', ev.target.value !== 'otro'); if (ev.target.value === 'otro') $('#concOtro').focus(); }
   if (ev.target.id === 'concDesde' || ev.target.id === 'concHasta') marcarAtajo();
   if (ev.target.id === 'usAlcance') $('#usCuitsWrap').classList.toggle('hidden', ev.target.value !== 'estos');
@@ -2895,6 +3264,12 @@ document.addEventListener('input', (ev) => {
   if (ev.target.id === 'borrarYaConf') { const b = $('[data-accion="borrarYaConfirmar"]'); if (b) b.disabled = ev.target.value.trim().toLowerCase() !== 'borrar'; }
   if (ev.target.closest('#revForm')) ev.target.classList.toggle('cambiado', ev.target.value !== ev.target.dataset.orig);
   if (ev.target.id === idCampo('correo.token')) actualizarUrlsCorreo();
+  if (ev.target.id === 'iaModeloMano') { iaEl('ia.modelo').value = ev.target.value.trim(); $('#conf-ia .prueba').classList.add('hidden'); }
+  // La clave o la URL nuevas: la lista se vuelve a pedir cuando se deja de escribir.
+  if ((ev.target.id === idCampo('ia.api_key') || ev.target.id === idCampo('ia.url')) && IAUI) {
+    clearTimeout(IAUI.timer);
+    IAUI.timer = setTimeout(() => iaPedirModelos(false), 700);
+  }
 });
 
 document.addEventListener('keydown', (ev) => {

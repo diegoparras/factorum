@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -565,6 +566,36 @@ func TestZip(t *testing.T) {
 			t.Errorf("el resumen no tiene %q:\n%s", want, csv)
 		}
 	}
+}
+
+// Una copia con un error de lectura (la foto del mismo ticket) no tapa a la que está bien: va la
+// buena y la otra figura solo como duplicada.
+func TestDuplicadoConUnaCopiaMalLeida(t *testing.T) {
+	bien := juego()[4].C
+	mal := bien
+	mal.IVA21 = 0 // la foto leyó mal el IVA
+	r := generar(t, []Entrada{{ID: 1, Estado: modelo.EstadoError, C: mal}, {ID: 2, Estado: modelo.EstadoAprobado, C: bien}}, Opciones{})
+	if len(r.Registros) != 1 || r.Registros[0].ID != 2 {
+		t.Fatalf("va la que está bien: %+v", r.Registros)
+	}
+	if len(r.Grupos) != 1 || r.Grupos[0].Codigo != "duplicado" || r.Grupos[0].Items[0].ID != 1 {
+		t.Fatalf("la mal leída figura solo como duplicada: %+v", r.Grupos)
+	}
+	// Las dos mal: la primera muestra sus problemas.
+	r = generar(t, []Entrada{{ID: 1, Estado: modelo.EstadoError, C: mal}, {ID: 2, Estado: modelo.EstadoError, C: mal}}, Opciones{})
+	if len(r.Registros) != 0 || !strings.Contains(fmtGrupos(r), "neto_sin_iva:1") || !strings.Contains(fmtGrupos(r), "duplicado:2") {
+		t.Fatalf("las dos mal: %s", fmtGrupos(r))
+	}
+}
+
+func fmtGrupos(r *Resultado) string {
+	var p []string
+	for _, g := range r.Grupos {
+		for _, it := range g.Items {
+			p = append(p, fmt.Sprintf("%s:%d", g.Codigo, it.ID))
+		}
+	}
+	return strings.Join(p, " ")
 }
 
 func TestLaClaveDelDuplicadoUsaElCUITLimpio(t *testing.T) {

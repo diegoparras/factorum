@@ -577,10 +577,12 @@ func Generar(es []Entrada, o Opciones) (*Resultado, error) {
 		as[i] = o.analizar(&es[i], desde, hasta)
 	}
 
-	// Duplicados: mismo emisor, tipo, punto de venta y número. Va uno solo.
+	// Duplicados: mismo emisor, tipo, punto de venta y número. Va uno solo: el que no tiene problemas
+	// que bloqueen, el aprobado, el que está bien, el más viejo. Si todas las copias están
+	// bloqueadas, la primera muestra sus problemas y las otras figuran como duplicadas.
 	porClave := map[string][]*analisis{}
 	for _, a := range as {
-		if k := clave(&a.e.C); k != "" && !a.bloqueado {
+		if k := clave(&a.e.C); k != "" {
 			porClave[k] = append(porClave[k], a)
 		}
 	}
@@ -589,15 +591,22 @@ func Generar(es []Entrada, o Opciones) (*Resultado, error) {
 			continue
 		}
 		sort.SliceStable(g, func(i, j int) bool {
+			if g[i].bloqueado != g[j].bloqueado {
+				return !g[i].bloqueado
+			}
 			if p, q := prioridad(g[i]), prioridad(g[j]); p != q {
 				return p < q
 			}
 			return g[i].e.ID < g[j].e.ID
 		})
 		for _, a := range g[1:] {
-			// La copia que sobra solo se informa como duplicada: lo demás ya se ve en la que va.
-			a.probs = nil
-			a.add("duplicado", "Es el mismo que el %d, que es el que va.", g[0].e.ID)
+			// La copia que sobra solo se informa como duplicada: lo demás ya se ve en la otra.
+			a.probs, a.fuerte = nil, false
+			if g[0].bloqueado {
+				a.add("duplicado", "Es el mismo que el %d.", g[0].e.ID)
+			} else {
+				a.add("duplicado", "Es el mismo que el %d, que es el que va.", g[0].e.ID)
+			}
 		}
 	}
 

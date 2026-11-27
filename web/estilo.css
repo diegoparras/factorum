@@ -390,3 +390,7 @@ td.detalle { font-size:12.5px; max-width:420px; }
 .modal-card.ancho { width:min(680px, calc(100vw - 24px)); }
 @media (max-width: 600px) { .modal-back { padding:12px; } .modal-card { padding:18px; } }
 @media (max-width: 760px) { table.t.tarjetas td:empty { display:none; } }
+
+/* Acciones de una fila que no entran: se acomodan en dos renglones en lugar de cortarse. */
+.acc-apiladas { display:flex; flex-wrap:wrap; gap:4px; justify-content:flex-end; max-width:230px; margin-left:auto; white-space:nowrap; }
+.acc-apiladas button { margin:0; }

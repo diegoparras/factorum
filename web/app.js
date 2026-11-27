@@ -1056,9 +1056,9 @@ async function cargarUsuarios() {
           <td>${rolChip(u.rol)}</td><td>${cuitsHTML(u.cuits)}</td><td>${esc(ORIGEN_U[u.origen] || u.origen)}</td>
           <td>${u.ultimo_ingreso ? fechaHora(u.ultimo_ingreso) : '<span class="muted">Nunca</span>'}${u.debe_cambiar ? '<br><span class="est revisar">Contraseña temporal</span>' : ''}</td>
           <td>${u.activo ? '<span class="est ok">Activa</span>' : '<span class="est">Desactivada</span>'}</td>
-          <td class="acciones-fila">${tocable ? `<button type="button" class="ghost mini" data-accion="editarUsuario" data-id="${u.id}">Editar</button>
-            <button type="button" class="ghost mini" data-accion="restablecer" data-id="${u.id}">Restablecer contraseña</button>
-            ${u.id !== yo.usuario_id ? `<button type="button" class="ghost mini" data-accion="activarUsuario" data-id="${u.id}" data-activo="${u.activo ? '' : '1'}">${u.activo ? 'Desactivar' : 'Reactivar'}</button>` : ''}` : '<span class="muted">Solo un superadmin</span>'}</td></tr>`;
+          <td class="acciones-fila">${tocable ? `<div class="acc-apiladas"><button type="button" class="ghost mini" data-accion="editarUsuario" data-id="${u.id}">Editar</button>
+            <button type="button" class="ghost mini" data-accion="restablecer" data-id="${u.id}" title="Restablecer la contraseña">Nueva contraseña</button>
+            ${u.id !== yo.usuario_id ? `<button type="button" class="ghost mini" data-accion="activarUsuario" data-id="${u.id}" data-activo="${u.activo ? '' : '1'}">${u.activo ? 'Desactivar' : 'Reactivar'}</button>` : ''}</div>` : '<span class="muted">Solo un superadmin</span>'}</td></tr>`;
       }).join('')}</tbody></table></div>`;
     tarjetas('#usuarios');
   } catch (e) { toast(e, true); }

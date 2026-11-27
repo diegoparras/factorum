@@ -24,8 +24,9 @@ type Recomendado struct {
 	CPU       bool   `json:"cpu"`      // tiempo en el servidor de 4 núcleos sin GPU
 
 	Porcentaje int    `json:"porcentaje"`
-	Corto      string `json:"corto"` // para la opción: «100 % · ~7 s»
-	Texto      string `json:"texto"` // «Probado por Factorum: 100 % · ~7 s por imagen»
+	Tiempo     string `json:"tiempo"` // «~7 s», «~3 min 45 s»
+	Corto      string `json:"corto"`  // para la opción: «100 % · ~7 s»
+	Texto      string `json:"texto"`  // «Probado por Factorum: 100 % · ~7 s por imagen»
 	Nota       string `json:"nota,omitempty"`
 }
 
@@ -49,6 +50,7 @@ var Recomendados = func() []Recomendado {
 func armar(r Recomendado) Recomendado {
 	r.Porcentaje = int(math.Round(float64(r.Campos) * 100 / float64(r.Total)))
 	t := "~" + duracion(r.Segundos)
+	r.Tiempo = t
 	r.Corto = fmt.Sprintf("%d %% · %s", r.Porcentaje, t)
 	pct := fmt.Sprintf("%d %%", r.Porcentaje)
 	if r.Mitad {

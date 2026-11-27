@@ -430,7 +430,7 @@ func TestProbar(t *testing.T) {
 	if !r.Exito || r.Segundos != 3.4 || !strings.Contains(r.Mensaje, "leyó bien el ticket de prueba") || !strings.Contains(r.Mensaje, "3,4 s") {
 		t.Fatalf("bien: %+v", r)
 	}
-	if r.Leido[0].Valor != "30-70888888-1" || !*r.Leido[0].Bien || r.Leido[1].Valor != "$ 44.062,50" || r.Leido[2].Valor != "EL TREBOL S.R.L." || r.Leido[4].Valor != "00003-00045678" {
+	if r.Leido[0].Valor != "30-70888888-1" || !*r.Leido[0].Bien || r.Leido[1].Valor != "$ 44.062,50" || r.Leido[2].Valor != "EL TREBOL S.R.L." || r.Leido[3].Valor != "22/11/2026" || r.Leido[4].Valor != "00003-00045678" {
 		t.Errorf("qué leyó: %+v", r.Leido)
 	}
 
@@ -448,6 +448,10 @@ func TestProbar(t *testing.T) {
 	}
 	if b, _ := json.Marshal(r); strings.Contains(string(b), claveSecreta) {
 		t.Error("la clave no vuelve")
+	}
+	// En una región de OpenAI, un 401 suele ser la residencia de datos sin habilitar.
+	if m := mensajeError(&extractor.ErrorModelo{Status: 401}, "OpenAI", "x", "eu.api.openai.com", 1); !strings.Contains(m, "residencia de datos") {
+		t.Errorf("401 en una región: %s", m)
 	}
 	cerrado := httptest.NewServer(http.NotFoundHandler())
 	cerrado.Close()

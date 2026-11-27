@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/diegoparras/factorum/internal/arca"
+	"github.com/diegoparras/factorum/internal/avisoia"
 	"github.com/diegoparras/factorum/internal/extractor"
 	"github.com/diegoparras/factorum/internal/modelo"
 )
@@ -55,7 +56,11 @@ func Probar(ctx context.Context, v *extractor.Vision, prov string, ahora func() 
 	c, err := v.Extraer(ctx, TicketPrueba, "image/png", "")
 	seg := math.Round(ahora().Sub(t0).Seconds()*10) / 10
 	if err != nil {
-		return Resultado{Mensaje: Ocultar(mensajeError(err, nombre, v.Modelo, seg), v.APIKey), Modelo: v.Modelo}
+		region := ""
+		if d := avisoia.Detectar(v.BaseURL); d.Proveedor == avisoia.OpenAI && d.Region != "" {
+			region = d.Host
+		}
+		return Resultado{Mensaje: Ocultar(mensajeError(err, nombre, v.Modelo, region, seg), v.APIKey), Modelo: v.Modelo}
 	}
 	bien := func(b bool) *bool { return &b }
 	cuitOK := c.CUITEmisor == PruebaCUIT
@@ -64,7 +69,7 @@ func Probar(ctx context.Context, v *extractor.Vision, prov string, ahora func() 
 		{Campo: "CUIT del emisor", Valor: cuitTexto(c.CUITEmisor), Esperado: arca.FormatearCUIT(PruebaCUIT), Bien: bien(cuitOK)},
 		{Campo: "Total", Valor: totalTexto(c), Esperado: "$ " + PruebaTotal.AR(), Bien: bien(totalOK)},
 		{Campo: "Razón social", Valor: vacioSi(c.RazonSocialEmisor)},
-		{Campo: "Fecha", Valor: vacioSi(c.Fecha)},
+		{Campo: "Fecha", Valor: fechaTexto(c.Fecha)},
 		{Campo: "Punto de venta y número", Valor: numeroTexto(c)},
 	}
 	r := Resultado{Segundos: seg, Modelo: v.Modelo, Leido: leido}
@@ -85,11 +90,13 @@ func Probar(ctx context.Context, v *extractor.Vision, prov string, ahora func() 
 	return r
 }
 
-func mensajeError(err error, nombre, mod string, seg float64) string {
+func mensajeError(err error, nombre, mod, region string, seg float64) string {
 	var em *extractor.ErrorModelo
 	if errors.As(err, &em) {
 		cuerpo := strings.ToLower(em.Cuerpo)
 		switch {
+		case (em.Status == 401 || em.Status == 403) && region != "":
+			return fmt.Sprintf("OpenAI no acepta la clave en %s: revisá la clave y que el proyecto tenga habilitada la residencia de datos en esa región.", region)
 		case em.Status == 401 || em.Status == 403:
 			return "La clave no es válida para " + nombre + "."
 		case em.Status == 404 || strings.Contains(cuerpo, "model_not_found") || strings.Contains(cuerpo, "does not exist") || strings.Contains(cuerpo, "not found"):
@@ -142,6 +149,16 @@ func vacioSi(s string) string {
 		return "(no lo leyó)"
 	}
 	return s
+}
+
+// fechaTexto: 2026-11-22 como 22/11/2026.
+func fechaTexto(s string) string {
+	if a, m, ok := strings.Cut(s, "-"); ok && len(s) == 10 {
+		if m2, d, ok := strings.Cut(m, "-"); ok {
+			return d + "/" + m2 + "/" + a
+		}
+	}
+	return vacioSi(s)
 }
 
 func cuitTexto(s string) string {

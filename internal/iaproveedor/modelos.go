@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/diegoparras/factorum/internal/avisoia"
 )
 
 // Modelo es una opción del select de modelos.
@@ -160,6 +162,9 @@ func (l lector) pedir(ctx context.Context, metodo, u string, cab map[string]stri
 		}
 		if l.prov.ID == Otro {
 			return nil, &Error{MotivoClave, fmt.Sprintf("El servidor no acepta la clave (%d)", res.StatusCode)}
+		}
+		if d := avisoia.Detectar(u); l.prov.ID == OpenAI && d.Region != "" {
+			return nil, &Error{MotivoClave, fmt.Sprintf("OpenAI no acepta la clave en %s: revisá la clave y que el proyecto tenga habilitada la residencia de datos en esa región", d.Host)}
 		}
 		return nil, &Error{MotivoClave, "La clave no es válida para " + l.prov.Corto}
 	}

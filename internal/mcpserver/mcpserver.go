@@ -98,8 +98,9 @@ type ConciliarIn struct {
 }
 
 type LibroIVAIn struct {
-	Cliente       string `json:"cliente,omitempty" jsonschema:"CUIT del cliente (el comprador); vacío si la clave tiene un solo cliente"`
+	Cliente       string `json:"cliente,omitempty" jsonschema:"CUIT del cliente (el que presenta el libro); vacío si la clave tiene un solo cliente"`
 	Periodo       string `json:"periodo" jsonschema:"mes, AAAA-MM"`
+	Libro         string `json:"libro,omitempty" jsonschema:"compras (por defecto), ventas (los emitidos de Mis Comprobantes, vía Arcanum) o importaciones (los despachos de importación)"`
 	SoloAprobados bool   `json:"solo_aprobados,omitempty" jsonschema:"true: solo lo que está bien o aprobado y sin advertencias fuertes"`
 	Limite        int    `json:"limite,omitempty" jsonschema:"comprobantes por grupo de problemas (por defecto 20, hasta 100)"`
 }
@@ -115,14 +116,36 @@ func libroCorto(l *app.LibroIVA, limite int) map[string]any {
 	for _, g := range l.Grupos {
 		its := make([]map[string]any, 0, min(len(g.Items), limite))
 		for _, it := range g.Items[:min(len(g.Items), limite)] {
-			its = append(its, map[string]any{"id": it.ID, "comprobante": it.NombreTipo, "punto_venta": it.PuntoVenta, "numero": it.Numero, "fecha": it.Fecha,
-				"cuit_emisor": it.CUITEmisor, "emisor": it.Emisor, "total": it.Total, "moneda": it.Moneda, "detalle": it.Detalle, "va_en_el_archivo": !it.Excluido})
+			x := map[string]any{"comprobante": it.NombreTipo, "punto_venta": it.PuntoVenta, "numero": it.Numero, "fecha": it.Fecha,
+				"contraparte": it.Contraparte, "documento": it.Doc, "total": it.Total, "moneda": it.Moneda, "detalle": it.Detalle, "va_en_el_archivo": !it.Excluido}
+			if it.ID > 0 {
+				x["id"] = it.ID
+			}
+			if it.Despacho != "" {
+				x["despacho"] = it.Despacho
+			}
+			its = append(its, x)
 		}
 		grupos = append(grupos, map[string]any{"codigo": g.Codigo, "nivel": g.Nivel, "titulo": g.Titulo, "ayuda": g.Ayuda, "cantidad": len(g.Items), "comprobantes": its})
 	}
-	return map[string]any{"cliente": l.Cliente, "periodo": l.Periodo, "solo_aprobados": l.SoloAprobados, "comprobantes": len(l.Registros),
+	p := l.Presentacion
+	pres := map[string]any{"estado": p.Estado, "veces": p.Veces, "cambio_desde_la_presentacion": p.Cambio}
+	if p.Ultima != nil {
+		pres["ultima"] = map[string]any{"fecha": p.Ultima.Creado, "usuario": p.Ultima.Usuario, "comprobantes": p.Ultima.Cantidad, "solo_aprobados": p.Ultima.SoloAprobados}
+	}
+	if p.Cambios != nil && p.Cambio {
+		pres["cambios"] = map[string]any{"agregados": len(p.Cambios.Agregados), "quitados": len(p.Cambios.Quitados), "modificados": len(p.Cambios.Modificados)}
+	}
+	m := map[string]any{"libro": l.Libro, "cliente": l.Cliente, "periodo": l.Periodo, "solo_aprobados": l.SoloAprobados, "comprobantes": len(l.Registros),
 		"excluidos": l.Excluidos, "cantidad_todos": l.CantidadTodos, "cantidad_listos": l.CantidadListos, "resumen": l.Resumen,
-		"problemas": grupos, "conciliacion": l.Conciliacion, "importar": l.Importar}
+		"problemas": grupos, "importar": l.Importar, "presentacion": pres}
+	if l.Libro == "compras" {
+		m["conciliacion"] = l.Conciliacion
+	}
+	if f := l.Fuente; f != nil {
+		m["fuente"] = map[string]any{"estado": f.Estado, "mensaje": f.Mensaje, "cubre_todo": f.CubreTodo, "sin_sincronizar": f.SinSincronizar, "truncado": f.Truncado}
+	}
+	return m
 }
 
 // conciliacionCorta recorta la conciliación para un asistente: totales completos y hasta limite
@@ -367,8 +390,10 @@ func Nuevo(a *app.App, id *auth.Identidad) *mcp.Server {
 		})
 
 	if operador {
-		mcp.AddTool(s, &mcp.Tool{Name: "libro_iva_resumen", Description: "Resumen del Libro IVA Digital de compras de un cliente en un mes (lo que iría en los archivos de importación de ARCA): " +
-			"cantidad de comprobantes, neto e IVA por alícuota, crédito fiscal computable, total (las notas de crédito restan; la moneda extranjera aparte) y los problemas a resolver antes de exportar, " +
+		mcp.AddTool(s, &mcp.Tool{Name: "libro_iva_resumen", Description: "Resumen del Libro IVA Digital de un cliente en un mes (lo que iría en los archivos de importación de ARCA), " +
+			"de compras (por defecto), ventas (los emitidos de Mis Comprobantes, vía Arcanum) o importaciones (despachos): " +
+			"cantidad de comprobantes, neto e IVA por alícuota, crédito fiscal computable (compras), percepciones, total (las notas de crédito restan; la moneda extranjera aparte), " +
+			"si el período ya se presentó (exportó) y si cambió algo desde entonces, y los problemas a resolver antes de exportar, " +
 			"agrupados por nivel: bloquea (no va), fuerte (apócrifo, ARCA no lo reconoce, otro comprador), advertencia e info. Solo consulta: los archivos se bajan desde la pantalla o la API."},
 			func(ctx context.Context, _ *mcp.CallToolRequest, in LibroIVAIn) (*mcp.CallToolResult, any, error) {
 				ctx, cancel := context.WithTimeout(ctx, timeout)
@@ -380,7 +405,7 @@ func Nuevo(a *app.App, id *auth.Identidad) *mcp.Server {
 				if cliente == "" {
 					return nil, nil, errors.New("indicá el CUIT del cliente (cliente)")
 				}
-				l, err := a.LibroIVA(ctx, cliente, in.Periodo, in.SoloAprobados, true)
+				l, err := a.LibroIVA(ctx, cliente, in.Periodo, in.Libro, in.SoloAprobados, true)
 				if err != nil {
 					return nil, nil, err
 				}

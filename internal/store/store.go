@@ -426,6 +426,10 @@ func (s *Store) GuardarResultado(ctx context.Context, doc *Documento, r *modelo.
 				_ = tx.QueryRow(ctx, `SELECT id FROM comprobantes WHERE cliente_cuit=$1 AND cuit_emisor=$2 AND tipo=$3 AND punto_venta=$4 AND numero=$5 AND documento_id<>$6 AND borrado_en IS NULL ORDER BY id LIMIT 1`,
 					cliente, c.CUITEmisor, c.Tipo, c.PuntoVenta, c.Numero, doc.ID).Scan(&dup)
 			}
+			// Si su mes ya se presentó en el Libro IVA Digital, va al primer período abierto.
+			if _, err := AsignarPeriodo(ctx, tx, cliente, c, &rc.Hallazgos, 0); err != nil {
+				return err
+			}
 			if dup != nil {
 				rc.Hallazgos = append(rc.Hallazgos, modelo.Hallazgo{Codigo: "duplicado", Nivel: modelo.NivelAviso,
 					Mensaje: fmt.Sprintf("Este comprobante ya se cargó antes (comprobante %d).", *dup)})
@@ -452,16 +456,28 @@ func fechaONull(s string) any {
 	return s
 }
 
+// periodoValidoONull es el período del libro para la columna: el elegido, o el mes de una fecha
+// válida; NULL sin fecha (la misma regla que la migración 010).
+func periodoValidoONull(c *modelo.Comprobante) any {
+	if c.PeriodoIVA != "" {
+		return c.PeriodoIVA
+	}
+	if f := fechaONull(c.Fecha); f != nil {
+		return c.Fecha[:7]
+	}
+	return nil
+}
+
 func insertarCbte(ctx context.Context, tx pgx.Tx, lote, doc int64, cliente string, orden int, rc *modelo.ResultadoCbte, dup *int64) (int64, error) {
 	c := &rc.Comprobante
 	datos, _ := json.Marshal(c)
 	hall, _ := json.Marshal(rc.Hallazgos)
 	var id int64
 	err := tx.QueryRow(ctx, `INSERT INTO comprobantes (documento_id, lote_id, cliente_cuit, orden, tipo, punto_venta, numero, fecha, cuit_emisor,
-		razon_social_emisor, total, datos, hallazgos, estado, confianza, duplicado_de)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING id`,
+		razon_social_emisor, total, datos, hallazgos, estado, confianza, duplicado_de, periodo_iva)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) RETURNING id`,
 		doc, lote, cliente, orden, c.Tipo, c.PuntoVenta, c.Numero, fechaONull(c.Fecha), c.CUITEmisor, c.RazonSocialEmisor,
-		int64(c.Total), datos, hall, string(rc.Estado), rc.Confianza, dup).Scan(&id)
+		int64(c.Total), datos, hall, string(rc.Estado), rc.Confianza, dup, periodoValidoONull(c)).Scan(&id)
 	return id, err
 }
 
@@ -710,10 +726,11 @@ func (s *Store) ActualizarCbte(ctx context.Context, c *Cbte, correcciones []Corr
 		}
 		ct, err := tx.Exec(ctx, `UPDATE comprobantes SET datos=$2, hallazgos=$3, estado=$4, confianza=$5, constatacion=$6,
 			tipo=$7, punto_venta=$8, numero=$9, fecha=$10, cuit_emisor=$11, razon_social_emisor=$12, total=$13, actualizado=now(),
-			revisado_por=coalesce($14, revisado_por), revisado_en=CASE WHEN $14::text IS NULL THEN revisado_en ELSE now() END
+			revisado_por=coalesce($14, revisado_por), revisado_en=CASE WHEN $14::text IS NULL THEN revisado_en ELSE now() END,
+			periodo_iva=$15
 			WHERE id=$1 AND borrado_en IS NULL`,
 			c.ID, datos, hall, string(c.Estado), c.Confianza, cons, c.Datos.Tipo, c.Datos.PuntoVenta, c.Datos.Numero, fechaONull(c.Datos.Fecha),
-			c.Datos.CUITEmisor, c.Datos.RazonSocialEmisor, int64(c.Datos.Total), revPor)
+			c.Datos.CUITEmisor, c.Datos.RazonSocialEmisor, int64(c.Datos.Total), revPor, periodoValidoONull(&c.Datos))
 		if err != nil {
 			return err
 		}

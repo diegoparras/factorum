@@ -328,6 +328,10 @@ func (c *Cliente) ConstatarTodo(ctx context.Context, consultante string, cbtes [
 	apocs := map[string]Constatacion{}
 	ahora := time.Now().UTC().Format(time.RFC3339)
 	for i, cb := range cbtes {
+		if cb.Tipo == modelo.TipoDespacho {
+			res[i] = Constatacion{Error: "los despachos de importación no se constatan en ARCA (WSCDC no los cubre)"}
+			continue
+		}
 		if !cb.EsTique && !arca.EsTique(cb.Tipo) {
 			facturas = append(facturas, cb)
 			idxF = append(idxF, i)
@@ -509,6 +513,76 @@ func (c *Cliente) MisRecibidos(ctx context.Context, cuit, desde, hasta string) (
 	}
 	if r.Comprobantes == nil {
 		r.Comprobantes = []Recibido{}
+	}
+	return &r, nil
+}
+
+// AlicuotaEmitida es el neto y el IVA de una alícuota de un emitido (id: código de ARCA).
+type AlicuotaEmitida struct {
+	ID          int     `json:"id"`
+	NetoGravado float64 `json:"netoGravado"`
+	IVA         float64 `json:"iva"`
+}
+
+// TributoEmitido es un tributo de un emitido (id: tabla de tributos de WSFEv1).
+type TributoEmitido struct {
+	ID          int     `json:"id"`
+	Descripcion string  `json:"descripcion"`
+	Importe     float64 `json:"importe"`
+}
+
+// Emitido es un comprobante de Mis Comprobantes (emitidos) como lo devuelve Arcanum 2.4.0. Los
+// importes vienen en la moneda del comprobante. Alicuotas, Tributos y OtrosTributos en nil: no se
+// conocen.
+type Emitido struct {
+	Fecha            string            `json:"fecha"`
+	CbteTipo         int               `json:"cbteTipo"`
+	PuntoVenta       int               `json:"puntoVenta"`
+	NumeroDesde      int64             `json:"numeroDesde"`
+	NumeroHasta      int64             `json:"numeroHasta"`
+	CAE              string            `json:"cae"`
+	DocTipo          int               `json:"docTipo"`
+	DocNro           string            `json:"docNro"`
+	Receptor         string            `json:"receptor"`
+	Moneda           string            `json:"moneda"`
+	TipoCambio       float64           `json:"tipoCambio"`
+	NetoGravado      float64           `json:"netoGravado"`
+	NoGravado        float64           `json:"noGravado"`
+	Exento           float64           `json:"exento"`
+	IVA              float64           `json:"iva"`
+	OtrosTributos    *float64          `json:"otrosTributos"`
+	Total            float64           `json:"total"`
+	Alicuotas        []AlicuotaEmitida `json:"alicuotas"`
+	FuenteAlicuotas  string            `json:"fuenteAlicuotas"`
+	DesgloseDistinto bool              `json:"desgloseDistinto"`
+	Tributos         []TributoEmitido  `json:"tributos"`
+	EmisionArcanum   bool              `json:"emisionArcanum"`
+	FechaVtoPago     string            `json:"fechaVtoPago"`
+}
+
+// Emitidos es la respuesta de GET /api/mis-comprobantes/:cuit/emitidos.
+type Emitidos struct {
+	CUIT         string    `json:"cuit"`
+	Desde        string    `json:"desde"`
+	Hasta        string    `json:"hasta"`
+	Total        int       `json:"total"`
+	Tope         int       `json:"tope"`
+	Truncado     bool      `json:"truncado"`
+	Cobertura    Cobertura `json:"cobertura"`
+	Comprobantes []Emitido `json:"comprobantes"`
+}
+
+// MisEmitidos pide a Arcanum (2.4.0 o superior) los comprobantes que el CUIT emitió según Mis
+// Comprobantes entre desde y hasta (por fecha de emisión), con el detalle por alícuota cuando lo
+// hay, y qué parte de ese período está bajada.
+func (c *Cliente) MisEmitidos(ctx context.Context, cuit, desde, hasta string) (*Emitidos, error) {
+	var r Emitidos
+	ruta := "/api/mis-comprobantes/" + url.PathEscape(arca.SoloDigitos(cuit)) + "/emitidos?desde=" + url.QueryEscape(desde) + "&hasta=" + url.QueryEscape(hasta)
+	if err := c.pedirHasta(ctx, http.MethodGet, ruta, nil, &r, 64<<20); err != nil {
+		return nil, err
+	}
+	if r.Comprobantes == nil {
+		r.Comprobantes = []Emitido{}
 	}
 	return &r, nil
 }

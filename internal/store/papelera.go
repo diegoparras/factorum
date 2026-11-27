@@ -316,12 +316,17 @@ func (s *Store) RestaurarTx(ctx context.Context, tx pgx.Tx, ref RefPapelera, alc
 			if err := rows.Err(); err != nil {
 				return err
 			}
-			ct, err := tx.Exec(ctx, `UPDATE comprobantes SET borrado_en=NULL, borrado_por=NULL, borrado_con_lote=false WHERE lote_id=$1 AND borrado_con_lote`, ref.ID)
+			rows, err = tx.Query(ctx, `UPDATE comprobantes SET borrado_en=NULL, borrado_por=NULL, borrado_con_lote=false WHERE lote_id=$1 AND borrado_con_lote RETURNING id`, ref.ID)
 			if err != nil {
 				return err
 			}
-			r.Lotes, r.Comprobantes = 1, int(ct.RowsAffected())
-			return nil
+			ids, err := pgx.CollectRows(rows, pgx.RowTo[int64])
+			if err != nil {
+				return err
+			}
+			r.Lotes, r.Comprobantes = 1, len(ids)
+			// Lo que vuelve y es de un período ya presentado va al primer período abierto.
+			return reasignarPeriodos(ctx, tx, ids)
 		case PapeleraComprobante:
 			var doc int64
 			var loteBorrado, docBorrado bool
@@ -355,7 +360,7 @@ func (s *Store) RestaurarTx(ctx context.Context, tx pgx.Tx, ref RefPapelera, alc
 				return err
 			}
 			r.Comprobantes = 1
-			return nil
+			return reasignarPeriodos(ctx, tx, []int64{ref.ID})
 		}
 		return fmt.Errorf("%w: tipo %q (puede ser lote o comprobante)", ErrFiltro, ref.Tipo)
 	}()

@@ -62,6 +62,9 @@ var recibidosFalsos atomic.Value
 
 var recibidosLlamadas atomic.Int32
 
+// emitidosFalsos arma la respuesta de Mis Comprobantes (emitidos) del Arcanum falso.
+var emitidosFalsos atomic.Value
+
 // paseArcanum guarda el último pedido de pase que recibió el Arcanum falso.
 var paseArcanum atomic.Value
 
@@ -141,6 +144,16 @@ func arcanumFalso(t *testing.T, llamadas *atomic.Int32) *httptest.Server {
 				return
 			}
 			cuit := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/mis-comprobantes/"), "/recibidos")
+			st, cuerpo := f(cuit, r.URL.Query().Get("desde"), r.URL.Query().Get("hasta"))
+			w.WriteHeader(st)
+			_ = json.NewEncoder(w).Encode(cuerpo)
+		case strings.HasPrefix(r.URL.Path, "/api/mis-comprobantes/") && strings.HasSuffix(r.URL.Path, "/emitidos"):
+			f, _ := emitidosFalsos.Load().(func(cuit, desde, hasta string) (int, any))
+			if f == nil {
+				w.WriteHeader(404)
+				return
+			}
+			cuit := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/mis-comprobantes/"), "/emitidos")
 			st, cuerpo := f(cuit, r.URL.Query().Get("desde"), r.URL.Query().Get("hasta"))
 			w.WriteHeader(st)
 			_ = json.NewEncoder(w).Encode(cuerpo)
@@ -226,7 +239,7 @@ func armarOpc(t *testing.T, o opcEntorno) *entorno {
 	}
 	// Base limpia en cada corrida.
 	if o.url == "" {
-		if _, err := st.Pool.Exec(ctx, `TRUNCATE lotes, documentos, comprobantes, correcciones, rubros_cuit, usuarios, sesiones, claves_api, configuracion, auditoria, pases_suite, correo_mensajes, correo_adjuntos, tokens_cuenta, avisos_enviados RESTART IDENTITY CASCADE`); err != nil {
+		if _, err := st.Pool.Exec(ctx, `TRUNCATE lotes, documentos, comprobantes, correcciones, rubros_cuit, usuarios, sesiones, claves_api, configuracion, auditoria, pases_suite, correo_mensajes, correo_adjuntos, tokens_cuenta, avisos_enviados, libro_iva_exportaciones RESTART IDENTITY CASCADE`); err != nil {
 			t.Fatal(err)
 		}
 	}

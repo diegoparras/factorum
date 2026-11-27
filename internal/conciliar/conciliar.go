@@ -659,6 +659,9 @@ func causa(it *Item, c *Comprobante, cliente string, sinSync []Periodo) {
 	case esTique(c):
 		it.Causa = CausaTique
 		it.Nota = "Los tiques de controlador fiscal no van a Mis Comprobantes."
+	case c.Tipo == 66:
+		it.Causa = CausaExterior
+		it.Nota = "Los despachos de importación no van a Mis Comprobantes: van en el libro de importaciones."
 	case NormalizarMoneda(c.Moneda) != "PES" || tp.Letra == "E" || emisorDelExterior(c.CUITEmisor):
 		it.Causa = CausaExterior
 		it.Nota = "Comprobante en moneda extranjera o del exterior: puede no figurar en Mis Comprobantes."

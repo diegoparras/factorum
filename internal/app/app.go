@@ -786,11 +786,18 @@ var CamposEditables = map[string]string{
 	"iva_5": "m", "iva_2_5": "m", "otros_tributos": "m", "subtotal": "m", "iva_contenido": "m", "total": "m",
 	"cae": "c", "vto_cae": "d",
 	"hora": "s", "rubro": "s",
+	// Libro IVA Digital (0.10.0): el período del libro (AAAA-MM; vacío vuelve al automático), el
+	// despacho de importación y el detalle de los otros tributos.
+	"periodo_iva": "p", "despacho": "s",
+	"percepcion_iva": "m", "percepcion_nacionales": "m", "percepcion_iibb": "m", "percepcion_municipal": "m", "impuestos_internos": "m",
 }
+
+var rePeriodo = regexp.MustCompile(`^(19|20)\d\d-(0[1-9]|1[0-2])$`)
 
 var reHora = regexp.MustCompile(`^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$`)
 
-var codigosPersistentes = map[string]bool{"qr_distinto_texto": true, "duplicado": true, "ia_contradice_qr": true, "ia_fallo": true, "ocr_fallo": true}
+var codigosPersistentes = map[string]bool{"qr_distinto_texto": true, "duplicado": true, "ia_contradice_qr": true, "ia_fallo": true, "ocr_fallo": true,
+	store.CodigoLlegoTarde: true, "despacho_leido": true}
 
 // Corregir aplica cambios hechos por una persona, los registra y recalcula los controles.
 func (a *App) Corregir(ctx context.Context, id int64, campos map[string]string, aprobar bool, usuario string) (*store.Cbte, error) {
@@ -827,7 +834,18 @@ func (a *App) Corregir(ctx context.Context, id int64, campos map[string]string, 
 				if v != "" && !reHora.MatchString(v) {
 					return nil, fmt.Errorf("hora: %q no es una hora válida (HH:MM o HH:MM:SS)", v)
 				}
+			case "despacho":
+				v = arca.NormalizarDespacho(v)
+				if v != "" && !arca.DespachoValido(v) {
+					return nil, fmt.Errorf("despacho: %q no tiene los 16 caracteres (letras y números) que pide ARCA", v)
+				}
+				nuevo = v
 			}
+		case "p":
+			if v != "" && !rePeriodo.MatchString(v) {
+				return nil, fmt.Errorf("período del libro: %q no es un mes con el formato AAAA-MM", v)
+			}
+			nuevo = v
 		case "c":
 			nuevo = arca.SoloDigitos(v)
 		case "d":
@@ -873,19 +891,41 @@ func (a *App) Corregir(ctx context.Context, id int64, campos map[string]string, 
 	if err := json.Unmarshal(b, &d); err != nil {
 		return nil, err
 	}
+	cambio := map[string]bool{}
 	for _, k := range cambios {
 		d.Marcar(k.Campo, modelo.OrigenManual)
+		cambio[k.Campo] = true
 	}
 	if d.Tipo != 0 {
 		d.EsTique = arca.EsTique(d.Tipo)
 	}
-	c.Datos = d
 	var h []modelo.Hallazgo
 	for _, x := range c.Hallazgos {
 		if codigosPersistentes[x.Codigo] || codigosConstatacion[x.Codigo] {
 			h = append(h, x)
 		}
 	}
+	// El período del libro: el que elige una persona (no puede ser anterior al mes de la fecha), o
+	// el automático, que se vuelve a decidir si cambió la fecha o el tipo (o si se borró el elegido).
+	switch {
+	case cambio["periodo_iva"] && d.PeriodoIVA != "":
+		if len(d.Fecha) >= 7 && d.PeriodoIVA < d.Fecha[:7] {
+			return nil, fmt.Errorf("período del libro: %s es anterior a la fecha del comprobante (%s)", d.PeriodoIVA, d.Fecha)
+		}
+		var sin []modelo.Hallazgo
+		for _, x := range h {
+			if x.Codigo != store.CodigoLlegoTarde {
+				sin = append(sin, x)
+			}
+		}
+		h = sin
+	case cambio["periodo_iva"] || ((cambio["fecha"] || cambio["tipo"]) && d.Origen("periodo_iva") != modelo.OrigenManual):
+		delete(d.Origenes, "periodo_iva")
+		if _, err := a.Store.AsignarPeriodo(ctx, c.ClienteCUIT, &d, &h, c.ID); err != nil {
+			return nil, err
+		}
+	}
+	c.Datos = d
 	h = append(h, validar.Comprobante(&d, time.Now())...)
 	c.Hallazgos = h
 	c.Confianza = validar.Confianza(&d, h)

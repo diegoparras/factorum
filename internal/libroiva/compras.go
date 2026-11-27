@@ -27,6 +27,18 @@ func claveCompra(c *modelo.Comprobante) string {
 	return fmt.Sprintf("%s-%d-%d-%d", cuit, c.Tipo, c.PuntoVenta, c.Numero)
 }
 
+// ClaveCompra identifica un comprobante de compra (o un despacho, por su número) entre
+// exportaciones: es la clave con la que va en el registro de una exportación. "" si no se puede.
+func ClaveCompra(c *modelo.Comprobante) string {
+	if c.Tipo == modelo.TipoDespacho {
+		if d := arca.NormalizarDespacho(c.Despacho); d != "" {
+			return "despacho:" + d
+		}
+		return ""
+	}
+	return claveCompra(c)
+}
+
 func baseCompra(e *Entrada, clave string) Item {
 	c := &e.C
 	cuit := arca.SoloDigitos(c.CUITEmisor)

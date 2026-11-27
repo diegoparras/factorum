@@ -115,11 +115,23 @@ El cuello de botella posible es el modelo de visión (segundos por página), y p
 Requisitos: Docker.
 
 ```bash
-cp .env.example .env   # completá FACTORUM_DB_PASSWORD, FACTORUM_API_KEY y FACTORUM_MASTER_KEY
+cp .env.example .env   # completá FACTORUM_DB_PASSWORD y FACTORUM_MASTER_KEY
 docker compose up -d
 ```
 
-Entrá a **http://localhost:8095** con la clave de API.
+### Primera vez: el primer superadmin
+
+Sin usuarios, Factorum genera un **código de un solo uso** y lo escribe en el log:
+
+```bash
+docker compose logs factorum | grep codigo_arranque
+# o, en el contenedor:
+docker compose exec factorum factorum salud
+```
+
+Entrá a **http://localhost:8095**: la pantalla muestra «Crear el primer superadmin» y pide el código, tu nombre, tu email y una contraseña (10 caracteres o más). Después, desde **Configuración**, completá la URL pública, Arcanum, los canales y el resto; desde **Usuarios**, sumá a las demás personas.
+
+El código vale hasta que se crea el primer superadmin; si reiniciás antes, se genera otro.
 
 Con un modelo de visión local:
 
@@ -141,20 +153,54 @@ No necesita base de datos. Usa todos los núcleos.
 
 ## Configuración
 
-Todo es por variables de entorno. Ver [.env.example](.env.example).
+Hacen falta solo tres variables de entorno; todo lo demás se configura desde la pantalla **Configuración** (superadmin), con un botón **Probar** por sección y el paso a paso de cada una. Al guardar, se aplica sin reiniciar (Arcanum, el modelo de visión, el almacén, Telegram, WhatsApp y el webhook).
 
 | Variable | Para qué |
 |---|---|
-| `FACTORUM_DATABASE_URL` | Postgres (obligatoria para `serve`) |
-| `FACTORUM_API_KEY` / `FACTORUM_API_KEY_LECTURA` | Claves de operador y de solo lectura |
-| `FACTORUM_MASTER_KEY` | Cifra todo lo que se guarda (AES-256-GCM). Obligatoria con R2 |
+| `FACTORUM_DATABASE_URL` | Postgres (obligatoria) |
+| `FACTORUM_MASTER_KEY` | Obligatoria. Cifra los archivos y la configuración secreta (AES-256-GCM). Guardala fuera del servidor |
+| `FACTORUM_PUERTO` | Puerto (por defecto 8095) |
+
+Si una variable de configuración está puesta, **gana**: en la pantalla el campo aparece bloqueado con «fijado por el servidor (variable X)». Las que se pueden poner son estas (ver [.env.example](.env.example)):
+
+| Variable | Para qué |
+|---|---|
+| `FACTORUM_URL_PUBLICA`, `FACTORUM_NOMBRE` | La dirección que ve el navegador (cookies seguras y suite) y el nombre de la instalación |
+| `FACTORUM_API_KEY` / `FACTORUM_API_KEY_LECTURA` | Claves del entorno: de rol usuario (la que usa Arcanum) y de lectura. Las demás claves se crean en **Claves de API** |
+| `FACTORUM_API_KEY_SUITE_TOPE` | Habilita `FACTORUM_API_KEY` para abrir sesiones desde Arcanum, con ese rol tope (`lectura`, `usuario`, `admin` o `superadmin`) |
+| `FACTORUM_SUITE_CREAR_USUARIOS` | Crear la cuenta de quien llega desde otra app de la suite (por defecto, sí) |
+| `FACTORUM_IA_POR_DEFECTO`, `FACTORUM_CONSTATAR_POR_DEFECTO` | Lo que viene marcado al cargar |
 | `FACTORUM_R2_*` | R2 o cualquier S3. Sin esto, guarda en disco (`/data`) |
 | `LLM_API_BASE_URL`, `LLM_MODEL`, `LLM_API_KEY` | Modelo de visión compatible con OpenAI (Ollama, LM Studio, vLLM...) |
-| `ARCANUM_URL`, `ARCANUM_API_KEY`, `ARCANUM_CUIT_CONSULTANTE` | Constatación, apócrifos y padrón |
+| `ARCANUM_URL`, `ARCANUM_URL_PUBLICA`, `ARCANUM_API_KEY`, `ARCANUM_CUIT_CONSULTANTE` | Constatación, apócrifos, padrón y el pase de la suite |
 | `FACTORUM_TELEGRAM_TOKEN`, `FACTORUM_TELEGRAM_PERMITIDOS` | Bot de Telegram |
 | `FACTORUM_WHATSAPP`, `FACTORUM_WHATSAPP_PERMITIDOS` | WhatsApp como dispositivo vinculado |
 | `FACTORUM_WEBHOOK_TOKEN`, `FACTORUM_WEBHOOK_SALIDA_URL` | Webhook genérico (secretaria, Evolution API, n8n) |
+| `FACTORUM_CANAL_CLIENTES` | Qué cliente es cada remitente de chat (`5491155550000=20222222223,...`) |
 | `FACTORUM_WORKERS` | Documentos en paralelo (por defecto, los núcleos) |
+
+## Usuarios, roles y claves
+
+| Rol | Puede |
+|---|---|
+| `lectura` | Mirar: listados, resumen, exportar y verificar sin guardar |
+| `usuario` | Además cargar, revisar, corregir, constatar y aprobar |
+| `admin` | Además personas (hasta admin), claves de API, los clientes de los canales y la auditoría |
+| `superadmin` | Todo, incluida la configuración y los otros superadmin |
+
+- **Alcance por cliente.** A cada persona y a cada clave se le pueden asignar CUITs de cliente: solo ve y carga lo de esos clientes (en la pantalla, la API y MCP). Vacío = todos.
+- **Contraseñas** con argon2id, de 10 caracteres o más. Al crear a alguien o restablecerle la contraseña, Factorum genera una temporal que se muestra una sola vez y que obliga a cambiarla al entrar. Después de cinco intentos fallidos hay que esperar, cada vez más.
+- **Sesión** por cookie (HttpOnly, SameSite=Lax y Secure con URL pública https); vence a las 12 horas sin uso.
+- **Claves de API** (`fct_...`) desde la pantalla, con rol, clientes, vencimiento y la marca «Puede abrir sesiones de la suite». Se muestran una sola vez; Factorum guarda solo su SHA-256. La pantalla ya no entra con una clave de API: las claves son para la API, MCP y las otras apps.
+- **Auditoría** (admin): entradas, salidas, intentos fallidos, personas, claves, configuración (qué cambió, nunca el valor), correcciones, aprobaciones, exportaciones y pases de la suite.
+
+### Suite Escriba: de Arcanum a Factorum y vuelta
+
+Con las dos apps conectadas, se pasa de una a la otra sin volver a loguearse (contrato en [docs/suite-pase.md](docs/suite-pase.md)):
+
+- **De Factorum a Arcanum**: en Configuración, Arcanum, cargá la URL interna, la pública y una clave de Arcanum habilitada para la suite. Aparece el ícono de grilla arriba a la derecha con «Arcanum».
+- **De Arcanum a Factorum**: Arcanum usa `FACTORUM_TOKEN`. Puede ser una clave creada en Claves de API con «Puede abrir sesiones de la suite», o `FACTORUM_API_KEY` con `FACTORUM_API_KEY_SUITE_TOPE`. Factorum necesita su URL pública.
+- La persona entra con **su** rol de Factorum si ya tiene cuenta (no se escala), topeado por el rol tope de la clave; si no tiene cuenta, se crea con el rol que trae (también topeado).
 
 ## Canales de mensajería
 
@@ -174,17 +220,17 @@ Listo: 3 comprobante(s). 2 bien, 1 para revisar, 0 con errores.
 | Canal | Cómo |
 |---|---|
 | **Telegram** | Bot API oficial, sin riesgo de bloqueo |
-| **WhatsApp** | whatsmeow, como dispositivo vinculado. Se vincula desde la pestaña Canales con el QR o con un código. No es oficial: el número se puede bloquear |
+| **WhatsApp** | whatsmeow, como dispositivo vinculado. Se vincula desde Configuración, WhatsApp, con el QR o con un código. No es oficial: el número se puede bloquear |
 | **Webhook** | Tu bot existente (la secretaria con Baileys, Evolution API, n8n) manda `POST /api/canales/webhook` y recibe la respuesta. Los avisos posteriores van firmados con HMAC a `FACTORUM_WEBHOOK_SALIDA_URL` |
 
 ## MCP
 
-`POST /mcp` es Streamable HTTP, con la misma clave que la API. Factorum no necesita un LLM, pero uno se le puede conectar así:
+`POST /mcp` es Streamable HTTP, con una clave de API (cada clave ve solo sus clientes). La pantalla **Conectar** trae los bloques listos para Claude Code y Claude Desktop. Para un asistente, conviene una clave de rol lectura. Factorum no necesita un LLM, pero uno se le puede conectar así:
 
 | Herramienta | Qué hace |
 |---|---|
 | `verificar_factura` | Veredicto de legalidad, sin guardar nada |
-| `procesar_factura` | Carga y procesa una factura (solo con clave de operador) |
+| `procesar_factura` | Carga y procesa una factura (solo con clave de rol usuario o más) |
 | `buscar_comprobantes` | Busca entre lo cargado |
 | `comprobante` | Un comprobante con todos sus datos |
 | `pendientes_revision` | Lo que tiene que mirar una persona |
@@ -200,7 +246,8 @@ Ver [docs/API.md](docs/API.md).
 - Por defecto, **ninguna IA ve los comprobantes**.
 - Los archivos se guardan comprimidos y **cifrados antes de salir del proceso**: ni el disco ni el bucket de R2 los ven en claro.
 - Sin la master key no se abren. Guardala fuera del servidor.
-- Los logs nunca llevan contenido de facturas ni claves.
+- Los logs nunca llevan contenido de facturas, contraseñas, claves, tokens ni pases.
+- La configuración secreta (claves de Arcanum, de R2, del modelo, el token de Telegram y del webhook) se guarda cifrada con la master key y nunca vuelve completa por la API.
 
 ## Desarrollo
 
@@ -228,7 +275,9 @@ Las facturas de prueba se generan con el modelo "ARCA" de Arcanum, que copia "Co
 | `internal/app` | Orquestación, cola y canales |
 | `internal/almacen` | Disco o R2, con zstd y AES-GCM |
 | `internal/arcanum` | Constatación y padrón |
-| `internal/api` | REST |
+| `internal/auth` | Roles, identidad y alcance por CUIT, argon2id, tokens y límite de intentos |
+| `internal/ajustes` | La configuración desde la pantalla, con el entorno que gana y la recarga en caliente |
+| `internal/api` | REST, sesiones, usuarios, claves, auditoría y el pase de la suite |
 | `internal/mcpserver` | MCP |
 | `internal/canal/*` | Telegram, WhatsApp y webhook |
 | `web/` | UI sin build, con el sistema de diseño de la suite |

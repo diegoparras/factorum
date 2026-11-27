@@ -2,6 +2,39 @@
 
 Cada versión publicada tiene su sección. La imagen Docker toma la versión de la primera.
 
+## [0.3.0] - 2026-11-27
+
+### Usuarios y roles
+
+- Se entra con email y contraseña. La primera vez, Factorum pide crear el primer superadmin con un código de un solo uso que aparece en el log del servidor (o con `factorum salud`).
+- Cuatro roles: lectura (solo mira), usuario (carga, revisa, corrige y aprueba), admin (además personas, claves de API, clientes y auditoría) y superadmin (todo, también la configuración).
+- A cada persona se le pueden asignar los CUITs de los clientes que atiende: solo ve, carga y exporta lo de esos clientes, en la pantalla, la API y MCP.
+- Pantalla Usuarios: alta con una contraseña temporal que se muestra una sola vez y obliga a cambiarla al entrar, cambio de rol y de clientes, desactivar, reactivar y restablecer la contraseña.
+- Menú de usuario arriba a la derecha con tu nombre, tu rol, «Cambiar mi contraseña» y «Cerrar sesión». La sesión vence a las 12 horas sin uso y, después de cinco intentos fallidos, hay que esperar.
+- Lectura no ve los botones de cargar, corregir ni aprobar.
+
+### Configuración desde la pantalla
+
+- Casi todo lo que antes iba en variables de entorno se configura en Configuración: general (nombre y URL pública), Arcanum, Telegram, WhatsApp, webhook, el modelo de visión, el almacenamiento en R2 y qué cliente es cada remitente de chat.
+- Cada sección trae «Cómo se configura» con el paso a paso y un botón «Probar» que hace una prueba de verdad y dice qué falló.
+- Al guardar se aplica en el momento, sin reiniciar.
+- Las claves y tokens se guardan cifrados y nunca se vuelven a mostrar: solo «configurado» y los últimos cuatro caracteres. Lo que fija el servidor con una variable de entorno gana y aparece bloqueado.
+- La vinculación de WhatsApp (el QR) pasó de Canales a Configuración.
+- Ahora hacen falta solo `FACTORUM_DATABASE_URL`, `FACTORUM_MASTER_KEY` (obligatoria) y, si querés, `FACTORUM_PUERTO`.
+
+### Claves de API y Conectar
+
+- Pantalla Claves de API: cada una con nombre, rol, clientes, vencimiento y último uso; se muestra una sola vez y se puede revocar.
+- Pantalla Conectar: cómo usar la API REST y MCP, con los bloques listos para pegar en Claude Code y Claude Desktop.
+
+### Auditoría
+
+- Quién entró (y quién lo intentó), quién salió, altas y cambios de personas y claves, cambios de configuración (qué cambió, nunca el valor), correcciones, aprobaciones, exportaciones y pases entre apps. Con filtros por fecha, persona y acción.
+
+### Suite Escriba
+
+- Con Arcanum conectado, el ícono de grilla de arriba abre Arcanum sin volver a loguearte, y desde Arcanum se entra a Factorum igual. Cada uno entra con su rol en la app de destino, nunca con uno mayor.
+
 ## [0.2.0] - 2026-11-26
 
 ### Tickets de compra

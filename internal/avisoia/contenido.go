@@ -138,6 +138,13 @@ func Aviso(d Deteccion) Contenido {
 			Texto: "Antes de usarlo, revisá sus términos: si guarda los datos, cuánto tiempo, si entrena con ellos y en qué país los procesa."}
 		donde.Destacado = "Fuera de tu servidor"
 		donde.Puntos = []string{fmt.Sprintf("A los servidores de **%s**, fuera de tu servidor.", d.Host), "En qué país los procesa: revisalo en sus términos."}
+		if d.Proveedor == OpenRouter {
+			// OpenRouter es un intermediario: lo que pasa con los datos depende también de quién atiende el modelo.
+			c.Alerta = &Alerta{Nivel: "aviso", Titulo: "Factorum no tiene datos verificados de OpenRouter",
+				Texto: "OpenRouter le pasa cada pedido al proveedor del modelo que elijas (OpenAI, Google, Anthropic u otros). Antes de usarlo, revisá sus términos y los de ese proveedor: si guardan los datos, cuánto tiempo, si entrenan con ellos y en qué país los procesan."}
+			donde.Puntos = []string{fmt.Sprintf("A los servidores de OpenRouter (**%s**), fuera de tu servidor, y de ahí al proveedor del modelo que elijas.", d.Host),
+				"En qué país los procesan: revisalo en sus términos y en los del proveedor del modelo."}
+		}
 		c.Tarjetas = []Tarjeta{donde,
 			{ID: "tiempo", Titulo: "Cuánto tiempo se guardan", Destacado: "Sin datos", Tono: "aviso",
 				Puntos: []string{"Revisá en sus términos si guarda los datos y cuánto tiempo."}},

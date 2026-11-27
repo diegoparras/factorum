@@ -38,7 +38,8 @@ func TestDetectar(t *testing.T) {
 		{"https://ollama.com/v1", Desconocido, "ollama.com", ""},
 		{"http://172.100.1.1/v1", Desconocido, "172.100.1.1", ""},
 		{"https://api.openai.com.ejemplo.com/v1", Desconocido, "api.openai.com.ejemplo.com", ""},
-		{"https://openrouter.ai/api/v1", Desconocido, "openrouter.ai", ""},
+		{"https://openrouter.ai/api/v1", OpenRouter, "openrouter.ai", ""},
+		{"https://openrouter.ai.ejemplo.com/api/v1", Desconocido, "openrouter.ai.ejemplo.com", ""},
 		{"http://8.8.8.8/v1", Desconocido, "8.8.8.8", ""},
 	}
 	for _, c := range casos {
@@ -53,7 +54,10 @@ func TestDetectar(t *testing.T) {
 	if d := Detectar(""); d.Host != "" || d.Externa() || d.Local {
 		t.Errorf("sin URL: %+v", d)
 	}
-	if d := Detectar("https://openrouter.ai/api/v1"); d.Nombre != "openrouter.ai" {
+	if d := Detectar("https://openrouter.ai/api/v1"); d.Nombre != "OpenRouter" {
+		t.Errorf("OpenRouter se nombra: %+v", d)
+	}
+	if d := Detectar("https://gateway.ejemplo.com/v1"); d.Nombre != "gateway.ejemplo.com" {
 		t.Errorf("el desconocido se nombra por su host: %+v", d)
 	}
 }
@@ -101,7 +105,8 @@ func TestAvisoPorProveedor(t *testing.T) {
 		{"https://ca.api.openai.com/v1", 2, []string{"Región: Canadá", "solo guarda los datos en la región"}, ""},
 		{"https://api.anthropic.com/v1", 2, []string{"30 días", "2 años", "7 años", "feedback"}, ""},
 		{"https://generativelanguage.googleapis.com/v1beta/openai", 1, []string{"Plan gratuito", "tiempo limitado", "No publica cuántos días", "cualquier país", "23/3/2026"}, "mal"},
-		{"https://openrouter.ai/api/v1", 0, []string{"no conoce las políticas de openrouter.ai", "en qué país los procesa"}, "aviso"},
+		{"https://openrouter.ai/api/v1", 0, []string{"no tiene datos verificados de OpenRouter", "proveedor del modelo que elijas", "IA externa: OpenRouter"}, "aviso"},
+		{"https://gateway.ejemplo.com/v1", 0, []string{"no conoce las políticas de gateway.ejemplo.com", "en qué país los procesa"}, "aviso"},
 	} {
 		a := Aviso(Detectar(c.url))
 		j := todo(a)

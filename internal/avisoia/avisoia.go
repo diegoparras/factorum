@@ -26,6 +26,7 @@ const (
 	OpenAI      Proveedor = "openai"
 	Anthropic   Proveedor = "anthropic"
 	Google      Proveedor = "google"
+	OpenRouter  Proveedor = "openrouter"  // pasa el pedido al proveedor del modelo elegido
 	Desconocido Proveedor = "desconocido" // externo, sin datos de sus políticas
 )
 
@@ -90,6 +91,8 @@ func Detectar(base string) Deteccion {
 		d.Proveedor, d.Nombre = Anthropic, "Anthropic"
 	case nombre == "generativelanguage.googleapis.com":
 		d.Proveedor, d.Nombre = Google, "Google Gemini"
+	case nombre == "openrouter.ai":
+		d.Proveedor, d.Nombre = OpenRouter, "OpenRouter"
 	default:
 		d.Proveedor, d.Nombre = Desconocido, host
 	}

@@ -21,6 +21,7 @@ import (
 	_ "golang.org/x/image/webp"
 
 	"github.com/diegoparras/factorum/internal/arca"
+	"github.com/diegoparras/factorum/internal/despacho"
 	"github.com/diegoparras/factorum/internal/extractor"
 	"github.com/diegoparras/factorum/internal/modelo"
 	"github.com/diegoparras/factorum/internal/pdfx"
@@ -178,6 +179,21 @@ func (p *Pipeline) leerPDF(ctx context.Context, datos []byte, op Opciones, res *
 		if q != nil {
 			usar("qr")
 			break
+		}
+	}
+
+	// Un despacho de importación (la declaración del SIM, con texto y sin QR de ARCA) es un solo
+	// comprobante con todas sus páginas: lo lee, con cuidado, el lector de despachos.
+	if !hayQR(qrs) {
+		if todo := strings.Join(textos, "\n"); despacho.Parece(todo) {
+			usar("texto")
+			c, h := despacho.Leer(todo)
+			g := grupo{cbte: c, hallazgos: h, imgPag: 1}
+			for pag := 1; pag <= n; pag++ {
+				g.paginas = append(g.paginas, pag)
+			}
+			g.cbte.Paginas = g.paginas
+			return []grupo{g}, nil
 		}
 	}
 
@@ -561,6 +577,15 @@ func completarDerivados(c *modelo.Comprobante) {
 			c.Marcar("rubro", c.Origen("razon_social_emisor"))
 		}
 	}
+}
+
+func hayQR(qrs []*arca.QR) bool {
+	for _, q := range qrs {
+		if q != nil {
+			return true
+		}
+	}
+	return false
 }
 
 func claveQR(q *arca.QR) string {

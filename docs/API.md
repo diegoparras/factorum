@@ -278,7 +278,7 @@ Reglas: nadie da un rol mayor al suyo ni CUITs que no tiene; un admin no toca su
 
 ## Configuración (con sesión)
 
-- `GET /api/configuracion` (admin) → `{ campos, secciones, canales, url_publica, webhook_entrada }`. Un superadmin ve todas las secciones (`general`, `arcanum`, `telegram`, `whatsapp`, `webhook`, `ia`, `r2`, `clientes`); un admin, solo `clientes`. Cada campo: `{ clave, seccion, etiqueta, tipo, env, ayuda, ejemplo, valor, configurado, ultimos, bloqueado, origen, actualizado_por, actualizado }`. Un secreto nunca trae `valor`: solo `configurado` y, si es largo, `ultimos` (los últimos 4 caracteres).
+- `GET /api/configuracion` (admin) → `{ campos, secciones, canales, url_publica, webhook_entrada }`. Un superadmin ve todas las secciones (`general`, `arcanum`, `telegram`, `whatsapp`, `webhook`, `ia`, `r2`, `copias`, `clientes`); un admin, solo `clientes`. Cada campo: `{ clave, seccion, etiqueta, tipo, env, ayuda, ejemplo, valor, configurado, ultimos, bloqueado, origen, actualizado_por, actualizado }`. Un secreto nunca trae `valor`: solo `configurado` y, si es largo, `ultimos` (los últimos 4 caracteres).
 - `PUT /api/configuracion` `{ cambios: { "telegram.token": "...", "telegram.permitidos": ["1","2"], "general.url_publica": null } }` → la vista nueva más `cambiadas`. `null` borra lo guardado (vuelve al entorno o al valor de fábrica); un secreto `""` no se toca. Un campo fijado por una variable de entorno da `409`; un valor inválido, `400`. Al guardar se reconfiguran sin reiniciar Arcanum, el modelo de visión, el almacén y los canales.
 - `POST /api/configuracion/probar/{seccion}` (superadmin) `{ cambios }` → `{ exito, mensaje }`. Prueba con lo que está en pantalla, sin guardar: `general` (la URL pública responde), `arcanum` (`/api/health` y `/api/tenants`), `telegram` (`getMe`), `webhook` (un aviso firmado a la URL de salida), `ia` (`/models` y que esté el modelo), `r2` (pone y borra un objeto).
 
@@ -292,13 +292,42 @@ Reglas: nadie da un rol mayor al suyo ni CUITs que no tiene; un admin no toca su
 | `webhook.token`, `webhook.salida_url` | `FACTORUM_WEBHOOK_TOKEN`, `FACTORUM_WEBHOOK_SALIDA_URL` | secreto, URL |
 | `ia.url`, `ia.modelo`, `ia.api_key` | `LLM_API_BASE_URL`, `LLM_MODEL`, `LLM_API_KEY` | URL, texto, secreto |
 | `r2.endpoint`, `r2.bucket`, `r2.access_key`, `r2.secret_key`, `r2.prefijo` | `FACTORUM_R2_*` | URL, texto, secreto, secreto, texto |
+| `copias.activo`, `copias.hora`, `copias.diarias`, `copias.mensuales` | `FACTORUM_COPIAS`, `FACTORUM_COPIAS_HORA`, `FACTORUM_COPIAS_DIARIAS`, `FACTORUM_COPIAS_MENSUALES` | sí/no (por defecto sí), hora `HH:MM` de Buenos Aires (03:30), entero 1 a 366 (14), entero 0 a 120 (12) |
 | `clientes.canales` | `FACTORUM_CANAL_CLIENTES` | remitente → CUIT (`{ "5491155550000": "20222222223" }` o `"5491155550000 = 20-22222222-3"` por renglón) |
+
+## Pasar lo del disco a R2 (superadmin, con sesión)
+
+Con R2 activo, lo nuevo va a R2 y lo que quedó en el disco se sigue leyendo de ahí. El pase sube cada objeto tal cual (ya está comprimido y cifrado), lo verifica (tamaño y SHA-256 de lo que quedó en R2) y nunca borra nada del disco por sí solo. Mientras dura y después, cada objeto se busca primero en R2 y, si no está, en el disco.
+
+- `GET /api/r2/pase` → `{ pase }`:
+  `{ estado, por, iniciada, terminada, actualizado, mensaje, destino, total, hechos, subidos, pendientes, errores, liberados, para_liberar, estimado_seg, trabajando, r2_activo, puede_liberar, ultimos_errores }`.
+  Cada cuenta es `{ objetos, bytes }`. `estado`: `""` (nunca se empezó), `corriendo`, `pausada`, `terminada`, `liberando`, `liberada` o `error` (con el motivo en `mensaje`). `estimado_seg` es el tiempo que falta al ritmo actual. `ultimos_errores`: `[ { clave, error, intentos } ]`.
+- `POST /api/r2/pase` `{ accion }` → `{ pase }`:
+  - `iniciar`: empieza (o vuelve a revisar el disco: lo verificado no se sube de nuevo).
+  - `pausar`: termina los objetos que está pasando y se detiene.
+  - `seguir`: sigue lo pausado o frenado y reintenta lo que falló.
+  - `liberar` con `{ confirmacion: "liberar" }`: borra del disco solo lo verificado, volviendo a mirar en R2 que siga ahí. Solo con el pase terminado.
+
+  Sin R2 activo o en un estado que no corresponde, `409` con el motivo. Es un trabajo en segundo plano (cola `mantenimiento` de River): sigue solo si se reinicia el servidor. Cada acción queda en la auditoría (`r2.migrar_inicio`, `r2.migrar_pausa`, `r2.migrar_seguir`, `r2.migrar_fin`, `r2.liberar_inicio`, `r2.liberar_fin`).
+
+Por consola: `factorum r2 migrar` (Ctrl+C pausa; volver a correrlo sigue), `factorum r2 migrar --liberar` y `factorum r2 estado`.
+
+## Copias de seguridad de la base (superadmin, con sesión)
+
+- `GET /api/copias` → `{ copias, activas, hora, diarias, mensuales, destino, proxima }`. Cada copia: `{ id, creado, terminado, estado (haciendo, ok, error), manual, programada, por, destino (r2 o disco), clave, tamano, filas, tablas, sha256, version, error, duracion_ms, disponible }`.
+- `POST /api/copias` → `202`: hace una copia ahora, en segundo plano.
+- `GET /api/copias/{id}/archivo` → el archivo cifrado (`application/octet-stream`, con `X-Factorum-SHA256`). Queda en la auditoría.
+- `GET /api/panel`, para un superadmin, suma `copia_fallida: { cuando, error }` si la última copia falló.
+
+La copia es lógica: el contenido de cada tabla (`COPY`) dentro de una transacción `REPEATABLE READ`, en un tar con un `manifiesto.json` (versión de Factorum y del esquema, columnas, filas, secuencias y SHA-256 de cada tabla), comprimido con zstd y cifrado con `FACTORUM_MASTER_KEY` (AES-256-GCM en tramos de 1 MiB). Va a `copias/factorum-AAAAMMDD-HHMMSS.copia` en R2 (bajo el prefijo) o en `FACTORUM_DATOS/copias`. Restaurar es solo por consola: `factorum restaurar <archivo o clave> [--confirmar]` (ver el README).
+
+Para avisar por otro medio cuando una copia falla, `copias.Servicio.AlTerminar(func(ctx, copias.Copia))` se llama después de cada copia, bien o mal.
 
 ## Auditoría (admin, con sesión)
 
 `GET /api/auditoria?desde=AAAA-MM-DD&hasta=AAAA-MM-DD&persona=texto&accion=sesion.&limite=50&offset=0` → `{ eventos: [ { id, creado, actor, actor_tipo, usuario_id, accion, objeto, detalle, ip } ], total, acciones }`. Las fechas van en hora argentina; `accion` terminada en punto filtra por grupo.
 
-Acciones: `sesion.entrar`, `sesion.fallida`, `sesion.salir`, `usuario.crear`, `usuario.editar`, `usuario.desactivar`, `usuario.reactivar`, `usuario.restablecer`, `usuario.cambiar_clave`, `clave.crear`, `clave.revocar`, `config.cambiar` (qué claves, nunca los valores), `config.whatsapp_desvincular`, `lote.crear`, `comprobante.corregir`, `comprobante.aprobar`, `exportar`, `suite.pase_emitido`, `suite.pase_usado`, `suite.pase_rechazado`, `suite.abrir`, `suite.abrir_fallido`. Nunca lleva contraseñas, claves, tokens ni pases.
+Acciones: `sesion.entrar`, `sesion.fallida`, `sesion.salir`, `usuario.crear`, `usuario.editar`, `usuario.desactivar`, `usuario.reactivar`, `usuario.restablecer`, `usuario.cambiar_clave`, `clave.crear`, `clave.revocar`, `config.cambiar` (qué claves, nunca los valores), `config.whatsapp_desvincular`, `lote.crear`, `comprobante.corregir`, `comprobante.aprobar`, `exportar`, `suite.pase_emitido`, `suite.pase_usado`, `suite.pase_rechazado`, `suite.abrir`, `suite.abrir_fallido`, `r2.migrar_inicio`, `r2.migrar_pausa`, `r2.migrar_seguir`, `r2.migrar_fin`, `r2.liberar_inicio`, `r2.liberar_fin`, `copia.pedir`, `copia.ok`, `copia.error`, `copia.descargar`, `copia.restaurar`. Nunca lleva contraseñas, claves, tokens ni pases.
 
 ## Suite Escriba: el pase entre apps
 

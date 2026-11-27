@@ -535,7 +535,9 @@ func (s *Servicio) pasar(ctx context.Context, f *fila, avance func(*Estado)) err
 		if len(lote) == 0 {
 			return s.terminarPase(ctx, avance)
 		}
-		res := make(chan resultado, len(lote))
+		// Cada objeto se anota apenas termina: el avance se ve de a uno y un corte pierde poco.
+		var mu sync.Mutex
+		var errAnotar error
 		sem := make(chan struct{}, conc)
 		var wg sync.WaitGroup
 		for _, o := range lote {
@@ -548,15 +550,16 @@ func (s *Servicio) pasar(ctx context.Context, f *fila, avance func(*Estado)) err
 				defer wg.Done()
 				defer func() { <-sem }()
 				sha, subido, err := s.moverConReintentos(ctx, r2, o.clave)
-				res <- resultado{clave: o.clave, sha: sha, subido: subido, err: err}
+				if err := s.anotar(padre, resultado{clave: o.clave, sha: sha, subido: subido, err: err}); err != nil {
+					mu.Lock()
+					errAnotar = err
+					mu.Unlock()
+				}
 			}()
 		}
 		wg.Wait()
-		close(res)
-		for r := range res {
-			if err := s.anotar(padre, r); err != nil {
-				return err
-			}
+		if errAnotar != nil {
+			return errAnotar
 		}
 		if avance != nil {
 			if e, err := s.Estado(padre); err == nil {

@@ -2,6 +2,19 @@
 
 Cada versión publicada tiene su sección. La imagen Docker toma la versión de la primera.
 
+## [0.4.0] - 2026-11-27
+
+### R2 y copias de seguridad
+
+- Pasar lo del disco a R2: en Configuración, Almacenamiento R2, un botón sube a R2 lo que quedó guardado en el disco antes de activarlo. Cada archivo se verifica (tamaño y SHA-256 de lo que quedó en R2), se puede pausar y seguir, muestra el avance con el tiempo estimado y, si se reinicia el servidor, sigue desde donde quedó sin volver a subir lo verificado.
+- Nunca borra nada del disco por su cuenta: al terminar, «Liberar el disco» (escribiendo «liberar») borra solo lo verificado, después de volver a mirar que siga en R2.
+- Mientras tanto y después, los originales y las páginas se siguen viendo: cada archivo se busca primero en R2 y, si no está o llegó roto, en el disco.
+- Por consola: `factorum r2 migrar`, `factorum r2 migrar --liberar` y `factorum r2 estado`.
+- Copias de seguridad de la base: una por día (por defecto a las 03:30 de Buenos Aires), en R2 si está activo o en el disco. Se guardan las últimas 14 y la primera de cada uno de los últimos 12 meses. Se configuran en Configuración, Copias de seguridad, con la lista, «Descargar» y «Hacer una copia ahora».
+- La copia la hace Factorum (no depende de la versión de pg_dump): una foto consistente de todas las tablas, con un manifiesto que dice qué tiene, comprimida y cifrada con la clave maestra.
+- Restaurar, por consola: `factorum restaurar <copia>` verifica la copia y, con `--confirmar`, hace una copia de lo que hay y restaura todo en una transacción. Sirve en una base vacía. Paso a paso en el README, también para EasyPanel.
+- Si la última copia falló, Inicio se lo avisa al superadmin. Cada copia, descarga, restauración y paso del pase a R2 queda en la auditoría.
+
 ## [0.3.0] - 2026-11-27
 
 ### Usuarios y roles

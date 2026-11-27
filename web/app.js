@@ -674,10 +674,11 @@ function vacio(ico, titulo, texto, vistaBoton, textoBoton) {
 const mil = (n) => Number(n || 0).toLocaleString('es-AR');
 async function cargarInicio() {
   try {
-    const { panel: p } = await api('/api/panel');
+    const { panel: p, copia_fallida: cf } = await api('/api/panel');
+    const avisoCopia = cf ? `<div class="aviso-card mal">${I.alerta}<div><strong>Falló la última copia de la base</strong> (${fechaHora(cf.cuando)}).<br><span class="muted">${esc(cf.error)}</span></div><button type="button" class="ghost mini" data-accion="verCopias">Ver las copias</button></div>` : '';
     if (!p.total) {
       $('#inicioSub').textContent = 'Todavía no cargaste facturas. Así se empieza:';
-      $('#inicio').innerHTML = `<div class="vacio"><div class="ico">${I.doc}</div><h3>Bienvenido a Factorum</h3>
+      $('#inicio').innerHTML = `${avisoCopia}<div class="vacio"><div class="ico">${I.doc}</div><h3>Bienvenido a Factorum</h3>
         <p>Lee facturas de ARCA por QR y texto, controla que todo cierre y, con Arcanum, te dice si son legales.</p>
         <div class="pasos">
           <div class="paso"><span class="n">1</span><strong>Verificá una factura</strong><span class="muted">Subí un PDF o una foto y mirá qué lee y qué controla. No se guarda.</span><button type="button" class="ghost" data-accion="ir" data-vista="verificar">Verificar</button></div>
@@ -706,7 +707,7 @@ async function cargarInicio() {
       return `<button type="button" class="it" data-accion="verLote" data-id="${l.id}"><span><span class="t1">${esc(l.nombre || 'Lote ' + l.id)}</span><br><span class="t2">${esc(l.origen)} · ${new Date(l.creado).toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' })}</span></span>
         <span class="t2">${l.estado === 'terminado' ? `${(c.ok || 0) + (c.aprobado || 0)} bien · ${c.revisar || 0} revisar · ${c.error || 0} error` : `<span class="prog mini-prog"><div style="width:${pct}%"></div></span> ${l.procesados}/${l.documentos}`}</span></button>`;
     }).join('') : '<p class="muted">Sin lotes todavía.</p>';
-    $('#inicio').innerHTML = `<div class="kpis">
+    $('#inicio').innerHTML = `${avisoCopia}<div class="kpis">
         ${kpi('Para revisar', mil(pend), pend ? 'tocá para verlos' : 'todo al día', e.error ? 'alerta' : pend ? 'aviso' : '', e.error ? 'error' : 'revisar')}
         ${kpi('Este mes', mil(p.mes.comprobantes), `${mil(p.hoy.comprobantes)} hoy · ${mil(p.mes.documentos)} archivos en el mes`)}
         ${kpi('Emisores apócrifos', mil(p.apocrifos), 'detectados con ARCA', p.apocrifos ? 'alerta' : '')}
@@ -886,7 +887,15 @@ const SECCIONES = {
   r2: { t: 'Almacenamiento R2', d: 'Dónde se guardan los archivos. Sin R2, en el disco del servidor. Siempre comprimidos y cifrados.', probar: true, clave: ['r2.endpoint', 'r2.bucket', 'r2.access_key', 'r2.secret_key'],
     como: ['En Cloudflare, R2, creá un bucket (por ejemplo factorum).', 'En «Administrar tokens de la API de R2», creá un token de lectura y escritura sobre ese bucket.',
       'Copiá el endpoint de S3 (https://<cuenta>.r2.cloudflarestorage.com), la access key y la secret key.', 'Probar guarda y borra un objeto de prueba.',
-      'Al guardar, lo nuevo va a R2; lo que ya estaba en disco se sigue leyendo de ahí. Pasar lo viejo a R2 llega en una próxima versión.'] },
+      'Al guardar, lo nuevo va a R2 y lo que ya estaba en el disco se sigue leyendo de ahí.',
+      'Para no depender del disco, tocá «Pasar lo del disco a R2»: sube cada objeto tal cual (ya está cifrado), lo verifica y se puede pausar. Si se corta o se reinicia el servidor, sigue desde donde quedó.',
+      'Cuando termina, «Liberar el disco» borra del disco solo lo que quedó verificado en R2. Por consola: factorum r2 migrar y factorum r2 migrar --liberar.'] },
+  copias: { t: 'Copias de seguridad', d: 'Una copia diaria de la base, comprimida y cifrada con la clave maestra, en R2 o en el disco.', clave: ['copias.activo'],
+    como: ['Activá la copia diaria, elegí la hora (de Buenos Aires) y cuántas guardar, y guardá.',
+      'Si R2 está activo, las copias van al bucket (carpeta copias); si no, al disco del servidor (FACTORUM_DATOS/copias). Conviene R2: una copia en el mismo disco no sirve si se rompe el disco.',
+      'La copia es lógica y portable: no depende de la versión de Postgres. Se abre solo con la misma FACTORUM_MASTER_KEY: guardala fuera del servidor.',
+      'Bajá de vez en cuando una copia con «Descargar» y guardala en otro lado.',
+      'Restaurar se hace por consola (borra lo que hay en la base): mirá «Cómo restaurar», abajo de la lista.'] },
   clientes: { t: 'Clientes y canales', d: 'Qué cliente es cada remitente de chat: lo que mande se carga para ese CUIT.', clave: ['clientes.canales'],
     como: ['Una línea por remitente: el número de WhatsApp (con código de país), el id de Telegram o el chat del webhook, un igual y el CUIT del cliente.',
       'Ejemplo: 5491155550000 = 20-22222222-3.', 'Lo que mande ese remitente se carga para ese cliente y se constata con su certificado en Arcanum.'] },
@@ -928,6 +937,12 @@ function campoConfHTML(c) {
   } else if (c.tipo === 'lista' || c.tipo === 'clientes') {
     const v = valorCampoTexto(c);
     control = `<textarea id="${id}" data-clave="${c.clave}" data-orig="${esc(v)}" rows="${c.tipo === 'clientes' ? 4 : 3}" placeholder="${c.ejemplo ? 'Por ejemplo: ' + esc(c.ejemplo) : ''}" spellcheck="false"${bloq}>${esc(v)}</textarea>`;
+  } else if (c.tipo === 'entero') {
+    const v = String(c.valor ?? '');
+    control = `<input id="${id}" type="number" inputmode="numeric" min="${c.min || 0}" ${c.max ? `max="${c.max}"` : ''} step="1" data-clave="${c.clave}" data-orig="${esc(v)}" value="${esc(v)}"${bloq}>`;
+  } else if (c.tipo === 'hora') {
+    const v = String(c.valor || '');
+    control = `<input id="${id}" type="time" step="60" data-clave="${c.clave}" data-orig="${esc(v)}" value="${esc(v)}"${bloq}>`;
   } else {
     const v = valorCampoTexto(c);
     control = `<input id="${id}" data-clave="${c.clave}" data-orig="${esc(v)}" value="${esc(v)}" placeholder="${c.ejemplo ? 'Por ejemplo: ' + esc(c.ejemplo) : ''}" ${c.tipo === 'url' ? 'inputmode="url"' : ''} spellcheck="false"${bloq}>`;
@@ -957,7 +972,8 @@ function pintarConfiguracion() {
     const campos = CONF.campos.filter((c) => c.seccion === sec);
     const extra = sec === 'webhook' ? `<div class="dato-fijo"><span class="et">URL de entrada</span>${CONF.webhook_entrada
       ? `<div class="fila-copia"><code class="mono">${esc(CONF.webhook_entrada)}</code><button type="button" class="ghost mini" data-accion="copiar" data-texto="${esc(CONF.webhook_entrada)}">${I.copiar}<span>Copiar</span></button></div>`
-      : '<span class="muted">Completá la URL pública en General para verla acá.</span>'}</div>` : sec === 'whatsapp' ? '<div id="waEstado" class="wa-estado"></div>' : '';
+      : '<span class="muted">Completá la URL pública en General para verla acá.</span>'}</div>` : sec === 'whatsapp' ? '<div id="waEstado" class="wa-estado"></div>'
+      : sec === 'r2' ? '<div id="r2Pase" class="pase" aria-live="polite"></div>' : sec === 'copias' ? '<div id="copiasLista" class="copias"></div>' : '';
     const editables = campos.some((c) => !c.bloqueado);
     return `<section class="card conf" id="conf-${sec}" data-sec="${sec}">
       <div class="card-cab"><div><h3>${esc(cfg.t)}</h3><p class="muted conf-d">${esc(cfg.d)}</p></div>${estadoSeccion(sec, campos)}</div>
@@ -972,6 +988,8 @@ function pintarConfiguracion() {
       </div></section>`;
   }).join('');
   refrescarWhatsApp();
+  refrescarPase();
+  cargarCopias();
 }
 
 // cambiosDe junta lo que cambió en una sección (o todo lo escrito, para Probar).
@@ -1040,6 +1058,160 @@ async function refrescarWhatsApp() {
       if (b && $('#qrWa')) $('#qrWa').src = URL.createObjectURL(b);
     }
   } catch { /* se reintenta */ }
+}
+
+// ---------- Pasar lo del disco a R2 ----------
+let PASE = null;
+let timerPase = null;
+const ESTADO_PASE = {
+  corriendo: ['revisar', 'Pasando a R2'], pausada: ['', 'En pausa'], terminada: ['ok', 'Terminado'],
+  liberando: ['revisar', 'Liberando el disco'], liberada: ['ok', 'Disco liberado'], error: ['error', 'Se frenó'],
+};
+const durTexto = (seg) => {
+  if (seg < 60) return `${seg} s`;
+  if (seg < 3600) return `${Math.round(seg / 60)} min`;
+  return `${Math.floor(seg / 3600)} h ${Math.round((seg % 3600) / 60)} min`;
+};
+
+async function refrescarPase() {
+  clearTimeout(timerPase);
+  const caja = $('#r2Pase');
+  if (!caja || !puede('configuracion')) return;
+  try {
+    ({ pase: PASE } = await api('/api/r2/pase'));
+  } catch (e) { caja.innerHTML = `<p class="muted">${esc(e.message)}</p>`; return; }
+  pintarPase();
+  if (PASE.estado === 'corriendo' || PASE.estado === 'liberando' || PASE.trabajando) {
+    timerPase = setTimeout(() => { if (vista === 'configuracion') refrescarPase(); }, 1500);
+  }
+}
+
+function pintarPase() {
+  const caja = $('#r2Pase');
+  if (!caja || !PASE) return;
+  const p = PASE;
+  const [cls, etq] = ESTADO_PASE[p.estado] || ['', 'Sin empezar'];
+  const lib = p.estado === 'liberando' || p.estado === 'liberada';
+  const total = lib ? p.liberados.objetos + p.para_liberar.objetos : p.total.objetos;
+  const hechos = lib ? p.liberados.objetos : p.hechos.objetos;
+  const pct = total ? Math.floor((hechos / total) * 100) : (p.estado === 'terminada' ? 100 : 0);
+  let detalle;
+  if (!p.estado) detalle = p.r2_activo
+    ? 'Lo que se guardó antes de activar R2 sigue en el disco del servidor (y se sigue leyendo de ahí). Pasalo a R2 para no depender del disco: se sube tal cual, ya cifrado, y se verifica cada objeto.'
+    : 'Activá R2 y guardá. Después vas a poder pasar a R2 lo que quedó en el disco.';
+  else if (p.estado === 'corriendo' && !p.total.objetos) detalle = 'Contando lo que hay en el disco...';
+  else if (lib) detalle = `${mil(p.liberados.objetos)} de ${mil(total)} objetos borrados del disco (${tamanio(p.liberados.bytes)})`;
+  else {
+    detalle = `${mil(p.hechos.objetos)} de ${mil(p.total.objetos)} objetos · ${tamanio(p.hechos.bytes)} de ${tamanio(p.total.bytes)}`;
+    if (p.errores.objetos) detalle += ` · <span class="txt-mal">${mil(p.errores.objetos)} con error</span>`;
+    if (p.estimado_seg && p.estado === 'corriendo') detalle += ` · faltan unos ${durTexto(p.estimado_seg)}`;
+  }
+  const botones = [];
+  if (p.r2_activo) {
+    if (p.estado === 'corriendo') botones.push('<button type="button" class="ghost" data-accion="pase" data-que="pausar">Pausar</button>');
+    else if (p.estado === 'pausada' || p.estado === 'error') botones.push('<button type="button" data-accion="pase" data-que="seguir">Seguir</button>');
+    else if (!p.estado) botones.push('<button type="button" data-accion="pase" data-que="iniciar">Pasar lo del disco a R2</button>');
+    else if (p.estado !== 'liberando') {
+      if (p.errores.objetos || p.pendientes.objetos) botones.push('<button type="button" class="ghost" data-accion="pase" data-que="seguir">Reintentar lo que falta</button>');
+      else botones.push('<button type="button" class="ghost" data-accion="pase" data-que="iniciar">Volver a revisar el disco</button>');
+    }
+    if (p.puede_liberar) botones.push(`<button type="button" class="peligro" data-accion="liberarDisco">Liberar el disco</button>`);
+  }
+  const errores = (p.ultimos_errores || []).length
+    ? `<details class="como pase-errores"><summary>Los que fallaron (${mil(p.errores.objetos)})</summary><ul>${p.ultimos_errores.map((x) => `<li><code>${esc(x.clave)}</code> ${esc(x.error)}</li>`).join('')}</ul></details>` : '';
+  const pie = p.estado ? `<span class="muted">${p.por ? `Lo empezó ${esc(p.por)}, ` : ''}${fechaHora(p.iniciada)}${p.terminada ? ` · terminó ${fechaHora(p.terminada)}` : ''}</span>` : '';
+  caja.innerHTML = `<div class="pase-cab"><strong>Lo que quedó en el disco</strong>${p.estado ? `<span class="est ${cls}">${etq}</span>` : ''}</div>
+    ${p.estado ? `<div class="prog pase-prog${p.estado === 'corriendo' || p.estado === 'liberando' ? ' vivo' : ''}" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100"><div style="width:${pct}%"></div></div>` : ''}
+    <p class="pase-det">${detalle}</p>
+    ${p.mensaje ? `<p class="pase-msg${p.estado === 'error' ? ' txt-mal' : ''}">${esc(p.mensaje)}</p>` : ''}
+    ${p.estado === 'liberada' && !p.r2_activo ? '<p class="pase-msg txt-mal">Ojo: R2 está apagado y hay objetos que están solo en R2. Volvé a activarlo para verlos.</p>' : ''}
+    ${errores}
+    <div class="fila pase-pie">${pie}<span class="sp"></span>${botones.join('')}</div>`;
+}
+
+async function accionPase(que, confirmacion, btn) {
+  if (btn) btn.disabled = true;
+  try {
+    ({ pase: PASE } = await api('/api/r2/pase', { method: 'POST', json: { accion: que, confirmacion } }));
+    pintarPase();
+    toast({ iniciar: 'Empezó el pase a R2: podés seguir usando Factorum.', seguir: 'Sigue el pase a R2.', pausar: 'Pausado: lo verificado queda hecho.', liberar: 'Se está liberando el disco.' }[que]);
+    setTimeout(refrescarPase, 600);
+    return true;
+  } catch (e) { toast(e, true); return false; } finally { if (btn) btn.disabled = false; }
+}
+
+function pedirLiberar() {
+  const p = PASE;
+  abrirModal('Liberar el disco', `<p>Se borran del disco del servidor <strong>${mil(p.para_liberar.objetos)} objetos (${tamanio(p.para_liberar.bytes)})</strong> que están verificados en R2. Antes de borrar cada uno, Factorum vuelve a mirar que siga en R2.</p>
+    <p class="muted">Después, esos archivos se leen solo de R2: si apagás R2, no se van a poder ver. No se puede deshacer.</p>
+    <label class="campo-conf"><span class="et">Para confirmar, escribí «liberar»</span><input id="liberarConf" autocomplete="off" spellcheck="false"></label>`,
+  { acciones: '<button type="button" class="ghost" data-accion="modalCerrar">Cancelar</button><button type="button" class="peligro" data-accion="liberarConfirmar" disabled>Liberar el disco</button>' });
+  setTimeout(() => $('#liberarConf')?.focus(), 50);
+}
+
+// ---------- Copias de seguridad ----------
+let COPIAS = null;
+let timerCopias = null;
+
+async function cargarCopias() {
+  clearTimeout(timerCopias);
+  const caja = $('#copiasLista');
+  if (!caja || !puede('configuracion')) return;
+  try { COPIAS = await api('/api/copias'); } catch (e) { caja.innerHTML = `<p class="muted">${esc(e.message)}</p>`; return; }
+  pintarCopias();
+  if ((COPIAS.copias || []).some((c) => c.estado === 'haciendo') || cargarCopias.esperando) {
+    timerCopias = setTimeout(() => { if (vista === 'configuracion') cargarCopias(); }, 1500);
+  }
+}
+
+function pintarCopias() {
+  const caja = $('#copiasLista');
+  if (!caja || !COPIAS) return;
+  const l = COPIAS.copias || [];
+  if (cargarCopias.esperando && l.some((c) => c.estado !== 'haciendo' && new Date(c.creado) >= cargarCopias.esperando)) cargarCopias.esperando = null;
+  const destino = COPIAS.destino === 'r2' ? 'R2 (carpeta copias del bucket)' : 'el disco del servidor (FACTORUM_DATOS/copias)';
+  const resumen = COPIAS.activas
+    ? `Todos los días a las <strong>${esc(COPIAS.hora)}</strong> (Buenos Aires). Se guardan las últimas ${COPIAS.diarias} y la primera de cada uno de los últimos ${COPIAS.mensuales} meses. Van a ${destino}.${COPIAS.proxima ? ` Próxima: ${fechaHora(COPIAS.proxima)}` : ''}`
+    : `La copia diaria está apagada. Igual podés hacer una ahora: va a ${destino}.`;
+  const filas = l.map((c) => {
+    const tipo = c.programada ? 'Diaria' : c.por === 'antes de restaurar' ? 'Antes de restaurar' : c.manual ? 'A pedido'
+      : /^estaba en el destino/.test(c.error || '') ? 'Encontrada en el destino' : 'Copia';
+    const est = c.estado === 'ok' ? '<span class="est ok">Bien</span>' : c.estado === 'haciendo' ? '<span class="est revisar">Haciendo</span>' : `<span class="est error" title="${esc(c.error)}">Falló</span>`;
+    const desc = c.estado === 'ok'
+      ? (c.disponible ? `<a class="boton ghost mini" href="/api/copias/${c.id}/archivo" download>Descargar</a>` : '<span class="muted" title="Está en un R2 que ahora no está activo">No disponible</span>')
+      : c.estado === 'error' ? `<span class="txt-mal copia-err">${esc(c.error)}</span>` : '';
+    return `<tr><td class="nowrap">${fechaHora(c.creado)}</td><td>${tipo}${c.por && c.manual && c.por !== 'antes de restaurar' ? `<br><span class="muted">${esc(c.por)}</span>` : ''}</td>
+      <td>${c.destino === 'r2' ? 'R2' : 'Disco'}</td><td class="num">${c.tamano != null ? tamanio(c.tamano) : ''}</td><td class="num">${c.filas != null ? mil(c.filas) : ''}</td><td>${est}</td><td>${desc}</td></tr>`;
+  }).join('');
+  const tabla = l.length
+    ? `<div class="tabla-scroll"><table class="t"><thead><tr><th>Cuándo</th><th>Tipo</th><th>Dónde</th><th>Tamaño</th><th>Filas</th><th>Estado</th><th></th></tr></thead><tbody>${filas}</tbody></table></div>`
+    : '<p class="muted">Todavía no hay copias.</p>';
+  const ejemplo = (l.find((c) => c.estado === 'ok') || {}).clave || 'copias/factorum-20261127-033000.copia';
+  const nombre = ejemplo.split('/').pop();
+  caja.innerHTML = `<div class="pase-cab"><strong>Copias</strong><span class="sp"></span><button type="button" class="ghost mini" data-accion="hacerCopia"${cargarCopias.esperando ? ' disabled' : ''}>${cargarCopias.esperando ? 'Haciendo la copia...' : 'Hacer una copia ahora'}</button></div>
+    <p class="muted copias-res">${resumen}</p>
+    ${tabla}
+    <details class="como"><summary>Cómo restaurar</summary>
+      <p>Restaurar borra lo que hay en la base y carga la copia, así que no se hace desde acá: se hace por consola, en el servidor, con la misma FACTORUM_MASTER_KEY.</p>
+      <ol><li>Abrí una consola en el contenedor de Factorum (en EasyPanel: el servicio, Consola; con Docker: docker compose exec factorum sh).</li>
+        <li>Verificá la copia (no toca nada):</li></ol>
+      ${bloqueCodigo(`factorum restaurar ${COPIAS.destino === 'r2' ? ejemplo : '/data/copias/' + nombre}`, 'Verificar')}
+      <ol start="3"><li>Restaurala. Antes hace una copia de lo que hay, por las dudas, y todo va en una transacción: si algo falla, la base queda como estaba.</li></ol>
+      ${bloqueCodigo(`factorum restaurar ${COPIAS.destino === 'r2' ? ejemplo : '/data/copias/' + nombre} --confirmar`, 'Restaurar')}
+      <ol start="4"><li>Reiniciá Factorum para que tome la configuración restaurada.</li></ol>
+      <p class="muted">Con una copia descargada: subila al servidor (por ejemplo a /data) y pasá la ruta del archivo. En una base nueva y vacía funciona igual.</p>
+    </details>`;
+  tarjetas('#copiasLista');
+}
+
+async function hacerCopia(btn) {
+  btn.disabled = true;
+  try {
+    const r = await api('/api/copias', { method: 'POST' });
+    cargarCopias.esperando = new Date(Date.now() - 2000);
+    toast(r.mensaje);
+    cargarCopias();
+  } catch (e) { toast(e, true); btn.disabled = false; }
 }
 
 // ---------- Usuarios ----------
@@ -1202,6 +1374,10 @@ const ACCIONES = {
   'config.whatsapp_desvincular': 'Desvinculó WhatsApp', 'comprobante.corregir': 'Corrigió un comprobante', 'comprobante.aprobar': 'Aprobó un comprobante',
   'exportar': 'Exportó', 'lote.crear': 'Cargó un lote', 'suite.pase_emitido': 'Pase de la suite emitido', 'suite.pase_usado': 'Entró con un pase de la suite',
   'suite.pase_rechazado': 'Pase de la suite rechazado', 'suite.abrir': 'Abrió otra app de la suite', 'suite.abrir_fallido': 'No pudo abrir otra app',
+  'r2.migrar_inicio': 'Empezó a pasar el disco a R2', 'r2.migrar_seguir': 'Siguió el pase a R2', 'r2.migrar_pausa': 'Pausó el pase a R2',
+  'r2.migrar_fin': 'Terminó el pase a R2', 'r2.liberar_inicio': 'Pidió liberar el disco', 'r2.liberar_fin': 'Se liberó el disco',
+  'copia.ok': 'Copia de la base hecha', 'copia.error': 'Falló la copia de la base', 'copia.pedir': 'Pidió una copia de la base',
+  'copia.descargar': 'Descargó una copia de la base', 'copia.restaurar': 'Restauró una copia de la base',
 };
 let audOffset = 0;
 const AUD_LIM = 50;
@@ -1224,13 +1400,13 @@ async function cargarAuditoria() {
     const sel = $('#audAccion');
     const elegida = sel.value;
     const grupos = [...new Set(acciones.map((a) => a.split('.')[0] + '.'))].filter((g) => acciones.filter((a) => a.startsWith(g)).length > 1);
-    sel.innerHTML = '<option value="">Todas las acciones</option>' + grupos.map((g) => `<option value="${g}">${esc({ 'sesion.': 'Entradas y salidas', 'usuario.': 'Personas', 'clave.': 'Claves de API', 'config.': 'Configuración', 'comprobante.': 'Comprobantes', 'suite.': 'Suite' }[g] || g)} (todas)</option>`).join('')
+    sel.innerHTML = '<option value="">Todas las acciones</option>' + grupos.map((g) => `<option value="${g}">${esc({ 'sesion.': 'Entradas y salidas', 'usuario.': 'Personas', 'clave.': 'Claves de API', 'config.': 'Configuración', 'comprobante.': 'Comprobantes', 'suite.': 'Suite', 'r2.': 'Almacenamiento R2', 'copia.': 'Copias de la base' }[g] || g)} (todas)</option>`).join('')
       + acciones.map((a) => `<option value="${esc(a)}">${esc(ACCIONES[a] || a)}</option>`).join('');
     sel.value = elegida;
     if (!eventos.length) { $('#auditoria').innerHTML = vacio('auditoria', 'No hay movimientos con estos filtros', 'Probá con otras fechas o sacando la persona.'); $('#audPager').innerHTML = ''; return; }
     $('#auditoria').innerHTML = `<div class="tabla-scroll"><table class="t"><thead><tr><th>Cuándo</th><th>Quién</th><th>Qué</th><th>Sobre</th><th>Detalle</th><th>IP</th></tr></thead><tbody>
       ${eventos.map((ev) => `<tr><td class="nowrap">${fechaHora(ev.creado)}</td><td>${esc(ev.actor || '')}</td>
-        <td><span class="accion ${esc(ev.accion.split('.')[0])}${ev.accion.endsWith('fallida') || ev.accion.endsWith('rechazado') || ev.accion.endsWith('fallido') ? ' mal' : ''}">${esc(ACCIONES[ev.accion] || ev.accion)}</span></td>
+        <td><span class="accion ${esc(ev.accion.split('.')[0])}${ev.accion.endsWith('fallida') || ev.accion.endsWith('rechazado') || ev.accion.endsWith('fallido') || ev.accion.endsWith('.error') ? ' mal' : ''}">${esc(ACCIONES[ev.accion] || ev.accion)}</span></td>
         <td>${esc(ev.objeto || '')}</td><td class="detalle">${detalleHTML(ev.detalle)}</td><td class="mono muted">${esc(ev.ip || '')}</td></tr>`).join('')}</tbody></table></div>`;
     tarjetas('#auditoria');
     const hasta = audOffset + eventos.length;
@@ -1260,6 +1436,11 @@ document.addEventListener('click', (ev) => {
     case 'modalCerrarFijo': cerrarModal(true); break;
     case 'saltar': ev.preventDefault(); document.getElementById('conf-' + el.dataset.sec)?.scrollIntoView({ behavior: 'smooth', block: 'start' }); break;
     case 'guardarConf': guardarConf(el.dataset.sec, null, el); break;
+    case 'pase': accionPase(el.dataset.que, '', el); break;
+    case 'liberarDisco': pedirLiberar(); break;
+    case 'liberarConfirmar': accionPase('liberar', $('#liberarConf').value.trim().toLowerCase(), el).then((ok) => { if (ok) cerrarModal(); }); break;
+    case 'hacerCopia': hacerCopia(el); break;
+    case 'verCopias': ir('configuracion'); setTimeout(() => document.getElementById('conf-copias')?.scrollIntoView({ block: 'start' }), 400); break;
     case 'probarConf': probarConf(el.dataset.sec, el); break;
     case 'generarToken': {
       const b = new Uint8Array(24); crypto.getRandomValues(b);
@@ -1352,6 +1533,7 @@ document.addEventListener('change', (ev) => {
 });
 
 document.addEventListener('input', (ev) => {
+  if (ev.target.id === 'liberarConf') { const b = $('[data-accion="liberarConfirmar"]'); if (b) b.disabled = ev.target.value.trim().toLowerCase() !== 'liberar'; }
   if (ev.target.closest('#revForm')) ev.target.classList.toggle('cambiado', ev.target.value !== ev.target.dataset.orig);
 });
 

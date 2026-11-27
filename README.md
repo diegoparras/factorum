@@ -171,6 +171,7 @@ Si una variable de configuración está puesta, **gana**: en la pantalla el camp
 | `FACTORUM_SUITE_CREAR_USUARIOS` | Crear la cuenta de quien llega desde otra app de la suite (por defecto, sí) |
 | `FACTORUM_IA_POR_DEFECTO`, `FACTORUM_CONSTATAR_POR_DEFECTO` | Lo que viene marcado al cargar |
 | `FACTORUM_R2_*` | R2 o cualquier S3. Sin esto, guarda en disco (`/data`) |
+| `FACTORUM_COPIAS`, `FACTORUM_COPIAS_HORA`, `FACTORUM_COPIAS_DIARIAS`, `FACTORUM_COPIAS_MENSUALES` | Copia diaria de la base (por defecto sí, a las 03:30, 14 diarias y 12 mensuales) |
 | `LLM_API_BASE_URL`, `LLM_MODEL`, `LLM_API_KEY` | Modelo de visión compatible con OpenAI (Ollama, LM Studio, vLLM...) |
 | `ARCANUM_URL`, `ARCANUM_URL_PUBLICA`, `ARCANUM_API_KEY`, `ARCANUM_CUIT_CONSULTANTE` | Constatación, apócrifos, padrón y el pase de la suite |
 | `FACTORUM_TELEGRAM_TOKEN`, `FACTORUM_TELEGRAM_PERMITIDOS` | Bot de Telegram |
@@ -178,6 +179,59 @@ Si una variable de configuración está puesta, **gana**: en la pantalla el camp
 | `FACTORUM_WEBHOOK_TOKEN`, `FACTORUM_WEBHOOK_SALIDA_URL` | Webhook genérico (secretaria, Evolution API, n8n) |
 | `FACTORUM_CANAL_CLIENTES` | Qué cliente es cada remitente de chat (`5491155550000=20222222223,...`) |
 | `FACTORUM_WORKERS` | Documentos en paralelo (por defecto, los núcleos) |
+
+## Almacenamiento en R2 y copias de seguridad
+
+### R2
+
+Sin R2, los originales y los resultados se guardan en el disco del servidor (`/data/almacen`). Con R2 activo (Configuración, Almacenamiento R2), lo nuevo va al bucket y lo que ya estaba en el disco se sigue leyendo de ahí: un objeto se busca primero en R2 y, si no está, en el disco. Todo sale del proceso comprimido y cifrado.
+
+**Pasar lo del disco a R2.** En Configuración, Almacenamiento R2, el botón «Pasar lo del disco a R2» (superadmin) arranca un trabajo en segundo plano que:
+
+- sube cada objeto tal cual (ya está cifrado: no se vuelve a cifrar) y lo **verifica**: el tamaño y el SHA-256 de lo que quedó en R2 tienen que coincidir con el disco;
+- es **reanudable**: si se corta o se reinicia el servidor, sigue desde donde quedó y lo verificado no se vuelve a subir;
+- sube de a cuatro, reintenta con espera y muestra el avance (objetos, bytes, errores y tiempo estimado), con **Pausar** y **Seguir**;
+- **no borra nada del disco**. Al terminar, «Liberar el disco» (hay que escribir «liberar») borra solo lo verificado, después de volver a mirar que siga en R2.
+
+Por consola, lo mismo con el avance en texto:
+
+```bash
+factorum r2 migrar            # Ctrl+C pausa; volver a correrlo sigue
+factorum r2 estado
+factorum r2 migrar --liberar  # cuando terminó
+```
+
+Ojo: después de liberar el disco, esos archivos están solo en R2. Si apagás R2, no se van a poder ver.
+
+### Copias de seguridad de la base
+
+En Configuración, **Copias de seguridad** (superadmin): la copia diaria (por defecto activada, a las 03:30 de Buenos Aires), cuántas guardar (14 diarias y la primera de cada uno de los últimos 12 meses) y la lista con **Descargar** y «Hacer una copia ahora». Si el servidor estaba apagado a la hora de la copia, la hace al volver. Si la última falló, Inicio se lo avisa al superadmin.
+
+- **Dónde:** en R2 (`copias/` dentro del prefijo) si está activo; si no, en `FACTORUM_DATOS/copias`. Conviene R2: una copia en el mismo disco no sirve si se rompe el disco. Bajá una de vez en cuando y guardala en otro lado.
+- **Qué es:** una copia lógica y portable hecha por Factorum (no depende de la versión de `pg_dump` ni de Postgres): cada tabla con `COPY`, todo en una transacción `REPEATABLE READ` (una foto consistente), en un tar con un manifiesto (versión de Factorum y del esquema, fecha, tablas, filas y SHA-256 de cada una), comprimida con zstd y **cifrada con `FACTORUM_MASTER_KEY`**. Sin esa clave no se abre: guardala fuera del servidor.
+- **Qué no lleva:** la cola de trabajos, el estado del pase a R2 y la lista de copias (son del servidor, no datos). Los archivos de las facturas tampoco: están en R2 o en el disco.
+
+### Cómo restaurar
+
+Restaurar borra lo que hay en la base y carga la copia, por eso se hace solo por consola. Hace falta la misma `FACTORUM_MASTER_KEY`.
+
+```bash
+# 1. Verificar (no toca nada): descifra, controla cada tabla contra el manifiesto y muestra qué tiene.
+factorum restaurar copias/factorum-20261127-033000.copia       # una clave en R2
+factorum restaurar /data/copias/factorum-20261127-033000.copia # o un archivo
+
+# 2. Restaurar. Si la base tiene datos, antes hace una copia de lo que hay (--sin-copia-previa
+#    para no hacerla). Vacía y recarga en una sola transacción: si algo falla, queda como estaba.
+factorum restaurar copias/factorum-20261127-033000.copia --confirmar
+
+# 3. Reiniciar Factorum, para que tome la configuración restaurada.
+```
+
+Funciona en una base vacía (crea las tablas) o sobre la que hay. Las secuencias quedan donde estaban, lo que quedó a medio procesar vuelve a la cola y la restauración queda en la auditoría. Una copia de un Factorum más nuevo no se restaura con uno más viejo.
+
+**En EasyPanel:** abrí el servicio de Factorum, pestaña **Consola**, y corré los comandos de arriba (el contenedor ya tiene `FACTORUM_DATABASE_URL`, `FACTORUM_MASTER_KEY` y la configuración de R2). Si la copia es un archivo descargado, subilo al volumen `/data` (por ejemplo con la pestaña de archivos del volumen) y pasá su ruta. Cuando termine, tocá **Restart** en el servicio. Si querés restaurar en otra base (para probar una copia sin tocar la de producción), creá un Postgres nuevo en EasyPanel y corré el comando con `FACTORUM_DATABASE_URL=postgres://... factorum restaurar ...`.
+
+También hay `factorum copia`, que hace una copia en el momento (por ejemplo, antes de actualizar).
 
 ## Usuarios, roles y claves
 
@@ -244,7 +298,7 @@ Ver [docs/API.md](docs/API.md).
 ## Privacidad
 
 - Por defecto, **ninguna IA ve los comprobantes**.
-- Los archivos se guardan comprimidos y **cifrados antes de salir del proceso**: ni el disco ni el bucket de R2 los ven en claro.
+- Los archivos y las copias de la base se guardan comprimidos y **cifrados antes de salir del proceso**: ni el disco ni el bucket de R2 los ven en claro.
 - Sin la master key no se abren. Guardala fuera del servidor.
 - Los logs nunca llevan contenido de facturas, contraseñas, claves, tokens ni pases.
 - La configuración secreta (claves de Arcanum, de R2, del modelo, el token de Telegram y del webhook) se guarda cifrada con la master key y nunca vuelve completa por la API.
@@ -273,7 +327,9 @@ Las facturas de prueba se generan con el modelo "ARCA" de Arcanum, que copia "Co
 | `internal/validar` | Los controles |
 | `internal/store` | Postgres |
 | `internal/app` | Orquestación, cola y canales |
-| `internal/almacen` | Disco o R2, con zstd y AES-GCM |
+| `internal/almacen` | Disco o R2, con zstd y AES-GCM (también en flujo, para las copias) |
+| `internal/mudanza` | El pase de lo del disco a R2: verificado, reanudable y sin borrar nada solo |
+| `internal/copias` | Copias de seguridad de la base: hacer, guardar, podar, programar y restaurar |
 | `internal/arcanum` | Constatación y padrón |
 | `internal/auth` | Roles, identidad y alcance por CUIT, argon2id, tokens y límite de intentos |
 | `internal/ajustes` | La configuración desde la pantalla, con el entorno que gana y la recarga en caliente |

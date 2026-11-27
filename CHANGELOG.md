@@ -2,7 +2,21 @@
 
 Cada versión publicada tiene su sección. La imagen Docker toma la versión de la primera.
 
-## [0.7.1] - 2026-11-27
+## [0.8.0] - 2026-11-27
+
+### Aviso de la IA externa
+
+- Si la IA (visión) que configurás es **externa** (OpenAI, Anthropic, Google Gemini u otra), antes de guardarla Factorum te muestra **qué pasa con los datos**: a dónde viajan, cuánto tiempo se guardan, si entrenan con ellos y qué queda en Factorum. Los datos salen de las páginas oficiales de cada proveedor (leídas el 27/11/2026), con sus links. Para guardarla hay que tocar **Entiendo y quiero usarla**: queda registrado quién lo aceptó, cuándo y para qué host, también en la auditoría.
+- **Sin esa aceptación, Factorum no la usa**: ni en la pantalla, ni en los chats, ni por mail, ni por MCP. Si la IA viene por variables de entorno, Configuración te avisa que está sin usar y te deja aceptarla ahí. Si cambiás de proveedor o de host, o si cambia el texto del aviso, se pide de nuevo.
+- **Cada persona** ve el mismo aviso la primera vez que marca **Usar IA si hace falta** en Verificar o Cargar (o que manda algo con la casilla marcada): **Entendido, usar IA** o **Seguir sin IA**. Se recuerda en su cuenta, no en el navegador.
+- Al lado de la casilla, un sello dice qué IA se usa («IA externa: OpenAI» o «Local: las imágenes no salen de tu servidor») y el link **Qué pasa con los datos**. También en Configuración, IA y en Conectar.
+- Con **Google Gemini**, un aviso en rojo: si la clave es de un proyecto sin facturación, los comprobantes de tus clientes pueden usarse para mejorar productos de Google.
+- Con **OpenAI**, Factorum le pide que no guarde la respuesta (`store=false`). Si usás su residencia de datos (eu.api.openai.com y los demás dominios regionales), el aviso dice la región.
+- Una IA en una dirección pública ya no pasa por local por tener «ollama» en el nombre (como ollama.com): Factorum mira el host de verdad. Siguen siendo locales los nombres sin punto (ollama, lmstudio), los *.internal y las IPs privadas.
+
+### API
+
+- `GET /api/ia/aviso` (el proveedor, el host, si está aceptado, si ya lo viste y el contenido del aviso), `POST /api/ia/aviso/visto` y, en `PUT /api/configuracion`, `aceptar_aviso_ia`. Verificar o cargar con `ia=true` desde la sesión de alguien que todavía no vio el aviso responde 409 (`codigo: aviso_ia`). Las claves de API no son personas: les alcanza con la aceptación del superadmin.
 
 ### Arreglos
 

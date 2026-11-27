@@ -57,7 +57,7 @@ Cada paso corre solo si el anterior no completó los datos:
 Una factura de "Comprobantes en línea" se resuelve con los dos primeros en unos 15 ms. El modelo de visión es opcional:
 
 - Si está prendido, solo completa campos vacíos, nunca pisa al QR, y todo lo que aporta queda para que lo revise una persona.
-- Si no es local, Factorum lo avisa al arrancar.
+- Si no es local, no se usa hasta que un superadmin acepta el aviso de qué pasa con los datos (ver [IA y privacidad](#ia-y-privacidad)).
 
 ### 3. Controles de contador
 
@@ -187,7 +187,7 @@ Si una variable de configuración está puesta, **gana**: en la pantalla el camp
 | `FACTORUM_R2_*` | R2 o cualquier S3. Sin esto, guarda en disco (`/data`) |
 | `FACTORUM_COPIAS`, `FACTORUM_COPIAS_HORA`, `FACTORUM_COPIAS_DIARIAS`, `FACTORUM_COPIAS_MENSUALES` | Copia diaria de la base (por defecto sí, a las 03:30, 14 diarias y 12 mensuales) |
 | `FACTORUM_PAPELERA_DIAS` | Días que queda lo borrado en la papelera antes del borrado definitivo (1 a 365, por defecto 30) |
-| `LLM_API_BASE_URL`, `LLM_MODEL`, `LLM_API_KEY` | Modelo de visión compatible con OpenAI (Ollama, LM Studio, vLLM...) |
+| `LLM_API_BASE_URL`, `LLM_MODEL`, `LLM_API_KEY` | Modelo de visión compatible con OpenAI (Ollama, LM Studio, vLLM, OpenAI, Anthropic, Gemini...). Una IA externa no se usa hasta que un superadmin acepta su aviso en la pantalla |
 | `ARCANUM_URL`, `ARCANUM_URL_PUBLICA`, `ARCANUM_API_KEY`, `ARCANUM_CUIT_CONSULTANTE` | Constatación, apócrifos, padrón y el pase de la suite |
 | `FACTORUM_TELEGRAM_TOKEN`, `FACTORUM_TELEGRAM_PERMITIDOS` | Bot de Telegram |
 | `FACTORUM_WHATSAPP`, `FACTORUM_WHATSAPP_PERMITIDOS` | WhatsApp como dispositivo vinculado |
@@ -382,9 +382,37 @@ Reglas para todas:
 
 Ver [docs/API.md](docs/API.md).
 
+## IA y privacidad
+
+Por defecto **ninguna IA ve los comprobantes**. La IA (visión) es opcional y es el último recurso: solo se usa cuando el QR, el texto del PDF y el OCR no pudieron leer un comprobante completo, y solo si se pide («Usar IA si hace falta» en Verificar o Cargar; en los chats, el correo y MCP, según `FACTORUM_IA_POR_DEFECTO`).
+
+**Qué viaja.** La imagen de la página del comprobante (o su texto) que no se pudo leer, junto con las instrucciones de Factorum. Solo esas páginas, no todo el lote, pero con todo lo que tengan: CUIT, razones sociales, importes y CAE. Lo que la IA leyó queda marcado como «IA» para que una persona lo revise, y Factorum no le manda nada más.
+
+**Local o externa.** Factorum mira el host del endpoint:
+
+| Endpoint | Para Factorum |
+|---|---|
+| `localhost`, un nombre sin punto (`ollama`, `lmstudio`), `*.internal`, una IP privada | **Local**: las imágenes no salen de tu servidor. No hay aviso, solo el sello. |
+| `api.openai.com` y los regionales (`eu.api.openai.com`, `us.`, `au.`, `jp.`, `in.`, `ae.`, `ca.`, `sg.`, `kr.`, `gb.`) | OpenAI (con la región, si es regional). Factorum le manda `"store": false`. |
+| `api.anthropic.com` | Anthropic |
+| `generativelanguage.googleapis.com` | Google Gemini |
+| Cualquier otro | Externo desconocido: el aviso dice que Factorum no conoce sus políticas |
+
+**Una IA externa no se usa sin aceptar el aviso.** Al guardarla en Configuración, IA (visión), aparece el aviso: a dónde viajan los datos, cuánto tiempo se guardan, si entrenan con ellos y qué queda en Factorum, con los datos tomados de las páginas oficiales de cada proveedor el 27/11/2026 y sus links. Para guardarla hay que tocar «Entiendo y quiero usarla»; queda registrado quién lo aceptó, cuándo y para qué host (y en la auditoría, `ia.aviso_aceptado`). Si la IA viene por variables de entorno, Factorum **no la usa** (ni en la pantalla, ni en los chats, ni por mail, ni por MCP) hasta que un superadmin la acepta desde Configuración; el log del arranque lo avisa. Si cambia el host o el texto del aviso, se pide de nuevo.
+
+**Cada persona** ve el mismo aviso la primera vez que va a usar la IA externa («Entendido, usar IA» o «Seguir sin IA»). Se recuerda en la base, por persona y host. Al lado de la casilla «Usar IA si hace falta» está siempre el sello («IA externa: OpenAI» o «Local») y el link «Qué pasa con los datos».
+
+Lo que dice cada proveedor (resumido; el aviso trae los links):
+
+- **OpenAI**: desde el 1/3/2023 lo que se manda a la API no se usa para entrenar ni mejorar sus modelos, salvo que la organización lo habilite. Guarda registros de monitoreo de abuso hasta 30 días (salvo que la ley exija más o sea razonablemente necesario para proteger sus servicios o a terceros). Analiza las imágenes para detectar material de abuso sexual infantil y, si lo detecta, retiene la imagen para revisión manual. La retención cero existe, con aprobación previa de OpenAI. Sin residencia de datos configurada, esa página no dice dónde se procesa; con residencia de datos se elige la región (Estados Unidos, Europa, Australia, Japón, India y Emiratos procesan y guardan en la región; Canadá, Singapur, Corea del Sur y Reino Unido solo guardan) y se usa el dominio regional.
+- **Anthropic**: borra lo que recibe y lo que genera dentro de los 30 días, salvo servicios con retención que controla el cliente, otro acuerdo (como retención cero) o lo necesario para su política de uso o la ley; lo marcado por violar la política de uso, hasta 2 años (y las puntuaciones de seguridad, hasta 7). Por defecto no entrena con lo que se manda por la API, salvo que se le envíe feedback.
+- **Google Gemini**: con el plan pago (proyecto de Cloud con facturación activa) no usa lo que se manda para mejorar sus productos; **con el plan gratuito, sí**. Guarda lo que se manda «por un tiempo limitado», solo para detectar abusos, sin decir cuántos días, y puede guardarlo de forma transitoria o en caché en cualquier país donde tenga instalaciones. Usá una clave de un proyecto con facturación.
+
+Estos datos pueden cambiar: revisalos en las páginas de cada proveedor antes de usarlo con datos sensibles. Por consola, `factorum procesar -ia` no tiene dónde guardar la aceptación: pedir `-ia` es la decisión de quien lo corre, y avisa a dónde van los datos.
+
 ## Privacidad
 
-- Por defecto, **ninguna IA ve los comprobantes**.
+- Por defecto, **ninguna IA ve los comprobantes**. Una IA externa no se usa hasta aceptar su aviso (ver [IA y privacidad](#ia-y-privacidad)).
 - Los archivos y las copias de la base se guardan comprimidos y **cifrados antes de salir del proceso**: ni el disco ni el bucket de R2 los ven en claro.
 - Sin la master key no se abren. Guardala fuera del servidor.
 - Los logs nunca llevan contenido de facturas, contraseñas, claves, tokens ni pases.

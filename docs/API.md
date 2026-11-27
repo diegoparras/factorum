@@ -62,7 +62,7 @@ Opciones (como campos del form o del JSON):
 | Opción | Para qué |
 |---|---|
 | `cuit_consultante` | CUIT con certificado en Arcanum. Si no viene, se usa `ARCANUM_CUIT_CONSULTANTE`. |
-| `ia` | `true` o `false`. |
+| `ia` | `true` o `false`. Con una IA externa, desde una sesión de una persona que todavía no vio el aviso, responde `409` con `codigo: "aviso_ia"` y `aviso_ia` (ver [Aviso de la IA](#aviso-de-la-ia-externa)). |
 | `guardar` | `true` o `false` (por defecto `false`: verificar no deja nada guardado). |
 
 Lee la factura, corre los controles y, si Arcanum está configurado, la constata con WSCDC y busca al emisor en la base de apócrifos. Responde:
@@ -424,10 +424,32 @@ Reglas: nadie da un rol mayor al suyo ni CUITs que no tiene; un admin no toca su
 - `POST /api/claves` `{ nombre, rol, cuits, vence: "AAAA-MM-DD"|"", suite, suite_tope }` → `201 { clave, datos }`. La clave (`fct_...`) se devuelve **una sola vez**; se guarda su SHA-256. Vence al terminar ese día (hora argentina). El tope de la suite es `usuario` por defecto; `admin` o `superadmin` solo los pone un superadmin.
 - `DELETE /api/claves/{id}` → la revoca (queda en la lista como revocada).
 
+## Aviso de la IA externa
+
+Una IA (visión) externa no se usa hasta que un superadmin acepta su aviso para ese host y esa versión del texto, y cada persona lo ve la primera vez que la va a usar. La local no tiene aviso.
+
+- `GET /api/ia/aviso` (lectura o más) → `{ configurada, proveedor, nombre, host, region, region_nombre, local, externa, aceptado, en_uso, version, persona, visto, puede_aceptar, aceptacion, aviso }`. `proveedor` es `local`, `openai`, `anthropic`, `google` o `desconocido`; `region`, el código de la región de OpenAI si el host es regional (`eu`, `us`...). `aceptado`: hay una aceptación vigente para este host y esta versión (la local siempre). `en_uso`: está configurada y es local o aceptada. `persona` y `visto`: si quien pide es una persona y si ya vio este aviso. `aceptacion` (admin o más, si es externa y aceptada): `{ host, version, por, cuando }`. `aviso` es el contenido para pintar:
+
+```json
+{
+  "version": 1, "fecha": "2026-11-27", "titulo": "OpenAI", "sello": "IA externa: OpenAI", "store_false": true,
+  "intro": "Cuando el QR, el texto del PDF y el OCR no alcanzan...",
+  "alerta": { "nivel": "mal", "titulo": "...", "texto": "..." },
+  "tarjetas": [ { "id": "donde", "titulo": "A dónde viajan", "destacado": "Fuera de tu servidor", "tono": "aviso", "puntos": ["..."], "notas": ["..."] } ],
+  "fuentes": [ { "titulo": "OpenAI: Your data", "url": "https://developers.openai.com/api/docs/guides/your-data", "fecha": "2026-11-27" } ],
+  "pie": "Datos tomados de las páginas oficiales de cada proveedor el 27 de noviembre de 2026. Pueden cambiar..."
+}
+```
+
+  Las tarjetas son cuatro, en orden: `donde`, `tiempo`, `entrenan` y `factorum`. Los textos pueden traer `**negrita**`. `alerta` solo viene con Google Gemini (plan gratuito) y con un proveedor desconocido.
+- `POST /api/ia/aviso/visto` (persona, con sesión) `{ host, version }` → la misma vista con `visto: true`. Si el host o la versión no son los de la IA en uso, `409` con el aviso nuevo. Queda en la auditoría (`ia.aviso_visto`).
+- La aceptación del superadmin va con el guardado de la configuración: `PUT /api/configuracion` con `aceptar_aviso_ia: { host, version }`. Guardar una IA externa nueva (o de otro host) sin aceptar responde `409` con `codigo: "aviso_ia"` y `aviso_ia` (la vista de la IA que se quería guardar) y no guarda nada. Para aceptar la que fija el entorno, `{ "cambios": {}, "aceptar_aviso_ia": { ... } }`. Solo un superadmin con sesión (`403` si no). Queda en la auditoría (`ia.aviso_aceptado`).
+- Verificar o crear un lote con `ia=true` desde la sesión de una persona que no vio el aviso responde `409` (`codigo: "aviso_ia"`). Las claves de API, los chats y MCP no son personas: les alcanza con la aceptación del superadmin. Con una IA externa sin aceptar, nadie la usa.
+
 ## Configuración (con sesión)
 
-- `GET /api/configuracion` (admin) → `{ campos, secciones, canales, url_publica, webhook_entrada }`. Un superadmin ve todas las secciones (`general`, `arcanum`, `lockatus`, `telegram`, `whatsapp`, `webhook`, `correo_entrada`, `correo_salida`, `avisos`, `ia`, `r2`, `copias`, `papelera`, `clientes`) y además `correo: { urls, estado, smtp, google: { conectado, cuenta, fijado } }` (las URLs para cada servicio, sin tokens) y `lockatus: { redirect, listo, solo, login_local, sesion_lockatus }` (la Redirect URI para registrar en Lockatus, si se puede entrar, si solo se entra así, si está la salida de emergencia y si la sesión de quien mira se abrió con Lockatus); un admin, solo `clientes`. Los campos de tipo `opcion` traen `opciones: [ { valor, etiqueta } ]` y los `entero`, `min` y `max`. Cada campo: `{ clave, seccion, etiqueta, tipo, env, ayuda, ejemplo, valor, configurado, ultimos, bloqueado, origen, actualizado_por, actualizado }`. Un secreto nunca trae `valor`: solo `configurado` y, si es largo, `ultimos` (los últimos 4 caracteres).
-- `PUT /api/configuracion` `{ cambios: { "telegram.token": "...", "telegram.permitidos": ["1","2"], "general.url_publica": null } }` → la vista nueva más `cambiadas`. `null` borra lo guardado (vuelve al entorno o al valor de fábrica); un secreto `""` no se toca. Un campo fijado por una variable de entorno da `409`; un valor inválido, `400`. Al guardar se reconfiguran sin reiniciar Arcanum, Lockatus, el modelo de visión, el almacén y los canales. Prender `lockatus.solo` desde una sesión que no se abrió con Lockatus da `409` (para no quedar afuera).
+- `GET /api/configuracion` (admin) → `{ campos, secciones, canales, url_publica, webhook_entrada }`. Un superadmin ve todas las secciones (`general`, `arcanum`, `lockatus`, `telegram`, `whatsapp`, `webhook`, `correo_entrada`, `correo_salida`, `avisos`, `ia`, `r2`, `copias`, `papelera`, `clientes`) y además `correo: { urls, estado, smtp, google: { conectado, cuenta, fijado } }` (las URLs para cada servicio, sin tokens) y `lockatus: { redirect, listo, solo, login_local, sesion_lockatus }` (la Redirect URI para registrar en Lockatus, si se puede entrar, si solo se entra así, si está la salida de emergencia y si la sesión de quien mira se abrió con Lockatus) e `ia_aviso` (como `GET /api/ia/aviso`); un admin, solo `clientes`. Los campos de tipo `opcion` traen `opciones: [ { valor, etiqueta } ]` y los `entero`, `min` y `max`. Cada campo: `{ clave, seccion, etiqueta, tipo, env, ayuda, ejemplo, valor, configurado, ultimos, bloqueado, origen, actualizado_por, actualizado }`. Un secreto nunca trae `valor`: solo `configurado` y, si es largo, `ultimos` (los últimos 4 caracteres).
+- `PUT /api/configuracion` `{ cambios: { "telegram.token": "...", "telegram.permitidos": ["1","2"], "general.url_publica": null } }` → la vista nueva más `cambiadas`. `null` borra lo guardado (vuelve al entorno o al valor de fábrica); un secreto `""` no se toca. Un campo fijado por una variable de entorno da `409`; un valor inválido, `400`. Al guardar se reconfiguran sin reiniciar Arcanum, Lockatus, el modelo de visión, el almacén y los canales. Prender `lockatus.solo` desde una sesión que no se abrió con Lockatus da `409` (para no quedar afuera). Guardar una IA externa sin `aceptar_aviso_ia` da `409` (ver [Aviso de la IA](#aviso-de-la-ia-externa)).
 - `POST /api/configuracion/probar/{seccion}` (superadmin) `{ cambios }` → `{ exito, mensaje }`. Prueba con lo que está en pantalla, sin guardar: `general` (la URL pública responde), `arcanum` (`/api/health` y `/api/tenants`), `lockatus` (lee el discovery del emisor, controla que tenga los endpoints de autorización, token y claves, PKCE S256 y RS256 o ES256, y lee el JWKS), `telegram` (`getMe`), `webhook` (un aviso firmado a la URL de salida), `ia` (`/models` y que esté el modelo), `r2` (pone y borra un objeto), `correo_entrada` (IMAP: entra y cuenta los mensajes de la carpeta; Gmail: la cuenta y la etiqueta; Cloudflare y proveedores: que la URL pública responda y el secreto esté) y `correo_salida` (con `destino` en el cuerpo, manda un mail de prueba; sin él, solo entra).
 
 | Clave | Variable | Tipo |

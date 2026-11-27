@@ -3,6 +3,7 @@ package extractor
 import (
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -58,5 +59,44 @@ func TestVisionOtro400NoReintenta(t *testing.T) {
 	}
 	if pedidos.Load() != 1 {
 		t.Fatalf("pedidos %d", pedidos.Load())
+	}
+}
+
+// A OpenAI (y solo a OpenAI) se le pide que no guarde la respuesta: "store": false. Un servidor falso
+// atiende como si fuera cada host, para mirar el cuerpo sin salir a internet.
+func TestVisionStoreFalseSoloOpenAI(t *testing.T) {
+	var ultimo atomic.Value
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var cuerpo map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&cuerpo)
+		cuerpo["_host"] = r.Host
+		ultimo.Store(cuerpo)
+		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]any{"content": `{"total":1}`}}}})
+	}))
+	defer srv.Close()
+	// Todo pedido, sea al host que sea, termina en el servidor falso.
+	cli := &http.Client{Transport: &http.Transport{DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, network, srv.Listener.Addr().String())
+	}}}
+	for _, c := range []struct {
+		base  string
+		store bool
+	}{
+		{"http://api.openai.com/v1", true},
+		{"http://eu.api.openai.com/v1", true},
+		{"http://api.anthropic.com/v1", false},
+		{"http://generativelanguage.googleapis.com/v1beta/openai", false},
+		{"http://ollama:11434/v1", false},
+		{"http://ia.ejemplo.com/v1", false},
+	} {
+		v := &Vision{BaseURL: c.base, Modelo: "m", HTTP: cli}
+		if _, err := v.Extraer(context.Background(), nil, "", "texto del comprobante"); err != nil {
+			t.Fatalf("%s: %v", c.base, err)
+		}
+		cuerpo := ultimo.Load().(map[string]any)
+		st, hay := cuerpo["store"]
+		if c.store != hay || (hay && st != false) {
+			t.Errorf("%s (host %v): store = %v (está: %v)", c.base, cuerpo["_host"], st, hay)
+		}
 	}
 }

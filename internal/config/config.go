@@ -45,6 +45,13 @@ type Config struct {
 	LLMAPIKey  string
 	LLMModelo  string
 	LLMTimeout time.Duration
+	// Aceptación del aviso de privacidad de una IA externa (lo guarda Factorum cuando un superadmin
+	// lo acepta en Configuración; nunca sale del entorno). Sin una aceptación vigente para ese host
+	// y esa versión del aviso, una IA externa no se usa.
+	IAAvisoHost    string
+	IAAvisoVersion int
+	IAAvisoPor     string
+	IAAvisoCuando  string
 
 	OCRIdiomas string
 

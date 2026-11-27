@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/diegoparras/factorum/internal/arca"
+	"github.com/diegoparras/factorum/internal/avisoia"
 	"github.com/diegoparras/factorum/internal/modelo"
 )
 
@@ -32,16 +33,9 @@ type Vision struct {
 	sinTemperatura atomic.Bool
 }
 
-// Local indica si el modelo corre en la misma red (no manda datos afuera). Se usa para avisar.
-func (v *Vision) Local() bool {
-	u := strings.ToLower(v.BaseURL)
-	for _, h := range []string{"localhost", "127.0.0.1", "ollama", "host.docker.internal", "lmstudio", "192.168.", "10.", "172.1", "172.2", "172.3"} {
-		if strings.Contains(u, "//"+h) {
-			return true
-		}
-	}
-	return false
-}
+// Local indica si el modelo corre en la misma máquina o en la red privada del servidor (no manda
+// datos afuera).
+func (v *Vision) Local() bool { return avisoia.Detectar(v.BaseURL).Local }
 
 const instruccion = `Extraés datos de comprobantes fiscales argentinos (facturas, notas de débito y de crédito de ARCA).
 Devolvé solo el JSON pedido. Reglas:
@@ -140,6 +134,11 @@ func (v *Vision) Extraer(ctx context.Context, imagen []byte, mime string, texto 
 			"type":        "json_schema",
 			"json_schema": map[string]any{"name": "comprobante", "strict": true, "schema": esquemaVision},
 		},
+	}
+	// A OpenAI se le pide que no guarde la respuesta (lo dice el aviso de la IA). Solo a OpenAI:
+	// otros servidores compatibles pueden rechazar un campo que no conocen.
+	if avisoia.Detectar(v.BaseURL).Proveedor == avisoia.OpenAI {
+		cuerpo["store"] = false
 	}
 	timeout := v.Timeout
 	if timeout <= 0 {

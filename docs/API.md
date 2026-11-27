@@ -15,7 +15,7 @@ Cada pedido se hace con **una clave de API** o con **la sesión del navegador**:
 | Rol | Puede |
 |---|---|
 | `lectura` | `GET` y las consultas que no modifican (`POST /api/verificar` sin guardar, MCP de lectura) |
-| `usuario` | Además cargar lotes, corregir, constatar y aprobar (el `operador` de antes); borrar comprobantes, cambiar el cliente de un lote, ver la papelera y restaurar |
+| `usuario` | Además cargar lotes, corregir, constatar y aprobar (el `operador` de antes); borrar comprobantes, cambiar el cliente de un lote, ver la papelera y restaurar; exportar al Libro IVA Digital |
 | `admin` | Además borrar lotes enteros, usuarios de rol hasta admin, claves de API, los clientes de los canales y la auditoría |
 | `superadmin` | Todo, incluida la configuración, los superadmin y, con sesión, el borrado definitivo a mano (vaciar la papelera) |
 
@@ -355,6 +355,33 @@ Una clave de API no puede vaciar ni borrar para siempre (`403`): un error o una 
 
 **Borrado definitivo.** Cada hora, un trabajo de la cola (`purgar_papelera`, cola `mantenimiento`) borra lo que lleva en la papelera más de `papelera.dias` (por defecto 30): las filas (lotes con todo lo suyo, comprobantes con sus correcciones, documentos que se quedaron sin comprobantes y lotes que se quedaron sin documentos) y después los archivos del almacén (el original y el resultado, en el disco y en R2) que ya no usa ningún documento, vivo o en la papelera. Los archivos se direccionan por su SHA-256: el mismo PDF subido en dos lotes es un solo archivo y se borra recién cuando no queda ninguno. La carga y el borrado comparten un candado de Postgres por archivo: no se puede borrar un archivo que se está volviendo a subir. Mientras corre el pase a R2 o la liberación del disco, los archivos esperan a la próxima pasada. Queda en la auditoría como `papelera.purgar`.
 
+## Libro IVA Digital
+
+Las compras de un cliente en un mes con el formato de importación del Libro IVA Digital de ARCA (RG 4597): los archivos `LIBRO_IVA_DIGITAL_COMPRAS_CBTE` (325 posiciones) y `LIBRO_IVA_DIGITAL_COMPRAS_ALICUOTAS` (84). El diseño de registro, sus fuentes y las decisiones en los casos dudosos están en [libro-iva-digital.md](libro-iva-digital.md). Rol **usuario** o más, con el alcance por CUIT (otro cliente, `403`; con un solo cliente asignado se puede omitir).
+
+`GET /api/libro-iva?cliente=CUIT&periodo=AAAA-MM[&solo_aprobados=1][&conciliar=0][&registros=1]`: el resumen y los problemas, sin los archivos. El mes va por fecha de emisión. Lo que está en la papelera no cuenta.
+
+- `solo_aprobados=1`: solo lo que está bien o aprobado y sin advertencias fuertes. Sin él, va todo lo que no bloquea.
+- Con Arcanum, concilia el mes con Mis Comprobantes (lo guardado de la conciliación sirve) para **avisar** lo que no figura en ARCA o tiene otros datos; nunca saca nada del archivo. `conciliar=0` no lo pide.
+- `registros=1` trae además lo que va al archivo, registro por registro.
+
+```json
+{ "ok": true, "cliente": "20222222223", "nombre": "GOMEZ MARIA LAURA", "periodo": "2026-11", "desde": "2026-11-01", "hasta": "2026-11-30",
+  "solo_aprobados": false, "leidos": 18, "excluidos": 9, "cantidad_todos": 9, "cantidad_listos": 4,
+  "resumen": { "comprobantes": 9, "registros_alicuotas": 4, "notas_credito": 1, "sin_credito_fiscal": 5,
+    "por_alicuota": [{ "codigo": "0005", "tasa": "21", "registros": 3, "neto_gravado": 130000.00, "iva": 27300.00 }],
+    "neto_gravado": 130000.00, "no_gravado": 0.00, "exento": 0.00, "iva": 27300.00, "credito_fiscal": 27300.00, "otros_tributos": 0.00, "total": 395557.50,
+    "moneda_extranjera": [{ "moneda": "DOL", "cantidad": 1, "iva": 210.00, "credito_fiscal": 210.00, "total": 1210.00 }], "por_tipo": { "Factura A": 2 } },
+  "problemas": [{ "codigo": "importes_no_cierran", "nivel": "bloquea", "titulo": "Los importes no cierran", "ayuda": "...",
+    "items": [{ "id": 7, "tipo": 1, "nombre_tipo": "Factura A", "punto_venta": 5, "numero": 91, "fecha": "2026-11-15", "cuit_emisor": "30711111111",
+      "emisor": "DISTRIBUIDORA EJEMPLO S.R.L.", "total": 112100.00, "moneda": "PES", "estado": "error", "detalle": "La suma da 121.000,00 y el total es 112.100,00 (diferencia -8.900,00).", "excluido": true }] }],
+  "conciliacion": { "estado": "lista" }, "importar": "Al importar, elegí «Los importes están expresados en la Moneda Original del Comprobante»: ..." }
+```
+
+En `resumen`, los importes son en pesos y las notas de crédito restan; la moneda extranjera va aparte, en su moneda. `problemas` viene agrupado por código y ordenado por `nivel`: `bloquea` (no va nunca), `fuerte` (emisor apócrifo, ARCA no lo reconoce, una A de otro comprador: va solo sin `solo_aprobados`), `advertencia` (va) e `info`. `excluido` dice si ese comprobante queda afuera con las opciones pedidas. `conciliacion.estado` es `lista`, `no_pedida` o el estado de la conciliación que no se pudo hacer (`sin_arcanum`, `sin_sincronizar`, `sin_permiso`...), con su `mensaje`. Período mal escrito o cliente que no es de 11 dígitos, `400`.
+
+`GET /api/libro-iva/archivos.zip` con los mismos `cliente`, `periodo` y `solo_aprobados`: un ZIP con `LIBRO_IVA_DIGITAL_COMPRAS_CBTE.txt`, `LIBRO_IVA_DIGITAL_COMPRAS_ALICUOTAS.txt` (ISO 8859-1, CRLF al final de cada registro) y `resumen.csv` (para la persona: totales por alícuota, lo que va y los problemas; `;` y coma decimal). No concilia. Sin nada para exportar, `409` con el mensaje. Cada ZIP queda en la auditoría (`libro_iva.exportar`, con el cliente, el período, la opción y cuántos fueron). Al importar en ARCA, elegí «Los importes están expresados en la Moneda Original del Comprobante».
+
 ## MCP
 
 `POST /mcp` es Streamable HTTP, sin estado. Solo con clave de API (no acepta la cookie del navegador). Cada clave ve sus clientes y, con rol lectura, no tiene `procesar_factura`.
@@ -368,6 +395,7 @@ Una clave de API no puede vaciar ni borrar para siempre (`403`): un error o una 
 | `pendientes_revision` | `{ lote?, cliente? }`: lo que está en `revisar` o `error` | lectura |
 | `resumen` | Mismos filtros que `/api/resumen` | lectura |
 | `conciliar` | `{ cliente?, desde, hasta, grupo?, limite? }`: la conciliación con ARCA; totales completos y hasta `limite` comprobantes por grupo (20 por defecto, 100 como mucho) | lectura |
+| `libro_iva_resumen` | `{ cliente?, periodo, solo_aprobados?, limite? }`: el resumen del Libro IVA Digital de compras del mes y los problemas por grupo (hasta `limite` comprobantes por grupo); nunca los archivos | usuario |
 | `estado_lote` | `{ id }` | lectura |
 
 Las respuestas son datos JSON, recortados por debajo de 20.000 caracteres. Lo que está en la papelera no aparece en ninguna herramienta, y por MCP no se puede borrar nada.

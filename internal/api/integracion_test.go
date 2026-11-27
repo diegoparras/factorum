@@ -56,6 +56,11 @@ var actividadesFalsas = map[string]string{"30708888881": "473000", "30711111111"
 
 var apocLlamadas atomic.Int32
 
+// recibidosFalsos arma la respuesta de Mis Comprobantes (recibidos) del Arcanum falso.
+var recibidosFalsos atomic.Value
+
+var recibidosLlamadas atomic.Int32
+
 // paseArcanum guarda el último pedido de pase que recibió el Arcanum falso.
 var paseArcanum atomic.Value
 
@@ -117,6 +122,17 @@ func arcanumFalso(t *testing.T, llamadas *atomic.Int32) *httptest.Server {
 				}}
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "datos": datos})
+		case strings.HasPrefix(r.URL.Path, "/api/mis-comprobantes/") && strings.HasSuffix(r.URL.Path, "/recibidos"):
+			recibidosLlamadas.Add(1)
+			f, _ := recibidosFalsos.Load().(func(cuit, desde, hasta string) (int, any))
+			if f == nil {
+				w.WriteHeader(404)
+				return
+			}
+			cuit := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/mis-comprobantes/"), "/recibidos")
+			st, cuerpo := f(cuit, r.URL.Query().Get("desde"), r.URL.Query().Get("hasta"))
+			w.WriteHeader(st)
+			_ = json.NewEncoder(w).Encode(cuerpo)
 		case strings.HasPrefix(r.URL.Path, "/api/apoc/"):
 			apocLlamadas.Add(1)
 			if r.URL.Query().Get("cuit") != "20222222223" {

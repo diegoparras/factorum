@@ -66,6 +66,8 @@ type App struct {
 	canales map[string]canal.Canal
 
 	padron sync.Map // cuit -> razón social
+
+	recibidos cacheRecibidos // lo que trajo Arcanum para conciliar, unos minutos por CUIT y rango
 }
 
 // Config es la configuración vigente. Se cambia en caliente (Configuración): cada llamado puede

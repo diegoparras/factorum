@@ -553,6 +553,60 @@ func (s *Store) Comprobantes(ctx context.Context, f Filtro) ([]Cbte, int, error)
 	return res, total, rows.Err()
 }
 
+// DelCliente trae todos los comprobantes de un cliente con fecha de emisión entre desde y hasta
+// (para conciliar con ARCA), hasta tope. Devuelve también cuántos de ese cliente no tienen fecha.
+func (s *Store) DelCliente(ctx context.Context, cliente, desde, hasta string, tope int) ([]Cbte, int, error) {
+	rows, err := s.Pool.Query(ctx, selCbte+` WHERE c.cliente_cuit=$1 AND c.fecha >= $2::date AND c.fecha <= $3::date ORDER BY c.id LIMIT $4`, cliente, desde, hasta, tope)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	res := []Cbte{}
+	for rows.Next() {
+		c, err := scanCbte(rows)
+		if err != nil {
+			return nil, 0, err
+		}
+		res = append(res, *c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	var sinFecha int
+	err = s.Pool.QueryRow(ctx, `SELECT count(*) FROM comprobantes WHERE cliente_cuit=$1 AND fecha IS NULL`, cliente).Scan(&sinFecha)
+	return res, sinFecha, err
+}
+
+// ClienteConComprobantes es un CUIT de cliente con algo cargado: cuántos comprobantes tiene y el
+// nombre con el que figura como receptor (el que más se repite).
+type ClienteConComprobantes struct {
+	CUIT         string `json:"cuit"`
+	Nombre       string `json:"nombre"`
+	Comprobantes int    `json:"comprobantes"`
+}
+
+// ClientesConComprobantes lista los clientes con comprobantes. alcance: CUITs visibles (nil = todos).
+func (s *Store) ClientesConComprobantes(ctx context.Context, alcance []string) ([]ClienteConComprobantes, error) {
+	rows, err := s.Pool.Query(ctx, `SELECT c.cliente_cuit, count(*),
+			coalesce((SELECT x.datos->>'razon_social_receptor' FROM comprobantes x WHERE x.cliente_cuit = c.cliente_cuit
+				AND coalesce(x.datos->>'razon_social_receptor', '') <> '' GROUP BY 1 ORDER BY count(*) DESC LIMIT 1), '')
+		FROM comprobantes c WHERE c.cliente_cuit <> '' AND ($1::text[] IS NULL OR c.cliente_cuit = ANY($1))
+		GROUP BY c.cliente_cuit ORDER BY c.cliente_cuit LIMIT 2000`, alcance)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	res := []ClienteConComprobantes{}
+	for rows.Next() {
+		var c ClienteConComprobantes
+		if err := rows.Scan(&c.CUIT, &c.Comprobantes, &c.Nombre); err != nil {
+			return nil, err
+		}
+		res = append(res, c)
+	}
+	return res, rows.Err()
+}
+
 func (s *Store) Comprobante(ctx context.Context, id int64) (*Cbte, error) {
 	return scanCbte(s.Pool.QueryRow(ctx, selCbte+` WHERE c.id=$1`, id))
 }

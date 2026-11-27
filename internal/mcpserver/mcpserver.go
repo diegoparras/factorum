@@ -17,6 +17,7 @@ import (
 	"github.com/diegoparras/factorum/internal/app"
 	"github.com/diegoparras/factorum/internal/arca"
 	"github.com/diegoparras/factorum/internal/auth"
+	"github.com/diegoparras/factorum/internal/conciliar"
 	"github.com/diegoparras/factorum/internal/config"
 	"github.com/diegoparras/factorum/internal/export"
 	"github.com/diegoparras/factorum/internal/modelo"
@@ -86,6 +87,89 @@ func cuitPermitido(id *auth.Identidad, cuit string) (string, error) {
 		return "", errors.New("ese CUIT no está entre los clientes de esta clave")
 	}
 	return c, nil
+}
+
+type ConciliarIn struct {
+	Cliente string `json:"cliente,omitempty" jsonschema:"CUIT del cliente (el receptor de las facturas); vacío si la clave tiene un solo cliente"`
+	Desde   string `json:"desde" jsonschema:"fecha de emisión desde (AAAA-MM-DD)"`
+	Hasta   string `json:"hasta" jsonschema:"fecha de emisión hasta (AAAA-MM-DD), a lo sumo un año después"`
+	Grupo   string `json:"grupo,omitempty" jsonschema:"solo un grupo: coinciden, diferencias, falta_cargar o no_figura; vacío trae todos"`
+	Limite  int    `json:"limite,omitempty" jsonschema:"comprobantes por grupo (por defecto 20, hasta 100); los totales son siempre de todos"`
+}
+
+// conciliacionCorta recorta la conciliación para un asistente: totales completos y hasta limite
+// comprobantes por grupo, con lo justo de cada uno.
+func conciliacionCorta(c *app.Conciliacion, in ConciliarIn) map[string]any {
+	m := map[string]any{"estado": c.Estado, "cliente": c.Cliente, "desde": c.Desde, "hasta": c.Hasta, "cubre_todo": c.CubreTodo,
+		"sin_sincronizar": c.SinSincronizar, "en_factorum": c.EnFactorum, "en_arca": c.EnArca, "truncado": c.Truncado}
+	if c.Mensaje != "" {
+		m["mensaje"] = c.Mensaje
+	}
+	if k := c.Cobertura; k != nil {
+		cob := map[string]any{"sincronizado": k.Sincronizado, "rangos": k.Rangos}
+		if k.UltimaSincronizacion != nil {
+			cob["ultima_sincronizacion"] = k.UltimaSincronizacion.Terminada
+		}
+		if k.EnCurso != nil {
+			cob["en_curso"] = true
+		}
+		m["sincronizacion"] = cob
+	}
+	r := c.Resultado
+	if r == nil {
+		return m
+	}
+	lim := in.Limite
+	if lim <= 0 {
+		lim = 20
+	}
+	lim = min(lim, 100)
+	m["totales"] = r.Totales
+	m["duplicados"] = r.Duplicados
+	grupos := map[string]any{}
+	for _, g := range conciliar.Grupos {
+		if in.Grupo != "" && in.Grupo != g {
+			continue
+		}
+		its := r.Grupos[g]
+		out := make([]map[string]any, 0, min(len(its), lim))
+		for i := range its {
+			if i >= lim {
+				break
+			}
+			out = append(out, itemCorto(&its[i]))
+		}
+		grupos[g] = map[string]any{"cantidad": len(its), "comprobantes": out, "recortado": len(its) > lim}
+	}
+	m["grupos"] = grupos
+	return m
+}
+
+func itemCorto(it *conciliar.Item) map[string]any {
+	x := map[string]any{"comprobante": it.NombreTipo, "punto_venta": it.PuntoVenta, "numero": it.Numero, "fecha": it.Fecha,
+		"cuit_emisor": it.CUITEmisor, "emisor": it.Emisor, "total": it.Total, "moneda": it.Moneda}
+	if it.Factorum != nil {
+		x["id_factorum"] = it.Factorum.ID
+	}
+	if len(it.Diferencias) > 0 {
+		x["diferencias"] = it.Diferencias
+	}
+	if it.CasiIgual {
+		x["casi_igual"] = true
+	}
+	if it.Causa != "" {
+		x["causa"], x["legitima"] = it.Causa, it.Legitima
+	}
+	if it.Alarma {
+		x["alarma"] = true
+	}
+	if it.Nota != "" {
+		x["nota"] = it.Nota
+	}
+	if len(it.DuplicadosFactorum) > 0 || it.DuplicadosArca > 0 {
+		x["duplicados"] = map[string]any{"factorum": it.DuplicadosFactorum, "arca": it.DuplicadosArca}
+	}
+	return x
 }
 
 type IDIn struct {
@@ -229,6 +313,29 @@ func Nuevo(a *app.App, id *auth.Identidad) *mcp.Server {
 				return nil, nil, err
 			}
 			return resultado(export.Resumir(filas))
+		})
+
+	mcp.AddTool(s, &mcp.Tool{Name: "conciliar", Description: "Concilia las facturas de compra cargadas de un cliente con lo que ARCA dice que recibió (Mis Comprobantes, vía Arcanum) en un período por fecha de emisión: " +
+		"coinciden, con diferencias (qué campo y cuánto; «casi igual» es una sugerencia, no una coincidencia), falta cargar (está en ARCA y no en Factorum) y no figura en ARCA (con la causa si es legítima: tique, exterior, otro receptor, período sin sincronizar, nota). " +
+		"Trae los totales por grupo (las notas de crédito restan; la moneda extranjera aparte) y si Arcanum tiene sincronizado el período. Solo consulta."},
+		func(ctx context.Context, _ *mcp.CallToolRequest, in ConciliarIn) (*mcp.CallToolResult, any, error) {
+			ctx, cancel := context.WithTimeout(ctx, timeout)
+			defer cancel()
+			cliente, err := cuitPermitido(id, in.Cliente)
+			if err != nil {
+				return nil, nil, err
+			}
+			if cliente == "" {
+				return nil, nil, errors.New("indicá el CUIT del cliente (cliente)")
+			}
+			if err := app.ValidarPeriodo(in.Desde, in.Hasta); err != nil {
+				return nil, nil, err
+			}
+			c, err := a.Conciliar(ctx, cliente, in.Desde, in.Hasta, false)
+			if err != nil {
+				return nil, nil, err
+			}
+			return resultado(conciliacionCorta(c, in))
 		})
 
 	mcp.AddTool(s, &mcp.Tool{Name: "estado_lote", Description: "Progreso de un lote: documentos procesados y comprobantes por estado."},

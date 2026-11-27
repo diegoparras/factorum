@@ -407,8 +407,9 @@ func comandoRestaurar(args []string) error {
 			return nil
 		},
 		Despues: func(ctx context.Context, tx pgx.Tx) (string, error) {
-			// Lo que quedó a medio procesar en la copia vuelve a la cola.
-			rows, err := tx.Query(ctx, `UPDATE documentos SET estado='pendiente' WHERE estado IN ('pendiente','procesando') RETURNING id`)
+			// Lo que quedó a medio procesar en la copia vuelve a la cola (lo que estaba en la papelera
+			// sigue ahí: se vuelve a encolar si alguien lo restaura).
+			rows, err := tx.Query(ctx, `UPDATE documentos SET estado='pendiente' WHERE estado IN ('pendiente','procesando') AND borrado_en IS NULL RETURNING id`)
 			if err != nil {
 				return "", err
 			}

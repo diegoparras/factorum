@@ -125,6 +125,10 @@ type Lote struct {
 	ConError     int            `json:"con_error"`
 	Comprobantes map[string]int `json:"comprobantes"`
 	CreadoPor    *int64         `json:"-"`
+	// SinConstatar: el lote se constata y le falta algún comprobante; Constatado: alguno ya se
+	// constató (con el CUIT del cliente como consultante). Los usa «Cambiar cliente».
+	SinConstatar bool `json:"constatacion_pendiente"`
+	Constatado   bool `json:"constatado"`
 }
 
 type Documento struct {
@@ -242,7 +246,7 @@ func (s *Store) CrearLote(ctx context.Context, tx pgx.Tx, n LoteNuevo) (int64, e
 func (s *Store) LoteAbiertoDeChat(ctx context.Context, tx pgx.Tx, canal, chat string, ventana time.Duration) (int64, error) {
 	var id int64
 	err := tx.QueryRow(ctx, `UPDATE lotes SET terminado=NULL, notificado=false, actualizado=now()
-		WHERE id = (SELECT id FROM lotes WHERE canal=$1 AND chat=$2 AND actualizado > now() - $3::interval ORDER BY id DESC LIMIT 1)
+		WHERE id = (SELECT id FROM lotes WHERE canal=$1 AND chat=$2 AND borrado_en IS NULL AND actualizado > now() - $3::interval ORDER BY id DESC LIMIT 1)
 		RETURNING id`, canal, chat, fmt.Sprintf("%d seconds", int(ventana.Seconds()))).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, nil
@@ -251,17 +255,22 @@ func (s *Store) LoteAbiertoDeChat(ctx context.Context, tx pgx.Tx, canal, chat st
 }
 
 const selLote = `SELECT l.id, l.nombre, l.cliente_cuit, l.origen, coalesce(l.canal,''), coalesce(l.chat,''), l.ia, l.constatar, l.creado, l.actualizado, l.terminado, l.creado_por,
-	(SELECT count(*) FROM documentos d WHERE d.lote_id=l.id),
-	(SELECT count(*) FROM documentos d WHERE d.lote_id=l.id AND d.estado NOT IN ('pendiente','procesando')),
-	(SELECT count(*) FROM documentos d WHERE d.lote_id=l.id AND d.estado='error'),
-	(SELECT coalesce(json_object_agg(estado, n), '{}') FROM (SELECT estado, count(*) n FROM comprobantes c WHERE c.lote_id=l.id GROUP BY estado) x)
+	(SELECT count(*) FROM documentos d WHERE d.lote_id=l.id AND d.borrado_en IS NULL),
+	(SELECT count(*) FROM documentos d WHERE d.lote_id=l.id AND d.borrado_en IS NULL AND d.estado NOT IN ('pendiente','procesando')),
+	(SELECT count(*) FROM documentos d WHERE d.lote_id=l.id AND d.borrado_en IS NULL AND d.estado='error'),
+	(SELECT coalesce(json_object_agg(estado, n), '{}') FROM (SELECT estado, count(*) n FROM comprobantes c WHERE c.lote_id=l.id AND c.borrado_en IS NULL GROUP BY estado) x),
+	l.constatar AND EXISTS (SELECT 1 FROM comprobantes c WHERE c.lote_id=l.id AND c.borrado_en IS NULL AND c.constatacion IS NULL),
+	EXISTS (SELECT 1 FROM comprobantes c WHERE c.lote_id=l.id AND c.borrado_en IS NULL AND c.constatacion IS NOT NULL)
 	FROM lotes l`
+
+// vivo: lo que no está en la papelera.
+const loteVivo = ` l.borrado_en IS NULL`
 
 func scanLote(r pgx.Row) (*Lote, error) {
 	var l Lote
 	var cb []byte
 	if err := r.Scan(&l.ID, &l.Nombre, &l.ClienteCUIT, &l.Origen, &l.Canal, &l.Chat, &l.IA, &l.Constatar, &l.Creado, &l.Actualizado, &l.Terminado, &l.CreadoPor,
-		&l.Documentos, &l.Procesados, &l.ConError, &cb); err != nil {
+		&l.Documentos, &l.Procesados, &l.ConError, &cb, &l.SinConstatar, &l.Constatado); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNoEncontrado
 		}
@@ -277,7 +286,7 @@ func scanLote(r pgx.Row) (*Lote, error) {
 }
 
 func (s *Store) Lote(ctx context.Context, id int64) (*Lote, error) {
-	return scanLote(s.Pool.QueryRow(ctx, selLote+` WHERE l.id=$1`, id))
+	return scanLote(s.Pool.QueryRow(ctx, selLote+` WHERE l.id=$1 AND`+loteVivo, id))
 }
 
 // Lotes lista los lotes, del más nuevo al más viejo. alcance: CUITs de cliente visibles (nil = todos).
@@ -285,7 +294,7 @@ func (s *Store) Lotes(ctx context.Context, limite, offset int, alcance []string)
 	if limite <= 0 || limite > 500 {
 		limite = 50
 	}
-	rows, err := s.Pool.Query(ctx, selLote+` WHERE ($3::text[] IS NULL OR l.cliente_cuit = ANY($3)) ORDER BY l.id DESC LIMIT $1 OFFSET $2`, limite, offset, alcance)
+	rows, err := s.Pool.Query(ctx, selLote+` WHERE`+loteVivo+` AND ($3::text[] IS NULL OR l.cliente_cuit = ANY($3)) ORDER BY l.id DESC LIMIT $1 OFFSET $2`, limite, offset, alcance)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -299,19 +308,19 @@ func (s *Store) Lotes(ctx context.Context, limite, offset int, alcance []string)
 		res = append(res, *l)
 	}
 	var total int
-	_ = s.Pool.QueryRow(ctx, `SELECT count(*) FROM lotes l WHERE ($1::text[] IS NULL OR l.cliente_cuit = ANY($1))`, alcance).Scan(&total)
+	_ = s.Pool.QueryRow(ctx, `SELECT count(*) FROM lotes l WHERE`+loteVivo+` AND ($1::text[] IS NULL OR l.cliente_cuit = ANY($1))`, alcance).Scan(&total)
 	return res, total, rows.Err()
 }
 
 // UltimoLoteDeChat para el comando "estado" de los canales.
 func (s *Store) UltimoLoteDeChat(ctx context.Context, canal, chat string) (*Lote, error) {
-	return scanLote(s.Pool.QueryRow(ctx, selLote+` WHERE l.canal=$1 AND l.chat=$2 ORDER BY l.id DESC LIMIT 1`, canal, chat))
+	return scanLote(s.Pool.QueryRow(ctx, selLote+` WHERE l.canal=$1 AND l.chat=$2 AND`+loteVivo+` ORDER BY l.id DESC LIMIT 1`, canal, chat))
 }
 
 // CerrarLoteSiTermino marca el lote como terminado si no le quedan documentos pendientes.
 // Devuelve true solo a quien lo cerró (si dos workers terminan a la vez, uno solo gana).
 func (s *Store) CerrarLoteSiTermino(ctx context.Context, id int64) (bool, error) {
-	ct, err := s.Pool.Exec(ctx, `UPDATE lotes SET terminado=now() WHERE id=$1 AND terminado IS NULL
+	ct, err := s.Pool.Exec(ctx, `UPDATE lotes SET terminado=now() WHERE id=$1 AND terminado IS NULL AND borrado_en IS NULL
 		AND NOT EXISTS (SELECT 1 FROM documentos WHERE lote_id=$1 AND estado IN ('pendiente','procesando'))`, id)
 	if err != nil {
 		return false, err
@@ -332,9 +341,10 @@ func (s *Store) MarcarNotificado(ctx context.Context, id int64) (bool, error) {
 // ---------- Documentos ----------
 
 // CrearDocumento registra un archivo. Si el mismo contenido ya se procesó bien, queda como repetido.
+// Lo que está en la papelera no cuenta: el mismo archivo se vuelve a procesar como nuevo.
 func (s *Store) CrearDocumento(ctx context.Context, tx pgx.Tx, lote int64, nombre, mime string, tamano int64, sha string) (id int64, repetido bool, err error) {
 	var previo *int64
-	_ = tx.QueryRow(ctx, `SELECT id FROM documentos WHERE sha256=$1 AND estado='listo' ORDER BY id LIMIT 1`, sha).Scan(&previo)
+	_ = tx.QueryRow(ctx, `SELECT id FROM documentos WHERE sha256=$1 AND estado='listo' AND borrado_en IS NULL ORDER BY id LIMIT 1`, sha).Scan(&previo)
 	estado := "pendiente"
 	if previo != nil {
 		estado = "repetido"
@@ -348,7 +358,7 @@ func (s *Store) Documento(ctx context.Context, id int64) (*Documento, error) {
 	var d Documento
 	var e *string
 	err := s.Pool.QueryRow(ctx, `SELECT d.id, d.lote_id, d.nombre, d.mime, d.tamano, d.sha256, d.estado, d.error, d.repetido_de, d.creado, l.cliente_cuit
-		FROM documentos d JOIN lotes l ON l.id = d.lote_id WHERE d.id=$1`, id).
+		FROM documentos d JOIN lotes l ON l.id = d.lote_id WHERE d.id=$1 AND d.borrado_en IS NULL`, id).
 		Scan(&d.ID, &d.LoteID, &d.Nombre, &d.Mime, &d.Tamano, &d.SHA256, &d.Estado, &e, &d.RepetidoDe, &d.Creado, &d.ClienteCUIT)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNoEncontrado
@@ -360,22 +370,42 @@ func (s *Store) Documento(ctx context.Context, id int64) (*Documento, error) {
 }
 
 // TomarDocumento lo pasa a "procesando". Devuelve false si ya no estaba pendiente (reintento de un
-// trabajo que ya había terminado).
+// trabajo que ya había terminado) o si se fue a la papelera.
 func (s *Store) TomarDocumento(ctx context.Context, id int64) (bool, error) {
-	ct, err := s.Pool.Exec(ctx, `UPDATE documentos SET estado='procesando' WHERE id=$1 AND estado IN ('pendiente','procesando')`, id)
+	ct, err := s.Pool.Exec(ctx, `UPDATE documentos SET estado='procesando' WHERE id=$1 AND estado IN ('pendiente','procesando') AND borrado_en IS NULL`, id)
 	return ct.RowsAffected() == 1, err
 }
 
 func (s *Store) ErrorDocumento(ctx context.Context, id int64, msg string) error {
-	_, err := s.Pool.Exec(ctx, `UPDATE documentos SET estado='error', error=$2, procesado=now() WHERE id=$1`, id, msg)
+	_, err := s.Pool.Exec(ctx, `UPDATE documentos SET estado='error', error=$2, procesado=now() WHERE id=$1 AND borrado_en IS NULL`, id, msg)
 	return err
 }
 
 // GuardarResultado reemplaza los comprobantes del documento (es idempotente ante reintentos) y
-// detecta duplicados: mismo emisor, tipo, punto de venta y número para el mismo cliente.
-func (s *Store) GuardarResultado(ctx context.Context, doc *Documento, cliente string, r *modelo.Resultado) ([]int64, error) {
+// detecta duplicados: mismo emisor, tipo, punto de venta y número para el mismo cliente (sin contar
+// lo que está en la papelera). El cliente sale del lote en ese momento (se puede haber cambiado
+// mientras se procesaba). Si el documento se fue a la papelera mientras se leía, no guarda nada y
+// devuelve ErrNoEncontrado: queda como estaba, para procesarlo de nuevo si se restaura.
+func (s *Store) GuardarResultado(ctx context.Context, doc *Documento, r *modelo.Resultado) ([]int64, error) {
 	var ids []int64
 	err := pgx.BeginFunc(ctx, s.Pool, func(tx pgx.Tx) error {
+		// Primero el lote y después el documento, el mismo orden que borrar y cambiar el cliente. El
+		// candado del lote es el mismo que toma el UPDATE del final (dos documentos del mismo lote se
+		// guardan de a uno: así la detección de duplicados entre ellos no depende de la suerte).
+		var cliente string
+		if err := tx.QueryRow(ctx, `SELECT cliente_cuit FROM lotes WHERE id=$1 AND borrado_en IS NULL FOR NO KEY UPDATE`, doc.LoteID).Scan(&cliente); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrNoEncontrado
+			}
+			return err
+		}
+		var vivo bool
+		if err := tx.QueryRow(ctx, `SELECT borrado_en IS NULL FROM documentos WHERE id=$1 FOR UPDATE`, doc.ID).Scan(&vivo); err != nil || !vivo {
+			if err == nil || errors.Is(err, pgx.ErrNoRows) {
+				return ErrNoEncontrado
+			}
+			return err
+		}
 		if _, err := tx.Exec(ctx, `DELETE FROM comprobantes WHERE documento_id=$1`, doc.ID); err != nil {
 			return err
 		}
@@ -393,7 +423,7 @@ func (s *Store) GuardarResultado(ctx context.Context, doc *Documento, cliente st
 			c := &rc.Comprobante
 			var dup *int64
 			if c.Clave() != "" {
-				_ = tx.QueryRow(ctx, `SELECT id FROM comprobantes WHERE cliente_cuit=$1 AND cuit_emisor=$2 AND tipo=$3 AND punto_venta=$4 AND numero=$5 AND documento_id<>$6 ORDER BY id LIMIT 1`,
+				_ = tx.QueryRow(ctx, `SELECT id FROM comprobantes WHERE cliente_cuit=$1 AND cuit_emisor=$2 AND tipo=$3 AND punto_venta=$4 AND numero=$5 AND documento_id<>$6 AND borrado_en IS NULL ORDER BY id LIMIT 1`,
 					cliente, c.CUITEmisor, c.Tipo, c.PuntoVenta, c.Numero, doc.ID).Scan(&dup)
 			}
 			if dup != nil {
@@ -467,7 +497,7 @@ func scanCbte(r pgx.Row) (*Cbte, error) {
 }
 
 func (f Filtro) where() (string, []any) {
-	var w []string
+	w := []string{"c.borrado_en IS NULL"} // lo de la papelera no se ve en ningún listado
 	var a []any
 	add := func(cond string, v any) {
 		a = append(a, v)
@@ -512,9 +542,6 @@ func (f Filtro) where() (string, []any) {
 		n := "$" + strconv.Itoa(len(a))
 		w = append(w, "(c.razon_social_emisor ILIKE '%' || "+n+" || '%' OR c.cuit_emisor LIKE '%' || "+n+" || '%' OR c.numero::text = "+n+" OR d.nombre ILIKE '%' || "+n+" || '%')")
 	}
-	if len(w) == 0 {
-		return "", a
-	}
 	return " WHERE " + strings.Join(w, " AND "), a
 }
 
@@ -554,11 +581,11 @@ func (s *Store) Comprobantes(ctx context.Context, f Filtro) ([]Cbte, int, error)
 }
 
 func (s *Store) Comprobante(ctx context.Context, id int64) (*Cbte, error) {
-	return scanCbte(s.Pool.QueryRow(ctx, selCbte+` WHERE c.id=$1`, id))
+	return scanCbte(s.Pool.QueryRow(ctx, selCbte+` WHERE c.id=$1 AND c.borrado_en IS NULL`, id))
 }
 
 func (s *Store) ComprobantesDeDocumento(ctx context.Context, doc int64) ([]Cbte, error) {
-	rows, err := s.Pool.Query(ctx, selCbte+` WHERE c.documento_id=$1 ORDER BY c.orden`, doc)
+	rows, err := s.Pool.Query(ctx, selCbte+` WHERE c.documento_id=$1 AND c.borrado_en IS NULL ORDER BY c.orden`, doc)
 	if err != nil {
 		return nil, err
 	}
@@ -574,9 +601,11 @@ func (s *Store) ComprobantesDeDocumento(ctx context.Context, doc int64) ([]Cbte,
 	return res, rows.Err()
 }
 
-// SinConstatar devuelve los comprobantes de un lote que todavía no se constataron.
-func (s *Store) SinConstatar(ctx context.Context, lote int64, limite int) ([]Cbte, error) {
-	rows, err := s.Pool.Query(ctx, selCbte+` WHERE c.lote_id=$1 AND c.constatacion IS NULL ORDER BY c.id LIMIT $2`, lote, limite)
+// SinConstatar devuelve los comprobantes de un lote que todavía no se constataron (sin los de la
+// papelera). solo, si no es nil, limita a esos comprobantes.
+func (s *Store) SinConstatar(ctx context.Context, lote int64, solo []int64, limite int) ([]Cbte, error) {
+	rows, err := s.Pool.Query(ctx, selCbte+` WHERE c.lote_id=$1 AND c.constatacion IS NULL AND c.borrado_en IS NULL
+		AND ($3::bigint[] IS NULL OR c.id = ANY($3)) ORDER BY c.id LIMIT $2`, lote, limite, solo)
 	if err != nil {
 		return nil, err
 	}
@@ -593,6 +622,7 @@ func (s *Store) SinConstatar(ctx context.Context, lote int64, limite int) ([]Cbt
 }
 
 // ActualizarCbte guarda datos, hallazgos, estado y (opcional) constatación, y registra las correcciones.
+// Lo que está en la papelera no se toca (ErrNoEncontrado): al restaurarlo vuelve como estaba.
 func (s *Store) ActualizarCbte(ctx context.Context, c *Cbte, correcciones []Correccion, aprobadoPor string) error {
 	return pgx.BeginFunc(ctx, s.Pool, func(tx pgx.Tx) error {
 		datos, _ := json.Marshal(c.Datos)
@@ -605,14 +635,17 @@ func (s *Store) ActualizarCbte(ctx context.Context, c *Cbte, correcciones []Corr
 		if aprobadoPor != "" {
 			revPor = aprobadoPor
 		}
-		_, err := tx.Exec(ctx, `UPDATE comprobantes SET datos=$2, hallazgos=$3, estado=$4, confianza=$5, constatacion=$6,
+		ct, err := tx.Exec(ctx, `UPDATE comprobantes SET datos=$2, hallazgos=$3, estado=$4, confianza=$5, constatacion=$6,
 			tipo=$7, punto_venta=$8, numero=$9, fecha=$10, cuit_emisor=$11, razon_social_emisor=$12, total=$13, actualizado=now(),
 			revisado_por=coalesce($14, revisado_por), revisado_en=CASE WHEN $14::text IS NULL THEN revisado_en ELSE now() END
-			WHERE id=$1`,
+			WHERE id=$1 AND borrado_en IS NULL`,
 			c.ID, datos, hall, string(c.Estado), c.Confianza, cons, c.Datos.Tipo, c.Datos.PuntoVenta, c.Datos.Numero, fechaONull(c.Datos.Fecha),
 			c.Datos.CUITEmisor, c.Datos.RazonSocialEmisor, int64(c.Datos.Total), revPor)
 		if err != nil {
 			return err
+		}
+		if ct.RowsAffected() == 0 {
+			return ErrNoEncontrado
 		}
 		for _, k := range correcciones {
 			if _, err := tx.Exec(ctx, `INSERT INTO correcciones (comprobante_id, campo, antes, despues, usuario) VALUES ($1,$2,$3,$4,$5)`,
@@ -687,7 +720,7 @@ func (s *Store) GuardarRubroCUIT(ctx context.Context, cuit, rubro, usuario strin
 				datos = jsonb_set(datos || jsonb_build_object('rubro', $2::text), '{origenes}',
 					coalesce(nullif(datos->'origenes', 'null'::jsonb), '{}'::jsonb) || '{"rubro":"manual"}'::jsonb),
 				actualizado = now()
-			WHERE cuit_emisor = $1
+			WHERE cuit_emisor = $1 AND borrado_en IS NULL
 			  AND NOT EXISTS (SELECT 1 FROM correcciones k WHERE k.comprobante_id = comprobantes.id AND k.campo = 'rubro')`, cuit, rubro)
 		n = ct.RowsAffected()
 		return err
@@ -699,7 +732,7 @@ func (s *Store) GuardarRubroCUIT(ctx context.Context, cuit, rubro, usuario strin
 // de emisores que aparecen en comprobantes de esos clientes.
 func (s *Store) Rubros(ctx context.Context, alcance []string) ([]RubroCUIT, error) {
 	rows, err := s.Pool.Query(ctx, `SELECT cuit_emisor, rubro, usuario, actualizado FROM rubros_cuit r
-		WHERE $1::text[] IS NULL OR EXISTS (SELECT 1 FROM comprobantes c WHERE c.cuit_emisor = r.cuit_emisor AND c.cliente_cuit = ANY($1))
+		WHERE $1::text[] IS NULL OR EXISTS (SELECT 1 FROM comprobantes c WHERE c.cuit_emisor = r.cuit_emisor AND c.cliente_cuit = ANY($1) AND c.borrado_en IS NULL)
 		ORDER BY actualizado DESC LIMIT 5000`, alcance)
 	if err != nil {
 		return nil, err
@@ -719,8 +752,10 @@ func (s *Store) Rubros(ctx context.Context, alcance []string) ([]RubroCUIT, erro
 // Estadisticas para /metrics.
 func (s *Store) Estadisticas(ctx context.Context) (map[string]int64, error) {
 	m := map[string]int64{}
-	rows, err := s.Pool.Query(ctx, `SELECT 'documentos_'||estado, count(*) FROM documentos GROUP BY estado
-		UNION ALL SELECT 'comprobantes_'||estado, count(*) FROM comprobantes GROUP BY estado`)
+	rows, err := s.Pool.Query(ctx, `SELECT 'documentos_'||estado, count(*) FROM documentos WHERE borrado_en IS NULL GROUP BY estado
+		UNION ALL SELECT 'comprobantes_'||estado, count(*) FROM comprobantes WHERE borrado_en IS NULL GROUP BY estado
+		UNION ALL SELECT 'papelera_lotes', count(*) FROM lotes WHERE borrado_en IS NOT NULL
+		UNION ALL SELECT 'papelera_comprobantes', count(*) FROM comprobantes WHERE borrado_en IS NOT NULL`)
 	if err != nil {
 		return nil, err
 	}

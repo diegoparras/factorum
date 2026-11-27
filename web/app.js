@@ -42,13 +42,15 @@ const I = {
   conciliacion: svg('<path d="M4 8h13l-3-3"/><path d="M20 16H7l3 3"/><path d="M9 12h6"/>'),
   enviar: svg('<path d="M21 3L10 14"/><path d="M21 3l-7 18-4-7-7-4z"/>'),
   papelera: svg('<path d="M4 7h16"/><path d="M9 7V4.5h6V7"/><path d="M6 7l1 13h10l1-13"/><path d="M10 11v5.5M14 11v5.5"/>'),
+  bajar: svg('<path d="M12 4v12M7 11l5 5 5-5"/><path d="M4 20h16"/>'),
+  libro_iva: svg('<path d="M5 4.5A1.5 1.5 0 0 1 6.5 3H19v15H6.5A1.5 1.5 0 0 0 5 19.5z"/><path d="M5 19.5A1.5 1.5 0 0 0 6.5 21H19v-3"/><path d="M9 7.5h6M9 11h6M9 14.5h3"/>'),
   restaurar: svg('<path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3"/><path d="M4 4.5V9h4.5"/>'),
 };
 
 // Cada sección dice qué permiso hace falta para verla (el servidor lo hace cumplir igual).
 const NAV_TODO = [
   ['Trabajo', [['inicio', 'Inicio'], ['revisar', 'Revisar'], ['retenido', 'Correo retenido', 'retenido'], ['verificar', 'Verificar'], ['subir', 'Cargar facturas', 'cargar']]],
-  ['Datos', [['lotes', 'Lotes'], ['comprobantes', 'Comprobantes'], ['resumen', 'Resumen'], ['conciliacion', 'Conciliación'], ['papelera', 'Papelera', 'papelera']]],
+  ['Datos', [['lotes', 'Lotes'], ['comprobantes', 'Comprobantes'], ['resumen', 'Resumen'], ['conciliacion', 'Conciliación'], ['libro_iva', 'Libro IVA Digital', 'libro_iva'], ['papelera', 'Papelera', 'papelera']]],
   ['Configuración', [['configuracion', 'Configuración', 'clientes'], ['usuarios', 'Usuarios', 'usuarios'], ['claves', 'Claves de API', 'claves'],
     ['conectar', 'Conectar'], ['auditoria', 'Auditoría', 'auditoria']]],
 ];
@@ -184,6 +186,7 @@ function ir(v) {
   if (v === 'comprobantes') cargarCbtes();
   if (v === 'resumen') cargarResumen();
   if (v === 'conciliacion') prepararConciliacion();
+  if (v === 'libro_iva') prepararLibro();
   if (v === 'papelera') { papOffset = 0; PAP_SEL.clear(); cargarPapelera(); }
   if (v === 'configuracion') { cargarConfiguracion(); timerCanales = setInterval(refrescarWhatsApp, 5000); }
   if (v === 'usuarios') cargarUsuarios();
@@ -990,7 +993,7 @@ function cerrarRevision() {
   $('#revision').classList.add('hidden');
   if (rev && rev.url) URL.revokeObjectURL(rev.url);
   rev = null;
-  if (vista === 'conciliacion') cargarConciliacion(false); else cargarCbtes();
+  if (vista === 'conciliacion') cargarConciliacion(false); else if (vista === 'libro_iva') cargarLibro(); else cargarCbtes();
 }
 
 function cambiosRevision() {
@@ -1331,7 +1334,7 @@ function pintarConciliacion() {
   $('#conciliacion').innerHTML = `${syncHTML(d)}
     <div class="conc-cab"><div><strong>${esc(cuit(d.cliente))}${nombreCli ? ' · ' + esc(nombreCli) : ''}</strong> <span class="muted">del ${fecha(d.desde)} al ${fecha(d.hasta)} · ${mil(d.en_factorum)} en Factorum · ${mil(d.en_arca)} en ARCA</span>
       ${r.duplicados.factorum || r.duplicados.arca ? `<br><span class="chip-dup">${r.duplicados.factorum ? `${r.duplicados.factorum} duplicado${r.duplicados.factorum > 1 ? 's' : ''} en Factorum` : ''}${r.duplicados.factorum && r.duplicados.arca ? ' · ' : ''}${r.duplicados.arca ? `${r.duplicados.arca} repetido${r.duplicados.arca > 1 ? 's' : ''} en ARCA` : ''}</span>` : ''}</div>
-      <div class="acciones"><button type="button" class="ghost mini" data-accion="concExportar" data-formato="xlsx">Excel</button><button type="button" class="ghost mini" data-accion="concExportar" data-formato="csv">CSV</button></div></div>
+      <div class="acciones">${puede('libro_iva') ? `<button type="button" class="ghost mini" data-accion="concALibro" title="Las compras del mes en el formato del Libro IVA Digital">${I.libro_iva}<span>Exportar al Libro IVA</span></button>` : ''}<button type="button" class="ghost mini" data-accion="concExportar" data-formato="xlsx">Excel</button><button type="button" class="ghost mini" data-accion="concExportar" data-formato="csv">CSV</button></div></div>
     <div class="kpis conc-kpis">${GRUPOS_CONC.map(([k]) => kpiConc(k, r.totales[k], d)).join('')}</div>
     <div class="conc-barra"><div class="tabs" role="tablist">${GRUPOS_CONC.map(([k, t]) => `<button type="button" role="tab" aria-selected="${k === g}" class="${k === g ? 'on' : ''}" data-accion="concTab" data-grupo="${k}">${t} <span class="cnt">${r.grupos[k].length}</span></button>`).join('')}</div>
       <div class="acciones">${accionesTab}</div></div>
@@ -1379,6 +1382,217 @@ async function constatarConc(id, btn) {
     toast(k && k.apoc && k.apoc.esApocrifo ? 'El emisor figura como apócrifo' : k && k.valido === true ? 'ARCA lo reconoce: existe' : k && k.valido === false ? 'ARCA no lo reconoce' : 'Constatado');
     await cargarConciliacion(false);
   } catch (e) { toast(e, true); if (btn) { btn.disabled = false; btn.textContent = 'Constatar'; } }
+}
+
+// ---------- Libro IVA Digital ----------
+// Las compras de un cliente en un mes, en el formato de importación de ARCA (RG 4597). El servidor
+// arma los archivos y dice qué problemas hay; acá se muestran agrupados y se baja el ZIP.
+const LIB = { datos: null, cliente: '', periodo: '', solo: false, cargando: false };
+const NIVEL_LIB = {
+  bloquea: ['error', 'No va al archivo', 'Hay que corregirlos en Revisar: con estos problemas no se pueden exportar.'],
+  fuerte: ['error', 'Advertencia fuerte', 'Van solo si bajás todos. Su crédito fiscal no debería computarse.'],
+  advertencia: ['revisar', 'Advertencias', 'Van al archivo. Conviene mirarlos antes de presentar.'],
+  info: ['', 'Para tener en cuenta', 'Cómo quedaron en el archivo.'],
+};
+const mesDe = (d) => isoLocal(d).slice(0, 7);
+function mesAtajo(a) {
+  const hoy = new Date();
+  return a === 'este_mes' ? mesDe(hoy) : mesDe(new Date(hoy.getFullYear(), hoy.getMonth() - 1, 1));
+}
+function libAtajo(a) { $('#libPeriodo').value = mesAtajo(a); marcarLibAtajo(); }
+function marcarLibAtajo() {
+  $$('#fLibro [data-atajo]').forEach((b) => b.classList.toggle('on', $('#libPeriodo').value === mesAtajo(b.dataset.atajo)));
+}
+const mesTxt = (p) => {
+  const [y, m] = String(p || '').split('-').map(Number);
+  if (!y || !m) return p || '';
+  const t = new Date(y, m - 1, 1).toLocaleDateString('es-AR', { month: 'long', year: 'numeric' });
+  return t.charAt(0).toUpperCase() + t.slice(1);
+};
+
+async function prepararLibro() {
+  if (LIB.periodo) $('#libPeriodo').value = LIB.periodo;
+  if (!$('#libPeriodo').value) libAtajo('mes_pasado');
+  marcarLibAtajo();
+  if (!CONC.clientes) {
+    try {
+      const r = await api('/api/conciliacion/clientes');
+      CONC.clientes = r.clientes || [];
+      CONC.arcanum = r.arcanum;
+    } catch (e) { toast(e, true); return; }
+  }
+  const sel = $('#libCliente');
+  const restringido = !!(YO && YO.identidad && YO.identidad.cuits);
+  const cs = CONC.clientes;
+  const previo = LIB.cliente || sel.value;
+  sel.innerHTML = (cs.length === 1 ? '' : '<option value="">Elegí un cliente</option>')
+    + cs.map((c) => `<option value="${esc(c.cuit)}">${esc(cuit(c.cuit))}${c.nombre ? ' · ' + esc(c.nombre) : ''}${c.comprobantes ? ` (${mil(c.comprobantes)})` : ' (sin comprobantes)'}</option>`).join('')
+    + (restringido ? '' : '<option value="otro">Otro CUIT...</option>');
+  if (cs.length === 1) sel.value = cs[0].cuit;
+  else if (previo && [...sel.options].some((o) => o.value === previo)) sel.value = previo;
+  else if (previo && !restringido) { sel.value = 'otro'; $('#libOtro').value = cuit(previo); }
+  $('#libOtroWrap').classList.toggle('hidden', sel.value !== 'otro');
+  // Desde Conciliación viene con el cliente y el mes: se arma solo.
+  if (LIB.cliente && LIB.periodo && (!LIB.datos || LIB.datos.cliente !== LIB.cliente || LIB.datos.periodo !== LIB.periodo)) { await cargarLibro(); return; }
+  if (!LIB.datos) pintarLibroVacio(); else pintarLibro();
+}
+
+function pintarLibroVacio() {
+  if (CONC.clientes && !CONC.clientes.length) {
+    $('#libro').innerHTML = vacio('libro_iva', 'Todavía no hay clientes con compras', 'Cargá las facturas de compra con el CUIT del cliente y después armá el libro del mes.', 'subir', 'Cargar facturas');
+    return;
+  }
+  $('#libro').innerHTML = `<div class="vacio"><div class="ico">${I.libro_iva}</div><h3>Elegí el cliente y el mes</h3>
+    <p>Factorum arma los dos archivos que pide ARCA con las compras del mes (por fecha de emisión) y te muestra antes qué hay que corregir.</p>
+    <div class="pasos">
+      <div class="paso"><span class="n">Comprobantes</span><span class="muted">Un registro de 325 posiciones por comprobante: LIBRO_IVA_DIGITAL_COMPRAS_CBTE.</span></div>
+      <div class="paso"><span class="n">Alícuotas</span><span class="muted">Uno de 84 por cada alícuota de IVA de las A y M. B, C y tiques no llevan.</span></div>
+      <div class="paso"><span class="n">Problemas</span><span class="muted">Lo que no puede ir, lo que no deberías computar y lo que conviene mirar.</span></div>
+    </div></div>`;
+}
+
+function clienteLib() {
+  const v = $('#libCliente').value;
+  return v === 'otro' ? soloDig($('#libOtro').value) : v;
+}
+
+async function armarLibro() {
+  const cli = clienteLib();
+  const per = $('#libPeriodo').value.trim();
+  if (!cli) { toast('Elegí el cliente', true); return; }
+  if (cli.length !== 11) { toast('El CUIT del cliente tiene que tener 11 dígitos', true); return; }
+  if (!/^\d{4}-\d{2}$/.test(per)) { toast('Elegí el mes (AAAA-MM)', true); return; }
+  Object.assign(LIB, { cliente: cli, periodo: per });
+  await cargarLibro();
+}
+
+async function cargarLibro() {
+  if (!LIB.cliente || LIB.cargando) return;
+  LIB.cargando = true;
+  const btn = $('#libBtn');
+  btn.disabled = true; btn.textContent = 'Armando...';
+  if (!LIB.datos) $('#libro').innerHTML = '<p class="muted">Armando el libro y buscando problemas...</p>';
+  try {
+    const q = new URLSearchParams({ cliente: LIB.cliente, periodo: LIB.periodo });
+    if (LIB.solo) q.set('solo_aprobados', '1');
+    LIB.datos = await api('/api/libro-iva?' + q);
+    pintarLibro();
+  } catch (e) { toast(e, true); if (!LIB.datos) pintarLibroVacio(); } finally {
+    LIB.cargando = false;
+    btn.disabled = false; btn.textContent = 'Armar el libro';
+  }
+}
+
+const nroItem = (it) => `${String(it.punto_venta || 0).padStart(5, '0')}-${String(it.numero || 0).padStart(8, '0')}`;
+const montoMon = (v, mon) => (mon && mon !== 'PES' ? `${esc(mon)} ${pesos(v)}` : `$ ${pesos(v)}`);
+
+function grupoLibHTML(g) {
+  const [cls] = NIVEL_LIB[g.nivel] || [''];
+  const n = g.items.length;
+  const afuera = g.items.filter((it) => it.excluido).length;
+  const filas = g.items.map((it) => `<tr class="${it.excluido ? 'lib-afuera' : ''}"><td>${esc(it.nombre_tipo)}<div class="mono nowrap">${nroItem(it)}</div></td>
+      <td class="nowrap">${it.fecha ? fecha(it.fecha) : '<span class="muted">sin fecha</span>'}</td>
+      <td>${esc(it.emisor || '')}<div class="muted mono">${esc(cuit(it.cuit_emisor))}</div></td>
+      <td class="num nowrap">${montoMon(it.total, it.moneda)}</td>
+      <td>${it.detalle ? esc(it.detalle) : '<span class="muted">-</span>'}</td>
+      <td>${it.excluido ? '<span class="est error">No va</span>' : '<span class="est ok">Va</span>'}</td>
+      <td><button type="button" class="ghost mini" data-accion="libAbrir" data-id="${it.id}" data-grupo="${esc(g.codigo)}">Abrir</button></td></tr>`).join('');
+  return `<details class="lib-grupo ${cls}"${g.nivel === 'info' ? '' : ' open'}><summary><span class="lib-tit">${esc(g.titulo)}</span>
+      <span class="cnt">${mil(n)}</span>${afuera && afuera < n ? `<span class="muted mini-txt">${mil(afuera)} no va${afuera > 1 ? 'n' : ''}</span>` : ''}</summary>
+    <p class="muted lib-ayuda">${esc(g.ayuda)}</p>
+    <div class="tabla-scroll"><table class="t lib-t"><thead><tr><th>Comprobante</th><th>Fecha</th><th>Emisor</th><th class="num">Total</th><th>Detalle</th><th>Archivo</th><th></th></tr></thead>
+    <tbody>${filas}</tbody></table></div></details>`;
+}
+
+function problemasLibHTML(d) {
+  const gs = d.problemas || [];
+  const serios = gs.filter((g) => g.nivel !== 'info');
+  let h = '';
+  if (!serios.length) {
+    h += `<div class="aviso-card lib-bien">${I.check}<div><strong>Sin problemas.</strong><br><span class="muted">${d.cantidad_todos ? 'Todo lo del mes se puede exportar tal cual.' : 'No hay comprobantes en el mes.'}</span></div></div>`;
+  }
+  for (const nivel of ['bloquea', 'fuerte', 'advertencia', 'info']) {
+    const del = gs.filter((g) => g.nivel === nivel);
+    if (!del.length) continue;
+    const [cls, tit, ayuda] = NIVEL_LIB[nivel];
+    const cuantos = new Set(del.flatMap((g) => g.items.map((it) => it.id))).size;
+    h += `<section class="lib-nivel ${cls}"><h3>${esc(tit)} <span class="cnt">${mil(cuantos)} comprobante${cuantos === 1 ? '' : 's'}</span></h3><p class="muted lib-ayuda">${esc(ayuda)}</p>
+      ${del.map(grupoLibHTML).join('')}</section>`;
+  }
+  return h;
+}
+
+function pintarLibro() {
+  const d = LIB.datos;
+  if (!d) { pintarLibroVacio(); return; }
+  const r = d.resumen;
+  const nombre = d.nombre || ((CONC.clientes || []).find((c) => c.cuit === d.cliente) || {}).nombre || '';
+  const ext = r.moneda_extranjera || [];
+  const extTxt = ext.map((m) => `${esc(m.moneda)} ${pesos(m.total)} (${m.cantidad})`).join(' · ');
+  const conc = d.conciliacion || {};
+  const concHTML = conc.estado === 'lista'
+    ? `<div class="aviso-mini lib-ok">${I.check}<span>Conciliado con Mis Comprobantes: lo que no figura en ARCA aparece en las advertencias.${conc.mensaje ? ' ' + esc(conc.mensaje) : ''}</span></div>`
+    : conc.estado && conc.estado !== 'no_pedida' ? `<div class="aviso-mini">${I.info}<span>Sin conciliación con ARCA: ${esc(conc.mensaje || 'no se pudo conciliar.')} Los archivos se arman igual.</span></div>` : '';
+  const aliFilas = (r.por_alicuota || []).map((a) => `<tr><td>${esc(a.tasa)} %</td><td class="mono">${esc(a.codigo)}</td><td class="num">${mil(a.registros)}</td><td class="num">$ ${pesos(a.neto_gravado)}</td><td class="num">$ ${pesos(a.iva)}</td></tr>`).join('');
+  const otros = [['No gravado', r.no_gravado], ['Exento', r.exento], ['Otros tributos', r.otros_tributos]].filter(([, v]) => Number(v))
+    .map(([t, v]) => `<tr class="lib-extra"><td>${t}</td><td></td><td></td><td class="num">$ ${pesos(v)}</td><td></td></tr>`).join('');
+  const n = r.comprobantes;
+  const bajar = n
+    ? `<button type="button" data-accion="libBajar">${I.bajar}<span>Bajar el ZIP (${mil(n)} comprobante${n === 1 ? '' : 's'})</span></button>`
+    : '<button type="button" disabled>No hay nada para bajar</button>';
+  const hayExt = ext.length > 0;
+  $('#libro').innerHTML = `${concHTML}
+    <div class="conc-cab"><div><strong>${esc(cuit(d.cliente))}${nombre ? ' · ' + esc(nombre) : ''}</strong> <span class="muted">${esc(mesTxt(d.periodo))} · ${mil(d.leidos)} comprobante${d.leidos === 1 ? '' : 's'} en Factorum · ${mil(d.excluidos)} no va${d.excluidos === 1 ? '' : 'n'}</span></div>
+      <div class="acciones"><button type="button" class="ghost mini" data-accion="libRefrescar">Actualizar</button></div></div>
+    <div class="kpis lib-kpis">
+      <div class="kpi"><span class="et">Comprobantes</span><span class="val">${mil(n)}</span><span class="kpi-pie">${mil(r.registros_alicuotas)} registro${r.registros_alicuotas === 1 ? '' : 's'} de alícuotas${r.notas_credito ? ` · ${r.notas_credito} nota${r.notas_credito > 1 ? 's' : ''} de crédito` : ''}</span></div>
+      <div class="kpi"><span class="et">IVA</span><span class="val">${pesos(r.iva)}</span><span class="kpi-pie">neto gravado $ ${pesos(r.neto_gravado)}</span></div>
+      <div class="kpi lib-cf"><span class="et">Crédito fiscal computable</span><span class="val">${pesos(r.credito_fiscal)}</span><span class="kpi-pie">${r.sin_credito_fiscal ? `${r.sin_credito_fiscal} sin crédito fiscal (B, C y tiques)` : 'sin prorrateo: igual al IVA'}</span></div>
+      <div class="kpi"><span class="et">Total</span><span class="val">${pesos(r.total)}</span><span class="kpi-pie">las notas de crédito restan${extTxt ? '<br>aparte: ' + extTxt : ''}</span></div>
+    </div>
+    <div class="dos parejo lib-dos">
+      <div class="card"><div class="card-cab"><h3>Por alícuota</h3><span class="muted mini-txt">en pesos</span></div>
+        ${aliFilas || otros ? `<div class="tabla-scroll"><table class="t lib-ali"><thead><tr><th>Alícuota</th><th>Código</th><th class="num">Registros</th><th class="num">Neto gravado</th><th class="num">IVA</th></tr></thead>
+        <tbody>${aliFilas}${otros}</tbody></table></div>` : '<p class="muted">Sin IVA discriminado en el mes.</p>'}
+      </div>
+      <div class="card lib-bajar"><div class="card-cab"><h3>Bajar los archivos</h3></div>
+        <div class="tabs" role="tablist" aria-label="Qué va al archivo">
+          <button type="button" role="tab" aria-selected="${!d.solo_aprobados}" class="${d.solo_aprobados ? '' : 'on'}" data-accion="libSolo" data-solo="0">Todos <span class="cnt">${mil(d.cantidad_todos)}</span></button>
+          <button type="button" role="tab" aria-selected="${!!d.solo_aprobados}" class="${d.solo_aprobados ? 'on' : ''}" data-accion="libSolo" data-solo="1">Solo los listos <span class="cnt">${mil(d.cantidad_listos)}</span></button>
+        </div>
+        <p class="muted mini-txt">${d.solo_aprobados ? 'Solo lo que está bien o aprobado y sin advertencias fuertes.' : 'Todo lo que se puede exportar, con sus advertencias (los apócrifos también: miralos antes).'}</p>
+        ${bajar}
+        <div class="aviso-mini${hayExt ? ' mal' : ''}">${I.info}<span>${hayExt ? '<strong>Hay comprobantes en moneda extranjera.</strong> ' : ''}${esc(d.importar || '')}</span></div>
+        <p class="muted mini-txt">En el ZIP: ${esc('LIBRO_IVA_DIGITAL_COMPRAS_CBTE.txt')}, ${esc('LIBRO_IVA_DIGITAL_COMPRAS_ALICUOTAS.txt')} (ISO 8859-1, una línea por registro) y resumen.csv. En ARCA: Libro IVA Compras, «Importar archivos».</p>
+      </div>
+    </div>
+    <h3 class="lib-h">Problemas</h3>
+    ${problemasLibHTML(d)}`;
+  $$('#libro table.t').forEach(tarjetaDe);
+}
+
+function bajarLibro() {
+  const d = LIB.datos;
+  if (!d) return;
+  const q = new URLSearchParams({ cliente: d.cliente, periodo: d.periodo });
+  if (d.solo_aprobados) q.set('solo_aprobados', '1');
+  descargar(`/api/libro-iva/archivos.zip?${q}`, `libro-iva-compras-${d.cliente}-${d.periodo}${d.solo_aprobados ? '-listos' : ''}.zip`);
+}
+
+// Revisar desde el libro: Anterior y Siguiente recorren el grupo de problemas.
+function abrirDesdeLibro(id, codigo) {
+  const g = ((LIB.datos || {}).problemas || []).find((x) => x.codigo === codigo);
+  const ids = g ? [...new Set(g.items.map((it) => it.id))] : [id];
+  if (!ids.includes(id)) ids.unshift(id);
+  listado = ids.map((x) => ({ id: x }));
+  abrirRevision(ids.indexOf(id));
+}
+
+function libroDesdeConc() {
+  const d = CONC.datos;
+  if (!d) return;
+  Object.assign(LIB, { cliente: d.cliente, periodo: d.desde.slice(0, 7) });
+  ir('libro_iva');
 }
 
 // ---------- Estado vacío ----------
@@ -1571,7 +1785,10 @@ function secretoUnaVez(titulo, intro, valor, pie) {
 // tarjetas: en el celular cada fila se ve como una tarjeta con la etiqueta de cada dato.
 function tarjetas(sel) {
   const t = $(sel + ' table.t');
-  if (!t) return;
+  if (t) tarjetaDe(t);
+}
+// tarjetaDe: en el celular, cada fila es una tarjeta con el título de la columna en cada dato.
+function tarjetaDe(t) {
   t.classList.add('tarjetas');
   const et = $$('thead th', t).map((th) => th.textContent.trim());
   $$('tbody tr', t).forEach((tr) => [...tr.children].forEach((td, i) => { if (et[i]) td.dataset.et = et[i]; }));
@@ -2500,6 +2717,7 @@ const ACCIONES = {
   'lote.borrar': 'Mandó un lote a la papelera', 'comprobante.borrar': 'Mandó comprobantes a la papelera', 'lote.cambiar_cliente': 'Cambió el cliente de un lote',
   'papelera.restaurar': 'Restauró de la papelera', 'papelera.vaciar': 'Vació la papelera', 'papelera.borrar_ya': 'Borró para siempre de la papelera',
   'papelera.purgar': 'Borrado definitivo de lo vencido',
+  'libro_iva.exportar': 'Exportó el Libro IVA Digital',
 };
 let audOffset = 0;
 const AUD_LIM = 50;
@@ -2522,7 +2740,7 @@ async function cargarAuditoria() {
     const sel = $('#audAccion');
     const elegida = sel.value;
     const grupos = [...new Set(acciones.map((a) => a.split('.')[0] + '.'))].filter((g) => acciones.filter((a) => a.startsWith(g)).length > 1);
-    sel.innerHTML = '<option value="">Todas las acciones</option>' + grupos.map((g) => `<option value="${g}">${esc({ 'sesion.': 'Entradas y salidas', 'usuario.': 'Personas', 'clave.': 'Claves de API', 'config.': 'Configuración', 'comprobante.': 'Comprobantes', 'suite.': 'Suite', 'r2.': 'Almacenamiento R2', 'copia.': 'Copias de la base', 'lote.': 'Lotes', 'papelera.': 'Papelera' }[g] || g)} (todas)</option>`).join('')
+    sel.innerHTML = '<option value="">Todas las acciones</option>' + grupos.map((g) => `<option value="${g}">${esc({ 'sesion.': 'Entradas y salidas', 'usuario.': 'Personas', 'clave.': 'Claves de API', 'config.': 'Configuración', 'comprobante.': 'Comprobantes', 'suite.': 'Suite', 'r2.': 'Almacenamiento R2', 'copia.': 'Copias de la base', 'lote.': 'Lotes', 'papelera.': 'Papelera', 'libro_iva.': 'Libro IVA Digital' }[g] || g)} (todas)</option>`).join('')
       + acciones.map((a) => `<option value="${esc(a)}">${esc(ACCIONES[a] || a)}</option>`).join('');
     sel.value = elegida;
     if (!eventos.length) { $('#auditoria').innerHTML = vacio('auditoria', 'No hay movimientos con estos filtros', 'Probá con otras fechas o sacando la persona.'); $('#audPager').innerHTML = ''; return; }
@@ -2620,6 +2838,12 @@ document.addEventListener('click', (ev) => {
     case 'concExportar': exportarConc(el.dataset.formato, el.dataset.grupo || ''); break;
     case 'concCopiar': copiar(textoFaltaCargar()); break;
     case 'concRefrescar': cargarConciliacion(true); break;
+    case 'concALibro': libroDesdeConc(); break;
+    case 'libAtajo': libAtajo(el.dataset.atajo); break;
+    case 'libSolo': LIB.solo = el.dataset.solo === '1'; cargarLibro(); break;
+    case 'libBajar': bajarLibro(); break;
+    case 'libRefrescar': cargarLibro(); break;
+    case 'libAbrir': abrirDesdeLibro(Number(el.dataset.id), el.dataset.grupo); break;
     case 'revAnterior': if (rev) abrirRevision(rev.idx - 1); break;
     case 'revSiguiente': if (rev) abrirRevision(rev.idx + 1); break;
     case 'revCerrar': cerrarRevision(); break;
@@ -2692,6 +2916,7 @@ document.addEventListener('submit', (ev) => {
   else if (f.id === 'fVerificar') verificar(ev);
   else if (f.id === 'fSubir') subir(ev);
   else if (f.id === 'fConciliacion') { ev.preventDefault(); conciliar(false); }
+  else if (f.id === 'fLibro') { ev.preventDefault(); armarLibro(); }
   else if (f.id === 'fFiltro') { ev.preventDefault(); leerFiltro(); filtro.offset = 0; cargarCbtes(); }
   else if (f.id === 'revForm') { ev.preventDefault(); guardarRevision(false); }
   else if (f.id === 'fVincular') {
@@ -2708,6 +2933,8 @@ document.addEventListener('change', (ev) => {
   if (ev.target.id === idCampo('correo.proveedor')) mostrarProveedor();
   if (ev.target.id === 'concCliente') { $('#concOtroWrap').classList.toggle('hidden', ev.target.value !== 'otro'); if (ev.target.value === 'otro') $('#concOtro').focus(); }
   if (ev.target.id === 'concDesde' || ev.target.id === 'concHasta') marcarAtajo();
+  if (ev.target.id === 'libCliente') { $('#libOtroWrap').classList.toggle('hidden', ev.target.value !== 'otro'); if (ev.target.value === 'otro') $('#libOtro').focus(); }
+  if (ev.target.id === 'libPeriodo') marcarLibAtajo();
   if (ev.target.id === 'usAlcance') $('#usCuitsWrap').classList.toggle('hidden', ev.target.value !== 'estos');
   if (ev.target.id === 'usLockatus') $('#usClaveWrap').classList.toggle('hidden', ev.target.checked);
 });

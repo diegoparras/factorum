@@ -243,6 +243,27 @@
       <div id="conciliacion"></div>
     </section>
 
+    <!-- Libro IVA Digital -->
+    <section class="vista hidden" id="v-libro_iva">
+      <div class="cabecera"><div><h2>Libro IVA Digital</h2><p class="sub">Exportá las compras de un cliente en un mes con el formato de importación del Libro IVA Digital de ARCA: el archivo de comprobantes y el de alícuotas, listos para «Importar archivos» en Libro IVA Compras. Antes de bajarlos, mirá los problemas.</p></div></div>
+      <form id="fLibro" class="card conc-form">
+        <div class="fila">
+          <label class="medio">Cliente<select id="libCliente" required></select></label>
+          <label class="corto hidden" id="libOtroWrap">CUIT del cliente<input id="libOtro" placeholder="20-12345678-9" inputmode="numeric" maxlength="13"></label>
+          <label class="corto">Mes<input id="libPeriodo" type="month" required placeholder="AAAA-MM" pattern="[0-9]{4}-[0-9]{2}"></label>
+        </div>
+        <div class="fila pie-form">
+          <div class="atajos" role="group" aria-label="Atajos de período">
+            <button type="button" class="ghost mini" data-accion="libAtajo" data-atajo="mes_pasado">Mes pasado</button>
+            <button type="button" class="ghost mini" data-accion="libAtajo" data-atajo="este_mes">Este mes</button>
+          </div>
+          <span class="sp"></span>
+          <button type="submit" id="libBtn">Armar el libro</button>
+        </div>
+      </form>
+      <div id="libro"></div>
+    </section>
+
     <!-- Papelera -->
     <section class="vista hidden" id="v-papelera">
       <div class="cabecera"><div><h2>Papelera</h2><p class="sub" id="papeleraSub">Lo que se borró de tus clientes. Se puede restaurar tal cual estaba (con sus estados y correcciones) hasta que se borra para siempre.</p></div>

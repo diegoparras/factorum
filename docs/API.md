@@ -122,9 +122,9 @@ Lote = { "id": 12, "nombre": "Noviembre", "cliente_cuit": "20222222223", "origen
 | `clase` | `facturas` (todo lo que no es un ticket) o `tickets` (tiques de controlador fiscal, códigos 81, 82, 83 y del 109 al 120). Vacío trae todo |
 | `rubro` | `supermercado`, `combustible`, `farmacia`, `gastronomia`, `transporte`, `servicios`, `otros`, o `sin_rubro` para los que no tienen |
 | `limite` | hasta 500 (por defecto 100) |
+| `offset` | desde dónde |
 
 Un valor de `clase` o `rubro` que no se entiende da `400`.
-| `offset` | desde dónde |
 
 `GET /api/comprobantes/{id}` devuelve `{ ok, comprobante: Cbte, correcciones: Correccion[] }`.
 
@@ -150,7 +150,7 @@ Cada comprobante puede tener un `rubro` de gasto: `supermercado`, `combustible`,
 
 Si no hay con qué decidir, el rubro queda vacío: no se inventa.
 
-Cuando una persona corrige el rubro con `PATCH`, Factorum lo guarda para ese CUIT, lo pasa a los comprobantes ya cargados de ese emisor cuyo rubro no eligió una persona y lo usa en los que vengan.
+Cuando una persona corrige el rubro con `PATCH`, Factorum lo guarda para ese CUIT, lo pasa a los comprobantes ya cargados de ese emisor y lo usa en los que vengan. Solo se respetan los comprobantes a los que una persona les corrigió el rubro a ellos en particular; los que lo tomaron del emisor siguen la última corrección.
 
 `GET /api/rubros` devuelve `{ ok, rubros: ["supermercado", ...], por_cuit: [ { cuit_emisor, rubro, usuario, actualizado } ] }`.
 

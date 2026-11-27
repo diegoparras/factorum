@@ -71,8 +71,8 @@
 
     <!-- Verificar -->
     <section class="vista hidden" id="v-verificar">
-      <h2>Verificar una factura</h2>
-      <p class="sub">Subí el PDF o la foto y Factorum te dice si es legal: lee el QR y el texto, controla las sumas y, con Arcanum, la constata con ARCA (WSCDC) y busca al emisor en la base de apócrifos. No se guarda nada.</p>
+      <h2>Verificar una factura o un ticket</h2>
+      <p class="sub">Subí el PDF o la foto y Factorum te dice si es legal: lee el QR y el texto, controla las sumas y, con Arcanum, la constata con ARCA (WSCDC) y busca al emisor en la base de apócrifos. Los tickets de controlador fiscal no se constatan: se controla el CUIT y la base de apócrifos. No se guarda nada.</p>
       <form id="fVerificar" class="card">
         <label class="zona" id="zonaVerificar">
           <span class="zona-ico" aria-hidden="true"></span>
@@ -93,7 +93,7 @@
     <!-- Subir -->
     <section class="vista hidden" id="v-subir">
       <h2>Cargar facturas</h2>
-      <p class="sub">PDFs, fotos o un ZIP con cientos de facturas. Se procesan en segundo plano: podés seguir trabajando.</p>
+      <p class="sub">PDFs, fotos o un ZIP con cientos de facturas o tickets de compra. Se procesan en segundo plano: podés seguir trabajando.</p>
       <form id="fSubir" class="card">
         <label class="zona" id="zonaSubir">
           <span class="zona-ico" aria-hidden="true"></span>
@@ -127,6 +127,8 @@
       <h2>Comprobantes</h2>
       <form id="fFiltro" class="filtros">
         <select id="fEstado" aria-label="Estado"><option value="">Todos los estados</option><option value="error">Con errores</option><option value="revisar">Para revisar</option><option value="ok">Bien</option><option value="aprobado">Aprobados</option></select>
+        <select id="fClase" aria-label="Clase"><option value="">Facturas y tickets</option><option value="facturas">Solo facturas</option><option value="tickets">Solo tickets</option></select>
+        <select id="fRubro" aria-label="Rubro"><option value="">Todos los rubros</option><option value="supermercado">Supermercado</option><option value="combustible">Combustible</option><option value="farmacia">Farmacia</option><option value="gastronomia">Gastronomía</option><option value="transporte">Transporte</option><option value="servicios">Servicios</option><option value="otros">Otros</option><option value="sin_rubro">Sin rubro</option></select>
         <input id="fQ" placeholder="Buscar razón social, CUIT o número">
         <input id="fCliente" placeholder="CUIT cliente" inputmode="numeric">
         <input id="fDesde" type="date" aria-label="Desde">
@@ -142,8 +144,8 @@
 
     <!-- Resumen -->
     <section class="vista hidden" id="v-resumen">
-      <h2>Resumen por alícuota</h2>
-      <p class="sub">Con los filtros de Comprobantes. Las notas de crédito restan; lo que está en moneda extranjera no se suma.</p>
+      <h2>Resumen</h2>
+      <p class="sub">Por alícuota y por rubro, con los filtros de Comprobantes (elegí «Solo tickets» para ver los gastos con ticket). Las notas de crédito restan; lo que está en moneda extranjera no se suma.</p>
       <div id="resumen"></div>
     </section>
 

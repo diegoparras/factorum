@@ -160,6 +160,18 @@ func TestTicketsPuntaAPunta(t *testing.T) {
 			t.Errorf("el rubro no se pasó a los otros comprobantes del emisor: %v (%s)", c["rubro"], origen(c, "rubro"))
 		}
 	}
+	// Si la persona cambia de idea, los que tomaron el rubro del emisor la siguen.
+	for _, r := range []string{"otros", "servicios"} {
+		parche = fmt.Sprintf(`{"campos":{"rubro":%q},"usuario":"diego"}`, r)
+		if st, _, raw := e.pedir(t, "PATCH", fmt.Sprintf("/api/comprobantes/%v", fa["id"]), claveOp, strings.NewReader(parche), "application/json"); st != 200 {
+			t.Fatalf("corregir rubro a %s: %d %s", r, st, raw)
+		}
+		for _, c := range e.cbtes(t, fmt.Sprintf("lote=%d&clase=facturas", id)) {
+			if c["rubro"] != r {
+				t.Errorf("después de cambiar a %s, un comprobante del emisor quedó en %v", r, c["rubro"])
+			}
+		}
+	}
 	// Un comprobante nuevo de ese emisor toma el rubro guardado (le gana al padrón).
 	body, tipo = multipartDe(t, map[string]string{"cliente_cuit": "20222222223"}, "pdf/02_FA_mixta.pdf")
 	_, m, _ = e.pedir(t, "POST", "/api/lotes", claveOp, body, tipo)
@@ -182,6 +194,10 @@ func TestTicketsPuntaAPunta(t *testing.T) {
 	_, m, _ = e.pedir(t, "GET", fmt.Sprintf("/api/resumen?lote=%d&clase=tickets", id), claveLect, nil, "")
 	if r := m["resumen"].(map[string]any); r["cantidad"].(float64) != 4 || r["por_rubro"].(map[string]any)["servicios"] != nil {
 		t.Errorf("resumen de tickets: %v", r)
+	}
+	_, m, _ = e.pedir(t, "GET", "/api/panel", claveLect, nil, "")
+	if p := m["panel"].(map[string]any); p["tickets_mes"].(float64) < 4 {
+		t.Errorf("el panel no cuenta los tickets del mes: %v", p["tickets_mes"])
 	}
 	st, _, raw = e.pedir(t, "GET", fmt.Sprintf("/api/export.csv?lote=%d&clase=tickets", id), claveLect, nil, "")
 	if s := string(raw); st != 200 || !strings.Contains(s, ";Rubro;") || !strings.Contains(s, "combustible") || !strings.Contains(s, "Tique") {

@@ -42,7 +42,7 @@ const PENDIENTES = { error: 0, revisar: 0 };
 let CLAVE = '';
 let SALUD = null;
 let vista = 'inicio';
-const filtro = { estado: '', q: '', cliente: '', desde: '', hasta: '', lote: '', offset: 0, limite: 100 };
+const filtro = { estado: '', clase: '', rubro: '', q: '', cliente: '', desde: '', hasta: '', lote: '', offset: 0, limite: 100 };
 let listado = []; // comprobantes de la tabla, para Anterior / Siguiente
 let rev = null; // { idx, cbte, original }
 let timerLotes = null;
@@ -92,7 +92,14 @@ const pesos = (v) => {
 const fecha = (s) => (s ? String(s).slice(0, 10).split('-').reverse().join('/') : '');
 const cuit = (s) => { const d = soloDig(s); return d.length === 11 ? `${d.slice(0, 2)}-${d.slice(2, 10)}-${d.slice(10)}` : (s || ''); };
 const TIPOS = { 1: 'Factura A', 2: 'Nota de Débito A', 3: 'Nota de Crédito A', 6: 'Factura B', 7: 'Nota de Débito B', 8: 'Nota de Crédito B',
-  11: 'Factura C', 12: 'Nota de Débito C', 13: 'Nota de Crédito C', 19: 'Factura E', 51: 'Factura M', 201: 'FCE MiPyME A', 206: 'FCE MiPyME B', 211: 'FCE MiPyME C' };
+  11: 'Factura C', 12: 'Nota de Débito C', 13: 'Nota de Crédito C', 19: 'Factura E', 51: 'Factura M', 201: 'FCE MiPyME A', 206: 'FCE MiPyME B', 211: 'FCE MiPyME C',
+  81: 'Tique Factura A', 82: 'Tique Factura B', 83: 'Tique', 109: 'Tique C', 110: 'Tique Nota de Crédito', 111: 'Tique Factura C',
+  112: 'Tique Nota de Crédito A', 113: 'Tique Nota de Crédito B', 114: 'Tique Nota de Crédito C', 115: 'Tique Nota de Débito A',
+  116: 'Tique Nota de Débito B', 117: 'Tique Nota de Débito C', 118: 'Tique Factura M', 119: 'Tique Nota de Crédito M', 120: 'Tique Nota de Débito M' };
+const RUBROS = { supermercado: 'Supermercado', combustible: 'Combustible', farmacia: 'Farmacia', gastronomia: 'Gastronomía',
+  transporte: 'Transporte', servicios: 'Servicios', otros: 'Otros', sin_rubro: 'Sin rubro' };
+const rubroChip = (r) => (r ? `<span class="rubro r-${esc(r)}">${esc(RUBROS[r] || r)}</span>` : '');
+const ticketChip = (c) => (c && c.es_tique ? '<span class="chip-ticket" title="Ticket de controlador fiscal">Ticket</span>' : '');
 const nombreCbte = (c) => `${TIPOS[c.tipo] || 'Comprobante ' + (c.tipo || '')} ${String(c.punto_venta || 0).padStart(5, '0')}-${String(c.numero || 0).padStart(8, '0')}`;
 const ETQ = { ok: 'Bien', revisar: 'Revisar', error: 'Con errores', aprobado: 'Aprobado',
   valida: 'Válida', invalida: 'No válida', apocrifa: 'Emisor apócrifo', con_errores: 'Con errores', no_verificable: 'No verificable',
@@ -242,12 +249,14 @@ function pintarVerificacion(r) {
     const k = kons[i];
     const v = (r.comprobantes || [])[i];
     return `<div class="card">
-      <div class="fila" style="justify-content:space-between"><strong>${esc(nombreCbte(c))}</strong>${v ? estado(v.veredicto) : estado(rc.estado)}</div>
+      <div class="fila" style="justify-content:space-between"><strong>${esc(nombreCbte(c))} ${ticketChip(c)}</strong>${v ? estado(v.veredicto) : estado(rc.estado)}</div>
       <dl class="kv">
         <dt>Emisor</dt><dd>${esc(c.razon_social_emisor || '')} <span class="mono">${esc(cuit(c.cuit_emisor))}</span></dd>
-        <dt>Fecha</dt><dd>${fecha(c.fecha)}</dd>
+        <dt>Fecha</dt><dd>${fecha(c.fecha)}${c.hora ? ' ' + esc(c.hora.slice(0, 5)) : ''}</dd>
+        ${c.rubro ? `<dt>Rubro</dt><dd>${rubroChip(c.rubro)}</dd>` : ''}
         <dt>Total</dt><dd class="mono">$ ${pesos(c.total)} ${c.moneda && c.moneda !== 'PES' ? esc(c.moneda) : ''}</dd>
-        <dt>CAE</dt><dd class="mono">${esc(c.cae || 'no encontrado')} ${c.vto_cae ? '(vence ' + fecha(c.vto_cae) + ')' : ''}</dd>
+        ${c.es_tique ? '<dt>CAE</dt><dd>No lleva: es un ticket de controlador fiscal. ARCA no lo constata; se controla el CUIT y la base de apócrifos.</dd>'
+          : `<dt>CAE</dt><dd class="mono">${esc(c.cae || 'no encontrado')} ${c.vto_cae ? '(vence ' + fecha(c.vto_cae) + ')' : ''}</dd>`}
         ${k && k.resultado ? `<dt>ARCA</dt><dd>${k.valido ? 'Constatado: el comprobante existe con estos datos.' : 'Rechazado: ' + esc((k.observaciones || []).map((o) => o.message).join(' '))}</dd>` : ''}
         ${k && k.apoc && k.apoc.consultado ? `<dt>Apócrifos</dt><dd>${k.apoc.esApocrifo ? '<strong class="est error">El emisor figura como apócrifo</strong>' : 'El emisor no figura en la base'}</dd>` : ''}
         <dt>Leído con</dt><dd>${(res.extractores || []).map((x) => `<span class="origen ${esc(x)}">${esc(ORIGEN[x] || x)}</span>`).join(' ')} <span class="muted">${res.duracion_ms} ms</span></dd>
@@ -318,12 +327,14 @@ async function cargarLotes() {
 function qsFiltro(extra = {}) {
   const p = new URLSearchParams();
   const f = Object.assign({}, filtro, extra);
-  for (const k of ['estado', 'q', 'cliente', 'desde', 'hasta', 'lote', 'limite', 'offset']) if (f[k] !== '' && f[k] !== undefined && f[k] !== null) p.set(k, f[k]);
+  for (const k of ['estado', 'clase', 'rubro', 'q', 'cliente', 'desde', 'hasta', 'lote', 'limite', 'offset']) if (f[k] !== '' && f[k] !== undefined && f[k] !== null) p.set(k, f[k]);
   return p.toString();
 }
 
 function leerFiltro() {
   filtro.estado = $('#fEstado').value;
+  filtro.clase = $('#fClase').value;
+  filtro.rubro = $('#fRubro').value;
   filtro.q = $('#fQ').value.trim();
   filtro.cliente = soloDig($('#fCliente').value);
   filtro.desde = $('#fDesde').value;
@@ -332,7 +343,7 @@ function leerFiltro() {
 }
 
 function pintarFiltro() {
-  $('#fEstado').value = filtro.estado; $('#fQ').value = filtro.q; $('#fCliente').value = filtro.cliente;
+  $('#fEstado').value = filtro.estado; $('#fClase').value = filtro.clase; $('#fRubro').value = filtro.rubro; $('#fQ').value = filtro.q; $('#fCliente').value = filtro.cliente;
   $('#fDesde').value = filtro.desde; $('#fHasta').value = filtro.hasta; $('#fLote').value = filtro.lote;
 }
 
@@ -342,12 +353,12 @@ async function cargarCbtes() {
     const { comprobantes, total } = await api('/api/comprobantes?' + qsFiltro());
     listado = comprobantes;
     if (!comprobantes.length) { $('#tablaCbtes').innerHTML = vacio('doc', 'No hay comprobantes con estos filtros', 'Probá con otro estado, otras fechas o borrando la búsqueda.'); $('#pager').innerHTML = ''; return; }
-    $('#tablaCbtes').innerHTML = `<div class="tabla-scroll"><table class="t"><thead><tr><th>Fecha</th><th>Comprobante</th><th>Emisor</th><th class="num">Neto</th><th class="num">IVA</th><th class="num">Total</th><th>Estado</th><th>Observaciones</th></tr></thead><tbody>
+    $('#tablaCbtes').innerHTML = `<div class="tabla-scroll"><table class="t"><thead><tr><th>Fecha</th><th>Comprobante</th><th>Emisor</th><th>Rubro</th><th class="num">Neto</th><th class="num">IVA</th><th class="num">Total</th><th>Estado</th><th>Observaciones</th></tr></thead><tbody>
       ${comprobantes.map((c, i) => {
         const iva = ['iva_27', 'iva_21', 'iva_10_5', 'iva_5', 'iva_2_5'].reduce((s, k) => s + Number(c[k] || 0), 0);
         const obs = (c.hallazgos || []).filter((h) => h.nivel !== 'info').map((h) => h.mensaje)[0] || '';
-        return `<tr class="clic" data-accion="revisar" data-idx="${i}"><td>${fecha(c.fecha)}</td><td>${esc(nombreCbte(c))}</td>
-          <td>${esc(c.razon_social_emisor || '')}<div class="muted mono">${esc(cuit(c.cuit_emisor))}</div></td>
+        return `<tr class="clic" data-accion="revisar" data-idx="${i}"><td>${fecha(c.fecha)}${c.hora ? `<div class="muted mono">${esc(c.hora.slice(0, 5))}</div>` : ''}</td><td>${esc(nombreCbte(c))} ${ticketChip(c)}</td>
+          <td>${esc(c.razon_social_emisor || '')}<div class="muted mono">${esc(cuit(c.cuit_emisor))}</div></td><td>${rubroChip(c.rubro)}</td>
           <td class="num">${pesos(c.neto_gravado)}</td><td class="num">${pesos(iva)}</td><td class="num">${pesos(c.total)}${c.moneda && c.moneda !== 'PES' ? ' ' + esc(c.moneda) : ''}</td>
           <td>${estado(c.estado)}</td><td class="muted">${esc(obs)}</td></tr>`;
       }).join('')}</tbody></table></div>`;
@@ -379,6 +390,21 @@ const CAMPOS = [
   ['otros_tributos', 'Otros tributos', 'm'], ['subtotal', 'Subtotal (B y C)', 'm'], ['total', 'Total', 'm'],
   ['moneda', 'Moneda'], ['cotizacion', 'Cotización'], ['cae', 'CAE'], ['vto_cae', 'Vto. CAE', 'date'],
 ];
+const ORIGEN_RUBRO = { texto: 'Factorum lo dedujo del nombre y el texto.', ocr: 'Factorum lo dedujo del nombre y el texto.', arcanum: 'Sale de la actividad del emisor en el padrón de ARCA.', manual: 'Lo eligió una persona.' };
+
+// Rubro y hora van arriba del formulario: son lo primero que se mira en un ticket.
+function camposTicketHTML(c) {
+  const o = (c.origenes || {}).rubro;
+  const r = c.rubro || '';
+  const ops = Object.keys(RUBROS).filter((k) => k !== 'sin_rubro')
+    .map((k) => `<option value="${k}" ${k === r ? 'selected' : ''}>${esc(RUBROS[k])}</option>`).join('');
+  const ayuda = r ? `${esc(ORIGEN_RUBRO[o] || '')} Si lo cambiás, se recuerda para este CUIT.` : 'Sin rubro. Si lo elegís, se recuerda para este CUIT.';
+  const hora = c.es_tique || c.hora ? `<label><span class="et"><span>Hora</span>${(c.origenes || {}).hora ? `<span class="origen ${esc(c.origenes.hora)}">${esc(ORIGEN[c.origenes.hora] || c.origenes.hora)}</span>` : ''}</span>
+      <input name="hora" value="${esc((c.hora || '').slice(0, 5))}" data-orig="${esc((c.hora || '').slice(0, 5))}" type="time"></label>` : '';
+  return `<label class="${hora ? '' : 'ancho'}"><span class="et"><span>Rubro</span>${o ? `<span class="origen ${esc(o)}">${esc(ORIGEN[o] || o)}</span>` : ''}</span>
+      <select name="rubro" data-orig="${esc(r)}">${r ? '' : '<option value="" selected>Sin rubro</option>'}${ops}</select>
+      <span class="ayuda">${ayuda}</span></label>${hora}`;
+}
 
 async function abrirRevision(idx) {
   if (idx < 0 || idx >= listado.length) return;
@@ -388,10 +414,10 @@ async function abrirRevision(idx) {
     if (rev && rev.url) URL.revokeObjectURL(rev.url);
     rev = { idx, cbte: c, url: null };
     $('#revision').classList.remove('hidden');
-    $('#revTitulo').textContent = `${nombreCbte(c)}  ·  ${c.archivo}`;
+    $('#revTitulo').textContent = `${nombreCbte(c)}${c.es_tique ? ' (ticket)' : ''}  ·  ${c.archivo}`;
     $('#revPos').textContent = `${idx + 1} de ${listado.length}`;
     $('#revHallazgos').innerHTML = `<div class="fila" style="justify-content:space-between;margin-bottom:8px">${estado(c.estado)}<span class="muted">confianza ${Math.round((c.confianza || 0) * 100)}%</span></div>${hallazgosHTML(c.hallazgos)}`;
-    $('#revForm').innerHTML = CAMPOS.map(([k, t, tipo, ancho]) => {
+    $('#revForm').innerHTML = camposTicketHTML(c) + CAMPOS.filter(([k]) => !(c.es_tique && ['cae', 'vto_cae'].includes(k))).map(([k, t, tipo, ancho]) => {
       const o = (c.origenes || {})[k];
       const v = tipo === 'm' ? (Number(c[k] || 0) ? Number(c[k]).toFixed(2) : '') : (c[k] ?? '');
       return `<label class="${ancho ? 'ancho' : ''}"><span class="et"><span>${t}</span>${o ? `<span class="origen ${esc(o)}" title="Origen del dato">${esc(ORIGEN[o] || o)}</span>` : ''}</span>
@@ -399,8 +425,8 @@ async function abrirRevision(idx) {
     }).join('');
     $('#btnConstatar').classList.toggle('hidden', !(SALUD && SALUD.arcanum));
     const k = c.constatacion;
-    $('#revConstatacion').innerHTML = k ? `<div class="card"><strong>Constatación ARCA</strong><dl class="kv">
-      <dt>Resultado</dt><dd>${k.valido === true ? 'Aprobado (el comprobante existe)' : k.valido === false ? 'Rechazado' : esc(k.error || 'sin respuesta')}</dd>
+    $('#revConstatacion').innerHTML = k ? `<div class="card"><strong>${c.es_tique ? 'Control del emisor' : 'Constatación ARCA'}</strong><dl class="kv">
+      <dt>Resultado</dt><dd>${c.es_tique ? (k.error ? esc(k.error) : 'Los tickets no se constatan en ARCA: se controló el CUIT y la base de apócrifos.') : k.valido === true ? 'Aprobado (el comprobante existe)' : k.valido === false ? 'Rechazado' : esc(k.error || 'sin respuesta')}</dd>
       ${(k.observaciones || []).length ? `<dt>Observaciones</dt><dd>${esc(k.observaciones.map((o) => o.message).join(' '))}</dd>` : ''}
       ${k.apoc && k.apoc.consultado ? `<dt>Apócrifos</dt><dd>${k.apoc.esApocrifo ? 'El emisor figura como apócrifo' : 'No figura'}</dd>` : ''}
       <dt>Fecha</dt><dd>${k.fecha ? new Date(k.fecha).toLocaleString('es-AR') : ''}</dd></dl></div>` : '';
@@ -428,7 +454,7 @@ function cerrarRevision() {
 
 function cambiosRevision() {
   const campos = {};
-  $$('#revForm input').forEach((i) => { if (i.value !== i.dataset.orig) campos[i.name] = i.value; });
+  $$('#revForm input, #revForm select').forEach((i) => { if (i.value !== i.dataset.orig) campos[i.name] = i.value; });
   return campos;
 }
 
@@ -460,6 +486,14 @@ async function constatarRevision() {
 }
 
 // ---------- Resumen ----------
+function porRubroHTML(r) {
+  const pr = Object.entries(r.por_rubro || {}).sort((a, b) => b[1] - a[1]);
+  if (!pr.length) return '';
+  const max = Math.max(1, ...pr.map(([, v]) => Math.abs(v)));
+  return `<div><strong>Por rubro</strong>${filtro.clase === 'tickets' ? ' <span class="muted">(gastos con ticket)</span>' : ''}</div><div class="rubros">${pr.map(([k, v]) =>
+    `<button type="button" class="rub" data-accion="verRubro" data-rubro="${esc(k)}"><span class="n">${rubroChip(k)}</span><span class="barra"><i class="r-${esc(k)}" style="width:${Math.max(1, Math.round((Math.abs(v) / max) * 100))}%"></i></span><span class="mono">$ ${pesos(v)}</span></button>`).join('')}</div>`;
+}
+
 async function cargarResumen() {
   try {
     const { resumen: r } = await api('/api/resumen?' + qsFiltro({ limite: '', offset: '' }));
@@ -467,6 +501,7 @@ async function cargarResumen() {
     $('#resumen').innerHTML = `<div class="fila" style="align-items:flex-start">
       <table class="t" style="max-width:460px"><tbody>
         <tr><td>Comprobantes</td><td class="num">${r.cantidad}</td></tr>
+        ${r.tickets && r.tickets.cantidad ? `<tr><td>De esos, tickets</td><td class="num">${r.tickets.cantidad} · $ ${pesos(r.tickets.total)}</td></tr>` : ''}
         ${fila('Neto gravado', r.neto_gravado)}${fila('No gravado', r.no_gravado)}${fila('Exento', r.exento)}
         ${fila('IVA 21%', r.iva_21)}${fila('IVA 10,5%', r.iva_10_5)}${fila('IVA 27%', r.iva_27)}${fila('IVA 5%', r.iva_5)}${fila('IVA 2,5%', r.iva_2_5)}
         ${fila('IVA total', r.iva_total, true)}${fila('Otros tributos', r.otros_tributos)}${fila('Subtotal B y C', r.subtotal_b_c)}${fila('Total', r.total, true)}
@@ -475,6 +510,7 @@ async function cargarResumen() {
         ${Object.entries(r.por_estado || {}).map(([k, v]) => `<dt>${estado(k)}</dt><dd>${v}</dd>`).join('')}
         <dt>Moneda extranjera</dt><dd>${r.moneda_extranjera} (no sumados)</dd></dl>
         <strong>Tipos</strong><dl class="kv">${Object.entries(r.por_tipo || {}).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${v}</dd>`).join('')}</dl>
+        ${porRubroHTML(r)}
         <div class="fila"><button class="ghost" data-accion="exportar" data-formato="xlsx">Descargar Excel</button><button class="ghost" data-accion="exportar" data-formato="csv">Descargar CSV</button></div>
       </div></div>`;
   } catch (e) { toast(e.message, true); }
@@ -532,7 +568,9 @@ async function cargarInicio() {
     const e = p.por_estado || {};
     const pend = (e.revisar || 0) + (e.error || 0);
     const sinIA = p.total ? Math.round((1 - p.con_ia / p.total) * 100) : 100;
-    const kpi = (et, val, pie, cls, estado) => estado
+    const kpi = (et, val, pie, cls, estado, clase) => clase
+      ? `<button type="button" class="kpi ${cls || ''}" data-accion="verClase" data-clase="${clase}"><span class="et">${et}</span><span class="val">${val}</span><span class="kpi-pie">${pie}</span></button>`
+      : estado
       ? `<button type="button" class="kpi ${cls || ''}" data-accion="verEstado" data-estado="${estado}"><span class="et">${et}</span><span class="val">${val}</span><span class="kpi-pie">${pie}</span></button>`
       : `<div class="kpi ${cls || ''}"><span class="et">${et}</span><span class="val">${val}</span><span class="kpi-pie">${pie}</span></div>`;
     const max = Math.max(1, ...p.por_dia.map((d) => d.ok + d.revisar + d.error));
@@ -548,10 +586,10 @@ async function cargarInicio() {
     }).join('') : '<p class="muted">Sin lotes todavía.</p>';
     $('#inicio').innerHTML = `<div class="kpis">
         ${kpi('Para revisar', mil(pend), pend ? 'tocá para verlos' : 'todo al día', e.error ? 'alerta' : pend ? 'aviso' : '', e.error ? 'error' : 'revisar')}
-        ${kpi('Hoy', mil(p.hoy.comprobantes), `${mil(p.hoy.documentos)} archivos`)}
-        ${kpi('Este mes', mil(p.mes.comprobantes), `${mil(p.mes.documentos)} archivos`)}
+        ${kpi('Este mes', mil(p.mes.comprobantes), `${mil(p.hoy.comprobantes)} hoy · ${mil(p.mes.documentos)} archivos en el mes`)}
         ${kpi('Emisores apócrifos', mil(p.apocrifos), 'detectados con ARCA', p.apocrifos ? 'alerta' : '')}
         ${kpi('Posibles adulterados', mil(p.adulterados), 'texto distinto del QR', p.adulterados ? 'alerta' : '')}
+        ${kpi('Tickets este mes', mil(p.tickets_mes || 0), 'de supermercado, combustible y más', '', '', 'tickets')}
         ${kpi('Leído sin IA', sinIA + '%', `${Math.round(p.duracion_promedio_ms)} ms por archivo, en promedio`)}
       </div>
       <div class="dos">
@@ -578,7 +616,7 @@ async function cargarBandeja() {
     $('#bandeja').innerHTML = `<div class="bandeja">${comprobantes.map((c, i) => {
       const motivo = (c.hallazgos || []).find((h) => h.nivel === 'error') || (c.hallazgos || []).find((h) => h.nivel === 'aviso');
       return `<button type="button" class="bitem ${esc(c.estado)}" data-accion="abrirBandeja" data-idx="${i}"><span class="marca-e"></span>
-        <span><span class="t1">${esc(c.razon_social_emisor || cuit(c.cuit_emisor))}</span> <span class="muted">· ${esc(nombreCbte(c))} · ${fecha(c.fecha)}</span><br>
+        <span><span class="t1">${esc(c.razon_social_emisor || cuit(c.cuit_emisor))}</span> <span class="muted">· ${esc(nombreCbte(c))} · ${fecha(c.fecha)}</span> ${ticketChip(c)}<br>
         <span class="t2">${esc(motivo ? motivo.mensaje : '')}</span></span>
         <span class="monto">$ ${pesos(c.total)}</span></button>`;
     }).join('')}</div>${total > comprobantes.length ? `<p class="muted">Se muestran ${comprobantes.length} de ${total}.</p>` : ''}`;
@@ -680,7 +718,9 @@ document.addEventListener('click', (ev) => {
     case 'revCerrar': cerrarRevision(); break;
     case 'bandeja': bandejaEstado = el.dataset.estado; cargarBandeja(); break;
     case 'abrirBandeja': abrirRevision(Number(el.dataset.idx)); break;
-    case 'verEstado': Object.assign(filtro, { estado: el.dataset.estado, lote: '', q: '', offset: 0 }); ir('comprobantes'); break;
+    case 'verEstado': Object.assign(filtro, { estado: el.dataset.estado, clase: '', rubro: '', lote: '', q: '', offset: 0 }); ir('comprobantes'); break;
+    case 'verClase': Object.assign(filtro, { estado: '', clase: el.dataset.clase, rubro: '', lote: '', q: '', offset: 0 }); ir('comprobantes'); break;
+    case 'verRubro': Object.assign(filtro, { rubro: el.dataset.rubro, offset: 0 }); ir('comprobantes'); break;
     case 'novedades': $('#menu').classList.add('hidden'); verNovedades(true); break;
     case 'acerca': $('#menu').classList.add('hidden'); acercaDe(); break;
     case 'modalCerrar': cerrarModal(); break;

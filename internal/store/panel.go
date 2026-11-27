@@ -13,6 +13,7 @@ type Panel struct {
 	Apocrifos   int            `json:"apocrifos"`
 	Adulterados int            `json:"adulterados"`
 	ConIA       int            `json:"con_ia"`
+	TicketsMes  int            `json:"tickets_mes"` // tiques de controlador fiscal cargados este mes
 	Total       int            `json:"total"`
 	DuracionMS  float64        `json:"duracion_promedio_ms"`
 	PorDia      []DiaPanel     `json:"por_dia"`
@@ -44,9 +45,10 @@ func (s *Store) Panel(ctx context.Context, ahora time.Time) (*Panel, error) {
 		(SELECT count(*) FROM comprobantes WHERE hallazgos @> '[{"codigo":"qr_distinto_texto"}]'),
 		(SELECT count(*) FROM comprobantes WHERE datos->'origenes' @> '{}' AND EXISTS (SELECT 1 FROM jsonb_each_text(datos->'origenes') o WHERE o.value = 'vision')),
 		(SELECT count(*) FROM comprobantes),
-		(SELECT coalesce(avg(duracion_ms), 0) FROM documentos WHERE estado = 'listo')`, ahora)
+		(SELECT coalesce(avg(duracion_ms), 0) FROM documentos WHERE estado = 'listo'),
+		(SELECT count(*) FROM comprobantes WHERE tipo = ANY($2::int[]) AND date_trunc('month', creado AT TIME ZONE `+tz+`) = date_trunc('month', $1 AT TIME ZONE `+tz+`))`, ahora, codigosTique())
 	if err := q.Scan(&p.Hoy.Documentos, &p.Hoy.Comprobantes, &p.Mes.Documentos, &p.Mes.Comprobantes,
-		&p.Apocrifos, &p.Adulterados, &p.ConIA, &p.Total, &p.DuracionMS); err != nil {
+		&p.Apocrifos, &p.Adulterados, &p.ConIA, &p.Total, &p.DuracionMS, &p.TicketsMes); err != nil {
 		return nil, err
 	}
 	rows, err := s.Pool.Query(ctx, `SELECT estado, count(*) FROM comprobantes GROUP BY estado`)

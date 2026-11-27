@@ -239,3 +239,22 @@ img.qr { width:220px; height:220px; border:1px solid var(--border); border-radiu
   main { padding:16px; }
 }
 .zona.con-archivos .zona-ico { background:var(--card); }
+
+/* ---- Tickets y rubros ---- */
+.chip-ticket { display:inline-block; vertical-align:middle; margin-left:4px; padding:1px 7px; border-radius:999px; font-size:11px; font-weight:600;
+  letter-spacing:.02em; color:var(--accent); background:var(--accent-suave); border:1px solid color-mix(in srgb, var(--accent) 30%, transparent); }
+.rubro { display:inline-flex; align-items:center; gap:6px; font-size:12.5px; color:var(--text); white-space:nowrap; }
+.rubro::before { content:""; width:8px; height:8px; border-radius:3px; background:var(--rc, var(--muted)); }
+.r-supermercado { --rc:#0b5d6b; } .r-combustible { --rc:#c2410c; } .r-farmacia { --rc:#15803d; } .r-gastronomia { --rc:#be185d; }
+.r-transporte { --rc:#4f46e5; } .r-servicios { --rc:#0e7490; } .r-otros { --rc:#64748b; } .r-sin_rubro { --rc:var(--hairline); }
+:root[data-theme="dark"] .r-supermercado { --rc:#4fb0c0; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .r-supermercado { --rc:#4fb0c0; } }
+.rubros { display:flex; flex-direction:column; gap:4px; margin:8px 0 14px; }
+.rub { display:grid; grid-template-columns:130px 1fr auto; gap:10px; align-items:center; width:100%; padding:6px 8px; border-radius:8px;
+  background:transparent; border:0; color:var(--text); font:inherit; text-align:left; cursor:pointer; }
+.rub:hover { background:var(--accent-suave); }
+.rub .barra { height:8px; border-radius:4px; background:color-mix(in srgb, var(--hairline) 60%, transparent); overflow:hidden; }
+.rub .barra i { display:block; height:100%; border-radius:4px; background:var(--rc); }
+.rub .mono { font-size:12.5px; }
+#revForm select { width:100%; }
+#revForm .ayuda { display:block; margin-top:4px; font-size:12px; color:var(--muted); }

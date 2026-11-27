@@ -798,7 +798,7 @@ func (a *App) Corregir(ctx context.Context, id int64, campos map[string]string, 
 		return nil, err
 	}
 	// Capa 3 del rubro: lo que corrige una persona se recuerda para ese emisor y pasa a sus otros
-	// comprobantes (salvo a los que ya tienen un rubro elegido a mano).
+	// comprobantes (salvo a los que una persona les corrigió el rubro a ellos en particular).
 	for _, k := range cambios {
 		if k.Campo == "rubro" && d.CUITEmisor != "" {
 			n, err := a.Store.GuardarRubroCUIT(ctx, d.CUITEmisor, d.Rubro, usuario)

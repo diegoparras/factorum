@@ -12,6 +12,7 @@ Cada versión publicada tiene su sección. La imagen Docker toma la versión de 
 - Los tiques no se constatan en ARCA: se controla el CUIT y la base de apócrifos. Nuevo veredicto `tique_controlado`. No se pide CAE.
 - Rubro de gasto (supermercado, combustible, farmacia, gastronomía, transporte, servicios u otros) en tres capas: palabras clave, actividad del padrón de ARCA y la corrección de una persona, que se recuerda por CUIT del emisor. Las facturas también toman el rubro del padrón.
 - Filtros `clase` (facturas o tickets) y `rubro` en la API, MCP y la exportación. El Excel y el CSV suman las columnas Hora y Rubro, y el resumen trae los tickets y el total por rubro.
+- En pantalla: marca «Ticket», hora y rubro en Comprobantes, Revisar y Verificar; filtros por clase y rubro; Resumen con barras por rubro (tocá una para ver esos comprobantes); el rubro se cambia desde la revisión y se recuerda para el CUIT; los tickets del mes en Inicio.
 
 ### Diseño nuevo
 

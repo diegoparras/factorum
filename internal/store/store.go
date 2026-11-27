@@ -646,8 +646,10 @@ func (s *Store) RubrosDeCUITs(ctx context.Context, cuits []string) (map[string]s
 	return res, rows.Err()
 }
 
-// GuardarRubroCUIT recuerda el rubro de un emisor y lo pasa a sus comprobantes ya cargados cuyo
-// rubro no eligió una persona (origen distinto de manual). Devuelve cuántos actualizó.
+// GuardarRubroCUIT recuerda el rubro de un emisor y lo pasa a sus comprobantes ya cargados, salvo
+// a los que una persona les corrigió el rubro a ellos en particular (tienen una corrección de rubro).
+// Los que tomaron el rubro de una corrección anterior a este emisor lo siguen: si alguien cambia de
+// idea, cambian todos. Devuelve cuántos actualizó.
 func (s *Store) GuardarRubroCUIT(ctx context.Context, cuit, rubro, usuario string) (int64, error) {
 	var n int64
 	err := pgx.BeginFunc(ctx, s.Pool, func(tx pgx.Tx) error {
@@ -659,7 +661,8 @@ func (s *Store) GuardarRubroCUIT(ctx context.Context, cuit, rubro, usuario strin
 				datos = jsonb_set(datos || jsonb_build_object('rubro', $2::text), '{origenes}',
 					coalesce(nullif(datos->'origenes', 'null'::jsonb), '{}'::jsonb) || '{"rubro":"manual"}'::jsonb),
 				actualizado = now()
-			WHERE cuit_emisor = $1 AND coalesce(datos->'origenes'->>'rubro', '') <> 'manual'`, cuit, rubro)
+			WHERE cuit_emisor = $1
+			  AND NOT EXISTS (SELECT 1 FROM correcciones k WHERE k.comprobante_id = comprobantes.id AND k.campo = 'rubro')`, cuit, rubro)
 		n = ct.RowsAffected()
 		return err
 	})

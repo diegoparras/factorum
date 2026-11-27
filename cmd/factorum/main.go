@@ -225,6 +225,9 @@ func servir() error {
 		return fmt.Errorf("leyendo la configuración guardada: %w", err)
 	}
 	c := aj.Actual()
+	if c.LoginLocal && c.OIDCSolo {
+		log.Warn("salida de emergencia: FACTORUM_LOGIN_LOCAL=1 deja entrar con email y contraseña aunque «Solo se entra con Lockatus» esté activo. Sacala cuando Lockatus vuelva a andar")
+	}
 
 	disco := &almacen.Disco{Dir: filepath.Join(c.DirDatos, "almacen")}
 	alm, err := almacen.Nuevo(disco, c.ClaveMaestra)

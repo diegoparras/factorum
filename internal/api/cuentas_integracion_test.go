@@ -34,6 +34,7 @@ type navegador struct {
 	c       *http.Client
 	origen  string
 	sinCSRF bool
+	ip      string // X-Forwarded-For (el servidor le cree a un pedido que viene de 127.0.0.1)
 }
 
 func (e *entorno) navegador(t *testing.T) *navegador {
@@ -61,6 +62,9 @@ func (n *navegador) pedirCrudo(metodo, ruta string, cuerpo any) (int, map[string
 	if !n.sinCSRF {
 		req.Header.Set("X-Factorum", "1")
 		req.Header.Set("Origin", n.origen)
+	}
+	if n.ip != "" {
+		req.Header.Set("X-Forwarded-For", n.ip)
 	}
 	res, err := n.c.Do(req)
 	if err != nil {

@@ -61,7 +61,9 @@ func (s *Server) arranquePendiente() bool {
 
 // GET /api/arranque: si hay que crear el primer superadmin.
 func (s *Server) verArranque(w http.ResponseWriter, r *http.Request) {
-	jsonOK(w, http.StatusOK, map[string]any{"necesita": s.arranquePendiente(), "nombre": s.App.Config().Nombre, "olvide": s.cuentasPorMail()})
+	cfg := s.App.Config()
+	jsonOK(w, http.StatusOK, map[string]any{"necesita": s.arranquePendiente(), "nombre": cfg.Nombre, "olvide": s.cuentasPorMail() && !cfg.SoloLockatus(),
+		"lockatus": cfg.OIDCListo(), "solo_lockatus": cfg.SoloLockatus()})
 }
 
 // POST /api/arranque: crea el primer superadmin con el código del log.
@@ -175,6 +177,12 @@ func (s *Server) entrar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	email := strings.ToLower(strings.TrimSpace(b.Email))
+	if s.App.Config().SoloLockatus() {
+		// No alcanza con esconder el formulario: el servidor tampoco deja (salvo FACTORUM_LOGIN_LOCAL=1).
+		s.auditarComo(r, &auth.Identidad{Email: email}, "sesion.fallida", email, map[string]any{"motivo": "solo se entra con Lockatus"})
+		jsonErr(w, http.StatusForbidden, msgSoloLockatus)
+		return
+	}
 	claves := []string{"ip:" + ipDe(r), "email:" + email}
 	if d := s.limite.Espera(claves...); d > 0 {
 		jsonErr(w, http.StatusTooManyRequests, esperaTexto(d))
@@ -225,7 +233,16 @@ func motivoFallo(u *store.Usuario, ok bool) string {
 // GET /api/sesion: quién soy y qué puedo hacer.
 func (s *Server) yo(w http.ResponseWriter, r *http.Request) {
 	id := IdentidadDe(r.Context())
-	jsonOK(w, http.StatusOK, map[string]any{"identidad": id, "permisos": permisos(id), "instalacion": s.App.Config().Nombre, "correo_saliente": s.cuentasPorMail()})
+	cfg := s.App.Config()
+	res := map[string]any{"identidad": id, "permisos": permisos(id), "instalacion": cfg.Nombre, "correo_saliente": s.cuentasPorMail(),
+		"lockatus": cfg.OIDCListo(), "solo_lockatus": cfg.SoloLockatus()}
+	if id.Tipo == auth.TipoSesion {
+		// De dónde salió la cuenta y si tiene contraseña: quien entra con Lockatus no la cambia acá.
+		if u, err := s.App.Store.Usuario(r.Context(), id.UsuarioID); err == nil {
+			res["cuenta"] = map[string]any{"origen": u.Origen, "tiene_clave": u.TieneClave}
+		}
+	}
+	jsonOK(w, http.StatusOK, res)
 }
 
 func permisos(id *auth.Identidad) map[string]bool {
@@ -238,6 +255,7 @@ func permisos(id *auth.Identidad) map[string]bool {
 		"clientes":      id.Rol >= auth.Admin,
 		"retenido":      id.Rol >= auth.Admin,
 		"configuracion": id.Rol >= auth.Superadmin,
+		"sin_clientes":  id.CUITs != nil && len(id.CUITs) == 0,
 	}
 }
 
@@ -269,6 +287,10 @@ func (s *Server) cambiarMiClave(w http.ResponseWriter, r *http.Request) {
 	u, err := s.App.Store.Usuario(r.Context(), id.UsuarioID)
 	if err != nil {
 		s.fallo(w, err)
+		return
+	}
+	if u.Origen == OrigenLockatus {
+		jsonErr(w, http.StatusConflict, "Tu cuenta entra con Lockatus: la contraseña se cambia en Lockatus")
 		return
 	}
 	if u.TieneClave && !auth.VerificarClave(u.ClaveHash, b.Actual) {

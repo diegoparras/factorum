@@ -55,6 +55,8 @@ func (s *Server) responderConfiguracion(w http.ResponseWriter, r *http.Request, 
 		res["webhook_entrada"] = cfg.URLPublica + "/api/canales/webhook"
 	}
 	if id.Rol >= auth.Superadmin {
+		res["lockatus"] = map[string]any{"redirect": cfg.OIDCRedirect(), "listo": cfg.OIDCListo(), "solo": cfg.SoloLockatus(),
+			"login_local": cfg.LoginLocal, "sesion_lockatus": id.Origen == OrigenLockatus}
 		res["correo"] = map[string]any{"urls": urlsCorreo(cfg), "estado": s.estadoCorreo(), "smtp": cfg.SMTPConfigurado(),
 			"google": map[string]any{"conectado": cfg.GoogleRefreshToken != "", "cuenta": cfg.GoogleCuenta, "fijado": s.bloqueado("google.refresh_token")}}
 	}
@@ -93,6 +95,11 @@ func (s *Server) guardarConfiguracion(w http.ResponseWriter, r *http.Request) {
 			jsonErr(w, http.StatusBadRequest, fmt.Sprintf("%q no se cambia desde acá", k))
 			return
 		}
+	}
+	if raw, ok := b.Cambios["lockatus.solo"]; ok && strings.TrimSpace(string(raw)) == "true" && !s.App.Config().OIDCSolo && id.Origen != OrigenLockatus {
+		// Para no quedar afuera: quien lo prende ya entró con Lockatus, así que su cuenta anda.
+		jsonErr(w, http.StatusConflict, "Para activar «Solo se entra con Lockatus», primero cerrá sesión y entrá con Lockatus: así queda probado que tu cuenta entra.")
+		return
 	}
 	cambiadas, err := s.Ajustes.Guardar(r.Context(), b.Cambios, id.Quien())
 	switch {
@@ -156,6 +163,7 @@ func (s *Server) pruebasPorDefecto() map[string]Prueba {
 	return map[string]Prueba{
 		"general":  s.probarGeneral,
 		"arcanum":  s.probarArcanum,
+		"lockatus": s.probarLockatus,
 		"telegram": s.probarTelegram,
 		"webhook":  s.probarWebhook,
 		"ia":       s.probarIA,

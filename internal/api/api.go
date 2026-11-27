@@ -67,6 +67,10 @@ type Server struct {
 	codigoArranque string
 	suiteMu        sync.Mutex
 	suiteSalud     map[string]saludApp
+	oidcMu         sync.Mutex
+	oidcPend       map[string]pendienteOIDC // inicios con Lockatus a medias, por el SHA-256 del state
+	oidcProv       *proveedorOIDC
+	cupoOIDC       *auth.Cupo // inicios con Lockatus por IP
 }
 
 func (s *Server) cliente() *http.Client {
@@ -125,6 +129,9 @@ func (s *Server) Handler() http.Handler {
 		s.cupoEmail = &auth.Cupo{N: 3, Ventana: time.Hour}
 		s.cupoIP = &auth.Cupo{N: 10, Ventana: time.Hour}
 	}
+	if s.cupoOIDC == nil {
+		s.cupoOIDC = &auth.Cupo{N: 30, Ventana: 10 * time.Minute}
+	}
 	if s.Probar == nil {
 		s.Probar = s.pruebasPorDefecto()
 	}
@@ -143,6 +150,8 @@ func (s *Server) Handler() http.Handler {
 	m.HandleFunc("POST /api/sesion/olvide", s.publicoCSRF(s.olvideClave))
 	m.HandleFunc("POST /api/sesion/link", s.publicoCSRF(s.verLinkCuenta))
 	m.HandleFunc("POST /api/sesion/restablecer", s.publicoCSRF(s.usarLinkCuenta))
+	m.HandleFunc("GET "+RutaOIDCLogin, s.loginOIDC)
+	m.HandleFunc("GET "+RutaOIDCCallback, s.callbackOIDC)
 	m.HandleFunc("GET /api/usuarios", s.soloSesion(adm, s.usuarios))
 	m.HandleFunc("POST /api/usuarios", s.soloSesion(adm, s.crearUsuario))
 	m.HandleFunc("PATCH /api/usuarios/{id}", s.soloSesion(adm, s.editarUsuario))

@@ -54,10 +54,22 @@ func cuitsDB(l []string) any {
 	return l
 }
 
-// cuitsDeDB: NULL o vacío = todos.
+// cuitsDeDB: NULL o vacío = todos (claves de API y pases).
 func cuitsDeDB(l []string) []string {
 	if len(l) == 0 {
 		return nil
+	}
+	return l
+}
+
+// cuitsPersonaDeDB: los de una persona. NULL = todos; vacío = ninguno todavía (no ve nada hasta que
+// un admin le asigne clientes).
+func cuitsPersonaDeDB(l []string, nulo bool) []string {
+	if nulo {
+		return nil
+	}
+	if l == nil {
+		return []string{}
 	}
 	return l
 }
@@ -72,19 +84,22 @@ func esUnico(err error) bool {
 	return errors.As(err, &pg) && pg.Code == "23505"
 }
 
-const selUsuario = `SELECT id, email, nombre, rol, cuits, coalesce(clave_hash,''), debe_cambiar, activo, origen, creado, ultimo_ingreso FROM usuarios`
+const colsUsuario = `id, email, nombre, rol, cuits, cuits IS NULL, coalesce(clave_hash,''), debe_cambiar, activo, origen, creado, ultimo_ingreso`
+
+const selUsuario = `SELECT ` + colsUsuario + ` FROM usuarios`
 
 func scanUsuario(r pgx.Row) (*Usuario, error) {
 	var u Usuario
 	var rol string
 	var cuits []string
-	if err := r.Scan(&u.ID, &u.Email, &u.Nombre, &rol, &cuits, &u.ClaveHash, &u.DebeCambiar, &u.Activo, &u.Origen, &u.Creado, &u.UltimoIngreso); err != nil {
+	var todos bool
+	if err := r.Scan(&u.ID, &u.Email, &u.Nombre, &rol, &cuits, &todos, &u.ClaveHash, &u.DebeCambiar, &u.Activo, &u.Origen, &u.Creado, &u.UltimoIngreso); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNoEncontrado
 		}
 		return nil, err
 	}
-	u.Rol, u.CUITs, u.TieneClave = rolDeDB(rol), cuitsDeDB(cuits), u.ClaveHash != ""
+	u.Rol, u.CUITs, u.TieneClave = rolDeDB(rol), cuitsPersonaDeDB(cuits, todos), u.ClaveHash != ""
 	return &u, nil
 }
 
@@ -112,7 +127,7 @@ func (s *Store) CrearUsuario(ctx context.Context, n UsuarioNuevo) (*Usuario, err
 		hash = n.ClaveHash
 	}
 	u, err := scanUsuario(s.Pool.QueryRow(ctx, `INSERT INTO usuarios (email, nombre, rol, cuits, clave_hash, debe_cambiar, origen)
-		VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id, email, nombre, rol, cuits, coalesce(clave_hash,''), debe_cambiar, activo, origen, creado, ultimo_ingreso`,
+		VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING `+colsUsuario,
 		strings.TrimSpace(n.Email), strings.TrimSpace(n.Nombre), n.Rol.String(), cuitsDB(n.CUITs), hash, n.DebeCambiar, n.Origen))
 	if esUnico(err) {
 		return nil, ErrEmailUsado
@@ -137,7 +152,7 @@ func (s *Store) CrearPrimerSuperadmin(ctx context.Context, n UsuarioNuevo) (*Usu
 		}
 		var err error
 		u, err = scanUsuario(tx.QueryRow(ctx, `INSERT INTO usuarios (email, nombre, rol, clave_hash, origen) VALUES ($1,$2,'superadmin',$3,'local')
-			RETURNING id, email, nombre, rol, cuits, coalesce(clave_hash,''), debe_cambiar, activo, origen, creado, ultimo_ingreso`,
+			RETURNING `+colsUsuario,
 			strings.TrimSpace(n.Email), strings.TrimSpace(n.Nombre), n.ClaveHash))
 		return err
 	})
@@ -205,7 +220,7 @@ func (s *Store) ActualizarUsuario(ctx context.Context, id int64, c CambiosUsuari
 				cuits = CASE WHEN $4 THEN $5::text[] ELSE cuits END,
 				activo = coalesce($6, activo), clave_hash = coalesce($7, clave_hash), debe_cambiar = coalesce($8, debe_cambiar),
 				actualizado = now()
-			WHERE id=$1 RETURNING id, email, nombre, rol, cuits, coalesce(clave_hash,''), debe_cambiar, activo, origen, creado, ultimo_ingreso`,
+			WHERE id=$1 RETURNING `+colsUsuario,
 			id, c.Nombre, rol, tocarCUITs, cuits, c.Activo, hash, c.DebeCambia))
 		if err != nil {
 			return err
@@ -280,11 +295,12 @@ func (s *Store) SesionValida(ctx context.Context, id string, ahora time.Time) (*
 	var u Usuario
 	var rol string
 	var ucuits []string
+	var todos bool
 	err := s.Pool.QueryRow(ctx, `SELECT s.id, s.usuario_id, s.vence, s.ultimo_uso, s.ip, s.origen, s.rol_tope, s.cuits, s.cuits IS NOT NULL,
-			u.id, u.email, u.nombre, u.rol, u.cuits, u.debe_cambiar, u.activo, u.origen, u.creado, u.ultimo_ingreso
+			u.id, u.email, u.nombre, u.rol, u.cuits, u.cuits IS NULL, u.clave_hash IS NOT NULL, u.debe_cambiar, u.activo, u.origen, u.creado, u.ultimo_ingreso
 		FROM sesiones s JOIN usuarios u ON u.id = s.usuario_id WHERE s.id=$1 AND s.vence > $2`, id, ahora).
 		Scan(&q.ID, &q.UsuarioID, &q.Vence, &q.UltimoUso, &q.IP, &q.Origen, &tope, &cuits, &q.TieneCUIT,
-			&u.ID, &u.Email, &u.Nombre, &rol, &ucuits, &u.DebeCambiar, &u.Activo, &u.Origen, &u.Creado, &u.UltimoIngreso)
+			&u.ID, &u.Email, &u.Nombre, &rol, &ucuits, &todos, &u.TieneClave, &u.DebeCambiar, &u.Activo, &u.Origen, &u.Creado, &u.UltimoIngreso)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil, ErrNoEncontrado
 	}
@@ -298,7 +314,7 @@ func (s *Store) SesionValida(ctx context.Context, id string, ahora time.Time) (*
 	if q.TieneCUIT && q.CUITs == nil {
 		q.CUITs = []string{}
 	}
-	u.Rol, u.CUITs = rolDeDB(rol), cuitsDeDB(ucuits)
+	u.Rol, u.CUITs = rolDeDB(rol), cuitsPersonaDeDB(ucuits, todos)
 	return &q, &u, nil
 }
 
@@ -358,16 +374,16 @@ type ClaveNueva struct {
 }
 
 const selClave = `SELECT k.id, k.nombre, k.prefijo, k.rol, k.cuits, k.usuario_id, coalesce(u.email,''), k.creado, k.vence, k.ultimo_uso, k.revocada,
-	k.suite, k.suite_tope, coalesce(u.activo, true), coalesce(u.rol, ''), u.cuits, u.id IS NOT NULL
+	k.suite, k.suite_tope, coalesce(u.activo, true), coalesce(u.rol, ''), u.cuits, u.cuits IS NULL, u.id IS NOT NULL
 	FROM claves_api k LEFT JOIN usuarios u ON u.id = k.usuario_id`
 
 func scanClave(r pgx.Row) (*ClaveAPI, error) {
 	var k ClaveAPI
 	var rol, tope, urol string
 	var cuits, ucuits []string
-	var tieneDueno bool
+	var tieneDueno, duenoTodos bool
 	if err := r.Scan(&k.ID, &k.Nombre, &k.Prefijo, &rol, &cuits, &k.UsuarioID, &k.Dueno, &k.Creado, &k.Vence, &k.UltimoUso, &k.Revocada,
-		&k.Suite, &tope, &k.DuenoActivo, &urol, &ucuits, &tieneDueno); err != nil {
+		&k.Suite, &tope, &k.DuenoActivo, &urol, &ucuits, &duenoTodos, &tieneDueno); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNoEncontrado
 		}
@@ -376,7 +392,7 @@ func scanClave(r pgx.Row) (*ClaveAPI, error) {
 	k.Rol, k.CUITs, k.SuiteTope = rolDeDB(rol), cuitsDeDB(cuits), rolDeDB(tope)
 	k.DuenoRol, k.DuenoCUITs = auth.Superadmin, nil
 	if tieneDueno {
-		k.DuenoRol, k.DuenoCUITs = rolDeDB(urol), cuitsDeDB(ucuits)
+		k.DuenoRol, k.DuenoCUITs = rolDeDB(urol), cuitsPersonaDeDB(ucuits, duenoTodos)
 	}
 	return &k, nil
 }

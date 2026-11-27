@@ -60,12 +60,26 @@ func (s *Server) crearUsuario(w http.ResponseWriter, r *http.Request) {
 		Rol     string          `json:"rol"`
 		CUITs   json.RawMessage `json:"cuits"`
 		Invitar bool            `json:"invitar"` // mandarle un link por mail en lugar de la contraseña temporal
+		// Lockatus: entra con Lockatus y no tiene contraseña acá (con «Solo se entra con Lockatus», siempre).
+		Lockatus    bool `json:"lockatus"`
+		SinClientes bool `json:"sin_clientes"` // ningún cliente todavía
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16384)).Decode(&b); err != nil {
 		jsonErr(w, http.StatusBadRequest, "JSON inválido")
 		return
 	}
 	actor := IdentidadDe(r.Context())
+	cfg := s.App.Config()
+	if cfg.SoloLockatus() {
+		b.Lockatus = true
+	}
+	if b.Lockatus {
+		if !cfg.OIDCListo() {
+			jsonErr(w, http.StatusConflict, "Lockatus no está configurado (Configuración, Lockatus)")
+			return
+		}
+		b.Invitar = false
+	}
 	if b.Invitar {
 		if falta := s.faltaParaMail(); falta != "" {
 			jsonErr(w, http.StatusConflict, "No se puede invitar por mail: "+strings.ToLower(falta[:1])+falta[1:])
@@ -87,8 +101,26 @@ func (s *Server) crearUsuario(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusBadRequest, capital(err.Error()))
 		return
 	}
+	if b.SinClientes {
+		cuits = []string{}
+	}
 	if err := controlarAlcance(actor, rol, cuits); err != nil {
 		jsonErr(w, http.StatusForbidden, err.Error())
+		return
+	}
+	if b.Lockatus {
+		u, err := s.App.Store.CrearUsuario(r.Context(), store.UsuarioNuevo{Email: email, Nombre: nombreLimpio(b.Nombre, email), Rol: rol, CUITs: cuits,
+			Origen: OrigenLockatus})
+		if errors.Is(err, store.ErrEmailUsado) {
+			jsonErr(w, http.StatusConflict, "Ya hay una persona con ese email")
+			return
+		}
+		if err != nil {
+			s.fallo(w, err)
+			return
+		}
+		s.auditar(r, "usuario.crear", u.Email, map[string]any{"rol": u.Rol.String(), "cuits": u.CUITs, "origen": OrigenLockatus})
+		jsonOK(w, http.StatusCreated, map[string]any{"usuario": u, "lockatus": true})
 		return
 	}
 	temp, hash := "", ""
@@ -126,6 +158,18 @@ func (s *Server) crearUsuario(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonOK(w, http.StatusCreated, map[string]any{"usuario": u, "clave_temporal": temp})
+}
+
+// sinContrasena: a quien entra con Lockatus (o a todos, con «Solo se entra con Lockatus») no se le
+// da contraseña ni invitación. Devuelve el motivo, o "" si se puede.
+func sinContrasena(s *Server, u *store.Usuario) string {
+	switch {
+	case u.Origen == OrigenLockatus:
+		return "Esa persona entra con Lockatus: no tiene contraseña en Factorum"
+	case s.App.Config().SoloLockatus():
+		return "Solo se entra con Lockatus: no hace falta una contraseña de Factorum"
+	}
+	return ""
 }
 
 // puedeTocar: un admin no toca superadmins.
@@ -191,11 +235,19 @@ func (s *Server) editarUsuario(w http.ResponseWriter, r *http.Request) {
 			detalle["rol"] = map[string]string{"antes": u.Rol.String(), "despues": rol.String()}
 		}
 	}
-	if raw, ok := b["cuits"]; ok {
-		cuits, err := leerCUITs(raw)
+	_, conCUITs := b["cuits"]
+	var sinClientes bool
+	if raw, ok := b["sin_clientes"]; ok {
+		_ = json.Unmarshal(raw, &sinClientes)
+	}
+	if conCUITs || sinClientes {
+		cuits, err := leerCUITs(b["cuits"])
 		if err != nil {
 			jsonErr(w, http.StatusBadRequest, capital(err.Error()))
 			return
+		}
+		if sinClientes {
+			cuits = []string{}
 		}
 		if err := controlarAlcance(actor, auth.Ninguno, cuits); err != nil {
 			jsonErr(w, http.StatusForbidden, err.Error())
@@ -262,6 +314,10 @@ func (s *Server) restablecerUsuario(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := puedeTocar(actor, u); err != nil {
 		jsonErr(w, http.StatusForbidden, err.Error())
+		return
+	}
+	if err := sinContrasena(s, u); err != "" {
+		jsonErr(w, http.StatusConflict, err)
 		return
 	}
 	temp := auth.ClaveTemporal()

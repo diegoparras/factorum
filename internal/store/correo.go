@@ -404,7 +404,7 @@ func (s *Store) CanjearTokenCuenta(ctx context.Context, hash, claveHash string, 
 			return err
 		}
 		u, err = scanUsuario(tx.QueryRow(ctx, `UPDATE usuarios SET clave_hash=$2, debe_cambiar=false, actualizado=now() WHERE id=$1 AND activo
-			RETURNING id, email, nombre, rol, cuits, coalesce(clave_hash,''), debe_cambiar, activo, origen, creado, ultimo_ingreso`, uid, claveHash))
+			RETURNING `+colsUsuario, uid, claveHash))
 		if errors.Is(err, ErrNoEncontrado) {
 			return ErrPaseInvalido
 		}

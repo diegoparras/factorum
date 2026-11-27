@@ -73,6 +73,10 @@ func (s *Server) olvideClave(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusBadRequest, "JSON inválido")
 		return
 	}
+	if s.App.Config().SoloLockatus() {
+		jsonErr(w, http.StatusForbidden, msgSoloLockatus)
+		return
+	}
 	if falta := s.faltaParaMail(); falta != "" {
 		jsonErr(w, http.StatusConflict, falta)
 		return
@@ -93,7 +97,7 @@ func (s *Server) olvideClave(w http.ResponseWriter, r *http.Request) {
 			ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), time.Minute)
 			defer cancel()
 			u, err := s.App.Store.UsuarioPorEmail(ctx, email)
-			if err != nil || !u.Activo {
+			if err != nil || !u.Activo || u.Origen == OrigenLockatus { // quien entra con Lockatus no tiene contraseña acá
 				return
 			}
 			if err := s.mandarLink(ctx, u, store.TokenRestablecer, "", ip); err != nil {
@@ -110,6 +114,10 @@ func (s *Server) olvideClave(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) leerToken(w http.ResponseWriter, r *http.Request, dst any) (string, bool) {
+	if s.App.Config().SoloLockatus() { // el link abre una sesión con contraseña
+		jsonErr(w, http.StatusForbidden, msgSoloLockatus)
+		return "", false
+	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192)).Decode(dst); err != nil {
 		jsonErr(w, http.StatusBadRequest, "JSON inválido")
 		return "", false
@@ -209,6 +217,10 @@ func (s *Server) mandarLinkUsuario(w http.ResponseWriter, r *http.Request) {
 	}
 	if !u.Activo {
 		jsonErr(w, http.StatusConflict, "Esa persona está desactivada: reactivala primero")
+		return
+	}
+	if err := sinContrasena(s, u); err != "" {
+		jsonErr(w, http.StatusConflict, err)
 		return
 	}
 	tipo := store.TokenRestablecer

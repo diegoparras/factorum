@@ -135,12 +135,18 @@ func (s *Server) identificarSesion(ctx context.Context, token string) (*auth.Ide
 			s.Log.Warn("no se pudo extender la sesión", "error", err)
 		}
 	}
+	// Quien entró con Lockatus no usa la contraseña de Factorum: una temporal pendiente no lo frena.
+	debe := u.DebeCambiar && q.Origen != OrigenLockatus
 	return &auth.Identidad{Tipo: auth.TipoSesion, UsuarioID: u.ID, Email: u.Email, Nombre: u.Nombre, Rol: rol, CUITs: cuits,
-		DebeCambiar: u.DebeCambiar, Origen: q.Origen, SesionID: q.ID}, nil
+		DebeCambiar: debe, Origen: q.Origen, SesionID: q.ID}, nil
 }
 
 // Rutas que puede usar alguien con la contraseña temporal sin cambiar.
 var rutasConClaveTemporal = map[string]bool{"/api/sesion": true, "/api/sesion/clave": true}
+
+// Rutas que puede usar alguien sin ningún cliente asignado (entró con Lockatus y todavía nadie le
+// asignó clientes): ver quién es, cambiar su contraseña y salir. Todo lo demás le da 403.
+var rutasSinClientes = map[string]bool{"/api/sesion": true, "/api/sesion/clave": true}
 
 // auth exige una identidad con al menos ese rol. Con cookie, los pedidos que modifican tienen que
 // traer la cabecera X-Factorum y un Origin propio (CSRF); con clave de API no hace falta.
@@ -166,7 +172,7 @@ func (s *Server) auth(min auth.Rol, h http.HandlerFunc) http.HandlerFunc {
 			jsonErr(w, http.StatusForbidden, fmt.Sprintf("Tu rol (%s) no alcanza para esto: hace falta %s", id.Rol, min))
 			return
 		}
-		if id.CUITs != nil && len(id.CUITs) == 0 {
+		if id.CUITs != nil && len(id.CUITs) == 0 && !rutasSinClientes[r.URL.Path] {
 			jsonErr(w, http.StatusForbidden, "No tenés ningún cliente asignado")
 			return
 		}
@@ -270,9 +276,14 @@ func (s *Server) borrarCookie(w http.ResponseWriter) {
 
 // abrirSesion crea la sesión de una persona y pone la cookie.
 func (s *Server) abrirSesion(w http.ResponseWriter, r *http.Request, u *store.Usuario) error {
+	return s.abrirSesionCon(w, r, u, "local")
+}
+
+// abrirSesionCon es abrirSesion con el origen de la sesión (local o lockatus).
+func (s *Server) abrirSesionCon(w http.ResponseWriter, r *http.Request, u *store.Usuario, origen string) error {
 	token := auth.NuevoToken()
 	err := s.App.Store.CrearSesion(r.Context(), store.Sesion{ID: auth.HashToken(token), UsuarioID: u.ID, Vence: s.ahora().Add(Inactividad),
-		IP: ipDe(r), UserAgent: r.UserAgent()})
+		IP: ipDe(r), UserAgent: r.UserAgent(), Origen: origen})
 	if err != nil {
 		return err
 	}

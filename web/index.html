@@ -183,7 +183,7 @@
     <!-- Lotes -->
     <section class="vista hidden" id="v-lotes">
       <h2>Lotes</h2>
-      <p class="sub">Cada carga (web, chat, MCP o Arcanum) es un lote. Tocá uno para ver sus comprobantes.</p>
+      <p class="sub">Cada carga (web, chat, MCP o Arcanum) es un lote. Tocá uno para ver sus comprobantes. Si cargaste algo mal, podés cambiarle el cliente o mandarlo a la papelera.</p>
       <div id="tablaLotes"></div>
     </section>
 
@@ -203,8 +203,14 @@
         <button type="button" class="ghost" data-accion="exportar" data-formato="xlsx">Excel</button>
         <button type="button" class="ghost" data-accion="exportar" data-formato="csv">CSV</button>
       </form>
+      <div id="loteBanner"></div>
       <div id="tablaCbtes"></div>
       <div class="pager" id="pager"></div>
+      <div class="barra-sel hidden" id="barraSel" role="region" aria-label="Comprobantes elegidos">
+        <span id="selCuenta"></span><span class="sp"></span>
+        <button type="button" class="ghost" data-accion="selNinguno">Cancelar</button>
+        <button type="button" class="peligro" data-accion="borrarElegidos" id="btnBorrarSel">Borrar</button>
+      </div>
     </section>
 
     <!-- Resumen -->
@@ -212,6 +218,20 @@
       <h2>Resumen</h2>
       <p class="sub">Por alícuota y por rubro, con los filtros de Comprobantes (elegí «Solo tickets» para ver los gastos con ticket). Las notas de crédito restan; lo que está en moneda extranjera no se suma.</p>
       <div id="resumen"></div>
+    </section>
+
+    <!-- Papelera -->
+    <section class="vista hidden" id="v-papelera">
+      <div class="cabecera"><div><h2>Papelera</h2><p class="sub" id="papeleraSub">Lo que se borró de tus clientes. Se puede restaurar tal cual estaba (con sus estados y correcciones) hasta que se borra para siempre.</p></div>
+        <div class="acciones"><button type="button" class="peligro hidden" data-accion="vaciarPapelera" id="btnVaciar">Vaciar la papelera</button></div></div>
+      <div id="papelera"></div>
+      <div class="pager" id="papPager"></div>
+      <div class="barra-sel hidden" id="barraPap" role="region" aria-label="Elegidos en la papelera">
+        <span id="papCuenta"></span><span class="sp"></span>
+        <button type="button" class="ghost" data-accion="papNinguno">Cancelar</button>
+        <button type="button" class="peligro hidden" data-accion="borrarYaElegidos" id="btnBorrarYaSel">Borrar ya</button>
+        <button type="button" data-accion="restaurarElegidos" id="btnRestaurarSel">Restaurar</button>
+      </div>
     </section>
 
     <!-- Configuración -->
@@ -275,6 +295,7 @@
       <div id="revHallazgos"></div>
       <form id="revForm"></form>
       <div class="rev-acciones solo-carga">
+        <button class="ghost peligro" data-accion="revBorrar" title="Mandarlo a la papelera">Borrar</button>
         <button class="ghost" data-accion="revGuardar">Guardar</button>
         <button class="ghost" data-accion="revConstatar" id="btnConstatar">Constatar con ARCA</button>
         <button data-accion="revAprobar" title="Aprobar y seguir (A)">Está bien, siguiente</button>

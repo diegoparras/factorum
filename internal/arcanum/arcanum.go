@@ -69,6 +69,11 @@ func (e *errConexion) Error() string { return "no se pudo contactar a Arcanum: "
 func (e *errConexion) Unwrap() error { return e.err }
 
 func (c *Cliente) pedir(ctx context.Context, metodo, ruta string, cuerpo any, dst any) error {
+	return c.pedirHasta(ctx, metodo, ruta, cuerpo, dst, 8<<20)
+}
+
+// pedirHasta es pedir con otro tope para la respuesta (los recibidos de un período pesan más).
+func (c *Cliente) pedirHasta(ctx context.Context, metodo, ruta string, cuerpo any, dst any, tope int64) error {
 	var r io.Reader
 	if cuerpo != nil {
 		b, _ := json.Marshal(cuerpo)
@@ -88,7 +93,10 @@ func (c *Cliente) pedir(ctx context.Context, metodo, ruta string, cuerpo any, ds
 		return &errConexion{err}
 	}
 	defer res.Body.Close()
-	b, _ := io.ReadAll(io.LimitReader(res.Body, 8<<20))
+	b, _ := io.ReadAll(io.LimitReader(res.Body, tope+1))
+	if int64(len(b)) > tope {
+		return &errHTTP{http.StatusBadGateway, "la respuesta de Arcanum es demasiado grande"}
+	}
 	if res.StatusCode >= 300 {
 		var e struct {
 			Error string `json:"error"`
@@ -401,4 +409,106 @@ func veredictoTique(errLocal bool, k *Constatacion) (string, string) {
 		return "no_verificable", "No se pudo consultar la base de apócrifos: " + k.Error
 	}
 	return "no_verificable", "Los controles locales dan bien, pero no hay conexión con Arcanum para consultar la base de apócrifos (los tiques no se constatan en ARCA)."
+}
+
+// ErrHTTP devuelve el estado y el mensaje si el error es una respuesta de Arcanum con error
+// (por ejemplo 403 si la clave no tiene ese CUIT, 404 si Arcanum no conoce la ruta).
+func ErrHTTP(err error) (int, string, bool) {
+	var e *errHTTP
+	if errors.As(err, &e) {
+		return e.status, e.msg, true
+	}
+	return 0, "", false
+}
+
+// EsErrConexion dice si el error es de red (Arcanum no respondió).
+func EsErrConexion(err error) bool {
+	var e *errConexion
+	return errors.As(err, &e)
+}
+
+// Recibido es un comprobante de Mis Comprobantes (recibidos) como lo devuelve Arcanum. Los importes
+// vienen en la moneda del comprobante.
+type Recibido struct {
+	Fecha          string  `json:"fecha"`
+	CbteTipo       int     `json:"cbteTipo"`
+	PuntoVenta     int     `json:"puntoVenta"`
+	NumeroDesde    int64   `json:"numeroDesde"`
+	NumeroHasta    int64   `json:"numeroHasta"`
+	CAE            string  `json:"cae"`
+	DocTipo        int     `json:"docTipo"`
+	CUITEmisor     string  `json:"cuitEmisor"`
+	Emisor         string  `json:"emisor"`
+	Moneda         string  `json:"moneda"`
+	TipoCambio     float64 `json:"tipoCambio"`
+	NetoGravado    float64 `json:"netoGravado"`
+	NoGravado      float64 `json:"noGravado"`
+	Exento         float64 `json:"exento"`
+	IVA            float64 `json:"iva"`
+	Total          float64 `json:"total"`
+	EmisorApocrifo *bool   `json:"emisorApocrifo"`
+}
+
+// Rango de fechas (AAAA-MM-DD, los dos extremos incluidos).
+type Rango struct {
+	Desde string `json:"desde"`
+	Hasta string `json:"hasta"`
+}
+
+// Cobertura dice qué parte de Mis Comprobantes (recibidos) bajó Arcanum para un CUIT.
+type Cobertura struct {
+	Sincronizado         bool    `json:"sincronizado"`
+	Cubre                bool    `json:"cubre"`
+	Rangos               []Rango `json:"rangos"`
+	Faltan               []Rango `json:"faltan"`
+	UltimaSincronizacion *struct {
+		Corrida   int64  `json:"corrida"`
+		Terminada string `json:"terminada"`
+		Desde     string `json:"desde"`
+		Hasta     string `json:"hasta"`
+		Cantidad  int    `json:"cantidad"`
+	} `json:"ultimaSincronizacion"`
+	UltimaCorrida *struct {
+		Corrida   int64   `json:"corrida"`
+		Estado    string  `json:"estado"`
+		Iniciada  string  `json:"iniciada"`
+		Terminada *string `json:"terminada"`
+		Desde     string  `json:"desde"`
+		Hasta     string  `json:"hasta"`
+		Error     *string `json:"error"`
+	} `json:"ultimaCorrida"`
+	EnCurso *struct {
+		Corrida int64  `json:"corrida"`
+		Estado  string `json:"estado"`
+		Desde   string `json:"desde"`
+		Hasta   string `json:"hasta"`
+	} `json:"enCurso"`
+	Credencial        bool `json:"credencial"`
+	SincronizarDiaria bool `json:"sincronizarDiaria"`
+}
+
+// Recibidos es la respuesta de GET /api/mis-comprobantes/:cuit/recibidos.
+type Recibidos struct {
+	CUIT         string     `json:"cuit"`
+	Desde        string     `json:"desde"`
+	Hasta        string     `json:"hasta"`
+	Total        int        `json:"total"`
+	Tope         int        `json:"tope"`
+	Truncado     bool       `json:"truncado"`
+	Cobertura    Cobertura  `json:"cobertura"`
+	Comprobantes []Recibido `json:"comprobantes"`
+}
+
+// MisRecibidos pide a Arcanum (2.3.0 o superior) los comprobantes que el CUIT recibió según Mis
+// Comprobantes entre desde y hasta (por fecha de emisión), y qué parte de ese período está bajada.
+func (c *Cliente) MisRecibidos(ctx context.Context, cuit, desde, hasta string) (*Recibidos, error) {
+	var r Recibidos
+	ruta := "/api/mis-comprobantes/" + url.PathEscape(arca.SoloDigitos(cuit)) + "/recibidos?desde=" + url.QueryEscape(desde) + "&hasta=" + url.QueryEscape(hasta)
+	if err := c.pedirHasta(ctx, http.MethodGet, ruta, nil, &r, 48<<20); err != nil {
+		return nil, err
+	}
+	if r.Comprobantes == nil {
+		r.Comprobantes = []Recibido{}
+	}
+	return &r, nil
 }

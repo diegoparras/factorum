@@ -166,3 +166,41 @@ func TestConstatarTodo(t *testing.T) {
 		t.Fatal("sin Arcanum tenía que fallar")
 	}
 }
+
+func TestMisRecibidos(t *testing.T) {
+	var ruta, clave string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ruta, clave = r.URL.RequestURI(), r.Header.Get("X-API-Key")
+		if strings.Contains(r.URL.Path, "20263630743") {
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"ok":false,"error":"No autorizado para ese CUIT"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"ok":true,"cuit":"30711111118","desde":"2026-10-01","hasta":"2026-10-31","total":1,"tope":20000,"truncado":false,
+			"cobertura":{"sincronizado":true,"cubre":false,"rangos":[{"desde":"2026-01-01","hasta":"2026-10-20"}],"faltan":[{"desde":"2026-10-21","hasta":"2026-10-31"}],
+			"ultimaSincronizacion":{"corrida":4,"terminada":"2026-10-20T12:00:00.000Z","desde":"2026-01-01","hasta":"2026-10-20","cantidad":9},"ultimaCorrida":null,"enCurso":null,"credencial":true,"sincronizarDiaria":false},
+			"comprobantes":[{"fecha":"2026-10-05","cbteTipo":1,"puntoVenta":3,"numeroDesde":7,"numeroHasta":7,"cae":"7612","docTipo":80,"cuitEmisor":"30500000001",
+			"emisor":"Proveedor SA","moneda":"PES","tipoCambio":1,"netoGravado":1000.1,"noGravado":0,"exento":0,"iva":210.02,"total":1210.12,"emisorApocrifo":null}]}`))
+	}))
+	defer srv.Close()
+	c := Nuevo(srv.URL, "ark_secreta", "", time.Second)
+	r, err := c.MisRecibidos(context.Background(), "30-71111111-8", "2026-10-01", "2026-10-31")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ruta != "/api/mis-comprobantes/30711111118/recibidos?desde=2026-10-01&hasta=2026-10-31" || clave != "ark_secreta" {
+		t.Fatalf("pedido: %s (%s)", ruta, clave)
+	}
+	if len(r.Comprobantes) != 1 || r.Comprobantes[0].Total != 1210.12 || r.Comprobantes[0].CUITEmisor != "30500000001" || r.Cobertura.Cubre ||
+		len(r.Cobertura.Faltan) != 1 || r.Cobertura.UltimaSincronizacion.Hasta != "2026-10-20" {
+		t.Fatalf("respuesta: %+v", r)
+	}
+	_, err = c.MisRecibidos(context.Background(), "20263630743", "2026-10-01", "2026-10-31")
+	if st, msg, ok := ErrHTTP(err); !ok || st != 403 || !strings.Contains(msg, "No autorizado") {
+		t.Fatalf("403: %v", err)
+	}
+	srv.Close()
+	if _, err := c.MisRecibidos(context.Background(), "30711111118", "2026-10-01", "2026-10-31"); !EsErrConexion(err) {
+		t.Fatalf("sin Arcanum tiene que ser un error de conexión: %v", err)
+	}
+}

@@ -15,6 +15,7 @@ import (
 	"os"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -38,6 +39,8 @@ const (
 	Secreto  Tipo = "secreto"  // nunca sale completo por la API
 	CUIT     Tipo = "cuit"     // un CUIT válido o vacío
 	Clientes Tipo = "clientes" // remitente -> CUIT de cliente
+	Entero   Tipo = "entero"   // un número entre Min y Max
+	Hora     Tipo = "hora"     // HH:MM
 )
 
 // Campo es un valor configurable.
@@ -49,6 +52,8 @@ type Campo struct {
 	Env      string `json:"env"`
 	Ayuda    string `json:"ayuda,omitempty"`
 	Ejemplo  string `json:"ejemplo,omitempty"`
+	Min      int    `json:"min,omitempty"`
+	Max      int    `json:"max,omitempty"`
 
 	get func(*config.Config) any
 	set func(*config.Config, any)
@@ -62,6 +67,10 @@ func booleano(get func(*config.Config) *bool) (func(*config.Config) any, func(*c
 	return func(c *config.Config) any { return *get(c) }, func(c *config.Config, v any) { *get(c) = v.(bool) }
 }
 
+func entero(get func(*config.Config) *int) (func(*config.Config) any, func(*config.Config, any)) {
+	return func(c *config.Config) any { return *get(c) }, func(c *config.Config, v any) { *get(c) = v.(int) }
+}
+
 func lista(get func(*config.Config) *[]string) (func(*config.Config) any, func(*config.Config, any)) {
 	return func(c *config.Config) any { return slices.Clone(*get(c)) }, func(c *config.Config, v any) { *get(c) = slices.Clone(v.([]string)) }
 }
@@ -71,7 +80,7 @@ func campo(clave, seccion, etiqueta string, tipo Tipo, env, ayuda, ejemplo strin
 }
 
 // Secciones, en el orden de la pantalla.
-var Secciones = []string{"general", "arcanum", "telegram", "whatsapp", "webhook", "ia", "r2", "clientes"}
+var Secciones = []string{"general", "arcanum", "telegram", "whatsapp", "webhook", "ia", "r2", "copias", "clientes"}
 
 // Campos es todo lo que se configura desde la pantalla.
 var Campos = func() []Campo {
@@ -129,6 +138,19 @@ var Campos = func() []Campo {
 	add(campo("r2.secret_key", "r2", "Secret key", Secreto, "FACTORUM_R2_SECRET_KEY", "", "", g, s))
 	g, s = texto(func(c *config.Config) *string { return &c.R2Prefijo })
 	add(campo("r2.prefijo", "r2", "Prefijo", Texto, "FACTORUM_R2_PREFIJO", "Carpeta dentro del bucket.", "factorum/", g, s))
+
+	g, s = booleano(func(c *config.Config) *bool { return &c.CopiasActivas })
+	add(campo("copias.activo", "copias", "Hacer una copia de la base todos los días", Bool, "FACTORUM_COPIAS", "Lógica y portable, comprimida y cifrada con la clave maestra. Va a R2 si está activo; si no, al disco (carpeta copias).", "", g, s))
+	g, s = texto(func(c *config.Config) *string { return &c.CopiasHora })
+	add(campo("copias.hora", "copias", "Hora (Buenos Aires)", Hora, "FACTORUM_COPIAS_HORA", "Conviene de madrugada. Si el servidor estaba apagado a esa hora, la copia se hace al volver.", "03:30", g, s))
+	g, s = entero(func(c *config.Config) *int { return &c.CopiasDiarias })
+	d := campo("copias.diarias", "copias", "Diarias que se guardan", Entero, "FACTORUM_COPIAS_DIARIAS", "Las últimas copias, una por día.", "14", g, s)
+	d.Min, d.Max = 1, 366
+	add(d)
+	g, s = entero(func(c *config.Config) *int { return &c.CopiasMensuales })
+	d = campo("copias.mensuales", "copias", "Mensuales que se guardan", Entero, "FACTORUM_COPIAS_MENSUALES", "Además, la primera copia de cada uno de los últimos meses.", "12", g, s)
+	d.Max = 120
+	add(d)
 
 	add(campo("clientes.canales", "clientes", "Remitente y CUIT del cliente", Clientes, "FACTORUM_CANAL_CLIENTES",
 		"Lo que llega por chat de ese número o usuario se carga para ese cliente.", "5491155550000 = 20-22222222-3",
@@ -470,6 +492,33 @@ func decodificar(c Campo, raw json.RawMessage) (any, error) {
 			}
 		}
 		return v, nil
+	case Entero:
+		var v int
+		if err := json.Unmarshal(raw, &v); err != nil {
+			var t string
+			if err := json.Unmarshal(raw, &t); err != nil {
+				return nil, mal("tiene que ser un número")
+			}
+			n, err := strconv.Atoi(strings.TrimSpace(t))
+			if err != nil {
+				return nil, mal("tiene que ser un número")
+			}
+			v = n
+		}
+		if v < c.Min || (c.Max > 0 && v > c.Max) {
+			return nil, mal(fmt.Sprintf("tiene que ser entre %d y %d", c.Min, c.Max))
+		}
+		return v, nil
+	case Hora:
+		var v string
+		if err := json.Unmarshal(raw, &v); err != nil {
+			return nil, mal("tiene que ser una hora")
+		}
+		h, m, ok := config.HoraMinuto(v)
+		if !ok {
+			return nil, mal("tiene que ser una hora HH:MM, por ejemplo 03:30")
+		}
+		return fmt.Sprintf("%02d:%02d", h, m), nil
 	case Bool:
 		var v bool
 		if err := json.Unmarshal(raw, &v); err != nil {

@@ -56,6 +56,12 @@ type Config struct {
 	R2Region    string
 	R2Prefijo   string
 
+	// Copias de seguridad de la base (diarias, a una hora de Buenos Aires).
+	CopiasActivas   bool
+	CopiasHora      string // HH:MM
+	CopiasDiarias   int    // cuántas diarias se guardan
+	CopiasMensuales int    // y cuántas mensuales (la primera de cada mes)
+
 	// Arcanum.
 	ArcanumURL         string // interna (http://arcanum:8094)
 	ArcanumURLPublica  string // la que ve el navegador, para el pase entre apps
@@ -144,6 +150,11 @@ func Leer() (*Config, error) {
 		R2Region:    env("FACTORUM_R2_REGION", "auto"),
 		R2Prefijo:   env("FACTORUM_R2_PREFIJO", "factorum/"),
 
+		CopiasActivas:   envBool("FACTORUM_COPIAS", true),
+		CopiasHora:      env("FACTORUM_COPIAS_HORA", "03:30"),
+		CopiasDiarias:   envInt("FACTORUM_COPIAS_DIARIAS", 14),
+		CopiasMensuales: envInt("FACTORUM_COPIAS_MENSUALES", 12),
+
 		ArcanumURL:         strings.TrimRight(env("ARCANUM_URL", ""), "/"),
 		ArcanumURLPublica:  strings.TrimRight(env("ARCANUM_URL_PUBLICA", ""), "/"),
 		ArcanumAPIKey:      env("ARCANUM_API_KEY", ""),
@@ -193,6 +204,15 @@ func (c *Config) Validar() error {
 	if c.R2Endpoint != "" && c.ClaveMaestra == nil {
 		return fmt.Errorf("para guardar en R2 hace falta FACTORUM_MASTER_KEY (openssl rand -hex 32): los comprobantes se cifran antes de salir")
 	}
+	if _, _, ok := HoraMinuto(c.CopiasHora); !ok && c.CopiasHora != "" {
+		return fmt.Errorf("la hora de las copias tiene que ser HH:MM (por ejemplo 03:30)")
+	}
+	if c.CopiasDiarias < 0 || c.CopiasDiarias > 366 {
+		return fmt.Errorf("las copias diarias que se guardan tienen que ser entre 1 y 366")
+	}
+	if c.CopiasMensuales < 0 || c.CopiasMensuales > 120 {
+		return fmt.Errorf("las copias mensuales que se guardan tienen que ser entre 0 y 120")
+	}
 	if c.LLMBaseURL != "" && c.LLMModelo == "" {
 		return fmt.Errorf("con la URL del modelo de visión hace falta el modelo (por ejemplo qwen2.5vl:7b)")
 	}
@@ -228,6 +248,38 @@ func decodificarClave(s string) ([]byte, error) {
 		b[i] = byte(v)
 	}
 	return b, nil
+}
+
+// HoraMinuto lee "HH:MM" (de 00:00 a 23:59).
+func HoraMinuto(s string) (int, int, bool) {
+	s = strings.TrimSpace(s)
+	h, m, ok := strings.Cut(s, ":")
+	if !ok || len(h) < 1 || len(h) > 2 || len(m) != 2 {
+		return 0, 0, false
+	}
+	hh, err1 := strconv.Atoi(h)
+	mm, err2 := strconv.Atoi(m)
+	if err1 != nil || err2 != nil || hh < 0 || hh > 23 || mm < 0 || mm > 59 {
+		return 0, 0, false
+	}
+	return hh, mm, true
+}
+
+// HoraDeCopias es la hora de la copia diaria (03:30 si no está o no se entiende).
+func (c *Config) HoraDeCopias() (int, int) {
+	if h, m, ok := HoraMinuto(c.CopiasHora); ok {
+		return h, m
+	}
+	return 3, 30
+}
+
+// CopiasAGuardar son las diarias (al menos 1; 14 si no se dijo) y las mensuales que se guardan.
+func (c *Config) CopiasAGuardar() (diarias, mensuales int) {
+	diarias, mensuales = c.CopiasDiarias, max(0, c.CopiasMensuales)
+	if diarias < 1 {
+		diarias = 14
+	}
+	return diarias, mensuales
 }
 
 // IAConfigurada indica si hay un modelo de visión.

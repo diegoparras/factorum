@@ -15,6 +15,7 @@ import (
 	"github.com/diegoparras/factorum/internal/ajustes"
 	"github.com/diegoparras/factorum/internal/almacen"
 	"github.com/diegoparras/factorum/internal/auth"
+	"github.com/diegoparras/factorum/internal/avisoia"
 	"github.com/diegoparras/factorum/internal/canal/telegram"
 	"github.com/diegoparras/factorum/internal/canal/webhook"
 	"github.com/diegoparras/factorum/internal/config"
@@ -57,6 +58,7 @@ func (s *Server) responderConfiguracion(w http.ResponseWriter, r *http.Request, 
 	if id.Rol >= auth.Superadmin {
 		res["lockatus"] = map[string]any{"redirect": cfg.OIDCRedirect(), "listo": cfg.OIDCListo(), "solo": cfg.SoloLockatus(),
 			"login_local": cfg.LoginLocal, "sesion_lockatus": id.Origen == OrigenLockatus}
+		res["ia_aviso"] = s.vistaAviso(r.Context(), cfg, id)
 		res["correo"] = map[string]any{"urls": urlsCorreo(cfg), "estado": s.estadoCorreo(), "smtp": cfg.SMTPConfigurado(),
 			"google": map[string]any{"conectado": cfg.GoogleRefreshToken != "", "cuenta": cfg.GoogleCuenta, "fijado": s.bloqueado("google.refresh_token")}}
 	}
@@ -74,10 +76,15 @@ func (s *Server) guardarConfiguracion(w http.ResponseWriter, r *http.Request) {
 	}
 	var b struct {
 		Cambios map[string]json.RawMessage `json:"cambios"`
+		// AceptarAvisoIA: el superadmin vio el aviso de la IA externa de ese host y acepta usarla.
+		AceptarAvisoIA *avisoPedido `json:"aceptar_aviso_ia"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&b); err != nil {
 		jsonErr(w, http.StatusBadRequest, "JSON inválido")
 		return
+	}
+	if b.Cambios == nil {
+		b.Cambios = map[string]json.RawMessage{}
 	}
 	id := IdentidadDe(r.Context())
 	secs := seccionesDe(id)
@@ -101,6 +108,10 @@ func (s *Server) guardarConfiguracion(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusConflict, "Para activar «Solo se entra con Lockatus», primero cerrá sesión y entrá con Lockatus: así queda probado que tu cuenta entra.")
 		return
 	}
+	aceptado, seguir := s.aceptacionIA(w, r, b.Cambios, b.AceptarAvisoIA)
+	if !seguir {
+		return
+	}
 	cambiadas, err := s.Ajustes.Guardar(r.Context(), b.Cambios, id.Quien())
 	switch {
 	case errors.Is(err, ajustes.ErrBloqueado):
@@ -116,6 +127,9 @@ func (s *Server) guardarConfiguracion(w http.ResponseWriter, r *http.Request) {
 	if len(cambiadas) > 0 {
 		// Qué claves cambiaron, nunca los valores (los secretos, menos que menos).
 		s.auditar(r, "config.cambiar", strings.Join(cambiadas, ", "), map[string]any{"claves": cambiadas})
+	}
+	if aceptado != nil && len(cambiadas) > 0 {
+		s.auditar(r, "ia.aviso_aceptado", aceptado.Host, map[string]any{"proveedor": aceptado.Proveedor, "host": aceptado.Host, "version": avisoia.Version})
 	}
 	s.responderConfiguracion(w, r, cambiadas)
 }

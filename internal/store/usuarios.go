@@ -539,6 +539,21 @@ type FilaConfig struct {
 	Actualizado    time.Time       `json:"actualizado"`
 }
 
+// ---------- Aviso de la IA ----------
+
+// AvisoIAVisto dice si la persona ya vio el aviso de la IA externa de ese host, en esa versión.
+func (s *Store) AvisoIAVisto(ctx context.Context, usuario int64, host string, version int) (bool, error) {
+	var ok bool
+	err := s.Pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM ia_avisos_vistos WHERE usuario_id=$1 AND host=$2 AND version=$3)`, usuario, host, version).Scan(&ok)
+	return ok, err
+}
+
+// MarcarAvisoIAVisto anota que la persona vio el aviso de ese host y esa versión.
+func (s *Store) MarcarAvisoIAVisto(ctx context.Context, usuario int64, host string, version int) error {
+	_, err := s.Pool.Exec(ctx, `INSERT INTO ia_avisos_vistos (usuario_id, host, version) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING`, usuario, host, version)
+	return err
+}
+
 // Configuracion trae todo lo guardado.
 func (s *Store) Configuracion(ctx context.Context) (map[string]FilaConfig, error) {
 	rows, err := s.Pool.Query(ctx, `SELECT clave, valor, secreto, actualizado_por, actualizado FROM configuracion`)

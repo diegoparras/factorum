@@ -81,7 +81,7 @@ func TestCamposCompletos(t *testing.T) {
 	c := &config.Config{CanalClienteCUIT: map[string]string{}}
 	vistos := map[string]bool{}
 	for _, cp := range Campos {
-		if vistos[cp.Clave] || cp.Env == "" || cp.get == nil || cp.set == nil {
+		if vistos[cp.Clave] || (cp.Env == "" && !cp.Interno) || cp.get == nil || cp.set == nil {
 			t.Errorf("campo mal armado: %s", cp.Clave)
 		}
 		vistos[cp.Clave] = true

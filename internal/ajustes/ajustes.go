@@ -154,6 +154,23 @@ var Campos = func() []Campo {
 	add(campo("ia.modelo", "ia", "Modelo", Texto, "LLM_MODEL", "Un modelo que entienda imágenes.", "qwen2.5vl:7b", g, s))
 	g, s = texto(func(c *config.Config) *string { return &c.LLMAPIKey })
 	add(campo("ia.api_key", "ia", "Clave", Secreto, "LLM_API_KEY", "Solo si el endpoint la pide (Ollama no).", "", g, s))
+	// La aceptación del aviso de una IA externa: la guarda Factorum cuando un superadmin la acepta.
+	// No tiene variable de entorno a propósito: aceptar es mirar el aviso en la pantalla.
+	for _, a := range []struct {
+		clave string
+		tipo  Tipo
+		get   func(*config.Config) any
+		set   func(*config.Config, any)
+	}{
+		{"ia.aviso_host", Texto, func(c *config.Config) any { return c.IAAvisoHost }, func(c *config.Config, v any) { c.IAAvisoHost = v.(string) }},
+		{"ia.aviso_version", Entero, func(c *config.Config) any { return c.IAAvisoVersion }, func(c *config.Config, v any) { c.IAAvisoVersion = v.(int) }},
+		{"ia.aviso_por", Texto, func(c *config.Config) any { return c.IAAvisoPor }, func(c *config.Config, v any) { c.IAAvisoPor = v.(string) }},
+		{"ia.aviso_cuando", Texto, func(c *config.Config) any { return c.IAAvisoCuando }, func(c *config.Config, v any) { c.IAAvisoCuando = v.(string) }},
+	} {
+		cp := campo(a.clave, "ia", "Aviso de la IA aceptado", a.tipo, "", "", "", a.get, a.set)
+		cp.Interno, cp.Max = true, 1000
+		add(cp)
+	}
 
 	g, s = texto(func(c *config.Config) *string { return &c.R2Endpoint })
 	add(campo("r2.endpoint", "r2", "Endpoint", URL, "FACTORUM_R2_ENDPOINT", "R2 o cualquier S3 compatible.", "https://<cuenta>.r2.cloudflarestorage.com", g, s))
@@ -296,7 +313,9 @@ func (s *Servicio) Suscribir(f Suscriptor) {
 }
 
 // Bloqueado dice si el campo lo fija una variable de entorno.
-func (s *Servicio) Bloqueado(c Campo) bool { return strings.TrimSpace(s.Getenv(c.Env)) != "" }
+func (s *Servicio) Bloqueado(c Campo) bool {
+	return c.Env != "" && strings.TrimSpace(s.Getenv(c.Env)) != ""
+}
 
 // valorGuardado decodifica lo guardado de un campo.
 func (s *Servicio) valorGuardado(c Campo, f store.FilaConfig) (any, error) {
@@ -454,55 +473,9 @@ func esNulo(raw json.RawMessage) bool {
 func (s *Servicio) Guardar(ctx context.Context, cambios map[string]json.RawMessage, quien string) ([]string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	nuevo := maps.Clone(s.guardado)
-	var filas []store.FilaConfig
-	var cambiadas []string
-	claves := slices.Sorted(maps.Keys(cambios))
-	for _, k := range claves {
-		raw := cambios[k]
-		c, ok := CampoPorClave(k)
-		if !ok {
-			return nil, fmt.Errorf("%w: %q no es un campo de la configuración", ErrInvalido, k)
-		}
-		if s.Bloqueado(c) {
-			return nil, fmt.Errorf("%w: %s (variable %s)", ErrBloqueado, c.Etiqueta, c.Env)
-		}
-		previo, tenia := s.guardado[k]
-		if esNulo(raw) {
-			if tenia {
-				delete(nuevo, k)
-				filas = append(filas, store.FilaConfig{Clave: k})
-				cambiadas = append(cambiadas, k)
-			}
-			continue
-		}
-		v, err := decodificar(c, raw)
-		if err != nil {
-			return nil, err
-		}
-		f := store.FilaConfig{Clave: k, ActualizadoPor: quien, Actualizado: time.Now()}
-		if c.Tipo == Secreto {
-			sv := v.(string)
-			if sv == "" {
-				continue
-			}
-			if tenia {
-				if viejo, err := s.valorGuardado(c, previo); err == nil && viejo == sv {
-					continue
-				}
-			}
-			if f.Secreto, err = s.sello.Sellar([]byte(sv)); err != nil {
-				return nil, err
-			}
-		} else {
-			f.Valor, _ = json.Marshal(v)
-			if tenia && string(normalizarJSON(previo.Valor)) == string(f.Valor) {
-				continue
-			}
-		}
-		nuevo[k] = f
-		filas = append(filas, f)
-		cambiadas = append(cambiadas, k)
+	nuevo, filas, cambiadas, err := s.preparar(cambios, quien)
+	if err != nil {
+		return nil, err
 	}
 	if len(filas) == 0 {
 		return []string{}, nil
@@ -521,6 +494,78 @@ func (s *Servicio) Guardar(ctx context.Context, cambios map[string]json.RawMessa
 		f(viejo, cfg)
 	}
 	return cambiadas, nil
+}
+
+// Previa arma, sin guardar, la configuración que quedaría si se guardaran esos cambios, igual que
+// Guardar (con null volviendo al valor del entorno o al de fábrica).
+func (s *Servicio) Previa(cambios map[string]json.RawMessage) (*config.Config, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	nuevo, _, _, err := s.preparar(cambios, "")
+	if err != nil {
+		return nil, err
+	}
+	cfg, err := s.calcular(nuevo, false)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalido, err)
+	}
+	return cfg, nil
+}
+
+// preparar valida los cambios y arma lo que quedaría guardado, las filas a escribir y las claves
+// que cambian. Se llama con s.mu tomado.
+func (s *Servicio) preparar(cambios map[string]json.RawMessage, quien string) (map[string]store.FilaConfig, []store.FilaConfig, []string, error) {
+	nuevo := maps.Clone(s.guardado)
+	var filas []store.FilaConfig
+	var cambiadas []string
+	claves := slices.Sorted(maps.Keys(cambios))
+	for _, k := range claves {
+		raw := cambios[k]
+		c, ok := CampoPorClave(k)
+		if !ok {
+			return nil, nil, nil, fmt.Errorf("%w: %q no es un campo de la configuración", ErrInvalido, k)
+		}
+		if s.Bloqueado(c) {
+			return nil, nil, nil, fmt.Errorf("%w: %s (variable %s)", ErrBloqueado, c.Etiqueta, c.Env)
+		}
+		previo, tenia := s.guardado[k]
+		if esNulo(raw) {
+			if tenia {
+				delete(nuevo, k)
+				filas = append(filas, store.FilaConfig{Clave: k})
+				cambiadas = append(cambiadas, k)
+			}
+			continue
+		}
+		v, err := decodificar(c, raw)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		f := store.FilaConfig{Clave: k, ActualizadoPor: quien, Actualizado: time.Now()}
+		if c.Tipo == Secreto {
+			sv := v.(string)
+			if sv == "" {
+				continue
+			}
+			if tenia {
+				if viejo, err := s.valorGuardado(c, previo); err == nil && viejo == sv {
+					continue
+				}
+			}
+			if f.Secreto, err = s.sello.Sellar([]byte(sv)); err != nil {
+				return nil, nil, nil, err
+			}
+		} else {
+			f.Valor, _ = json.Marshal(v)
+			if tenia && string(normalizarJSON(previo.Valor)) == string(f.Valor) {
+				continue
+			}
+		}
+		nuevo[k] = f
+		filas = append(filas, f)
+		cambiadas = append(cambiadas, k)
+	}
+	return nuevo, filas, cambiadas, nil
 }
 
 func normalizarJSON(b []byte) []byte {

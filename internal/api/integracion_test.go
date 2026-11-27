@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -258,7 +259,7 @@ func armarOpc(t *testing.T, o opcEntorno) *entorno {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := &app.App{Cfg: cfg, Store: st, Almacen: alm, Pipeline: pipeline.Nuevo(motor, ocr, nil, 2, 1), Log: log, TLSCorreo: tlsCorreo, Calma: time.Second}
+	a := &app.App{Cfg: cfg, Store: st, Almacen: alm, Pipeline: pipeline.Nuevo(motor, ocr, armarVisionPrueba(cfg), 2, 1), Log: log, TLSCorreo: tlsCorreo, Calma: time.Second}
 	for _, op := range o.opciones {
 		op(a)
 	}
@@ -304,7 +305,7 @@ func armarOpc(t *testing.T, o opcEntorno) *entorno {
 	if err := aj.Cargar(ctx); err != nil {
 		t.Fatal(err)
 	}
-	aj.Suscribir(func(_, nuevo *config.Config) { a.SetConfig(nuevo) })
+	aj.Suscribir(func(_, nuevo *config.Config) { a.SetConfig(nuevo); a.Pipeline.SetVision(armarVisionPrueba(nuevo)) })
 	s := &api.Server{App: a, Cfg: cfg, Log: log, Ajustes: aj, Mudanza: mud, Copias: cop}
 	s.MCP = mcpserver.Handler(a, s.IdentificarClave)
 	if err := s.PrepararArranque(ctx); err != nil {
@@ -314,6 +315,34 @@ func armarOpc(t *testing.T, o opcEntorno) *entorno {
 	srv.Start()
 	t.Cleanup(srv.Close)
 	return &entorno{app: a, srv: srv, arc: &n, api: s, aj: aj, fijadas: &fijadas, cfg: cfg, disco: disco, url: url}
+}
+
+// iaFalsa es la dirección (host:puerto) del modelo de visión de mentira: todo pedido al modelo va
+// ahí, sea cual sea el host del endpoint configurado (api.openai.com, api.anthropic.com...).
+var iaFalsa atomic.Value
+
+// armarVisionPrueba arma la visión como el servidor (fail-closed con el aviso de la IA), pero con un
+// cliente HTTP que no sale a internet.
+func armarVisionPrueba(c *config.Config) *extractor.Vision {
+	v := app.ArmarVision(c)
+	if v != nil {
+		v.HTTP = &http.Client{Transport: haciaIAFalsa{}}
+	}
+	return v
+}
+
+// haciaIAFalsa manda cada pedido (http o https, a cualquier host) al modelo de mentira, con el Host
+// original.
+type haciaIAFalsa struct{}
+
+func (haciaIAFalsa) RoundTrip(r *http.Request) (*http.Response, error) {
+	dir, _ := iaFalsa.Load().(string)
+	if dir == "" {
+		return nil, errors.New("sin modelo de mentira")
+	}
+	r2 := r.Clone(r.Context())
+	r2.URL.Scheme, r2.URL.Host, r2.Host = "http", dir, r.URL.Host
+	return http.DefaultTransport.RoundTrip(r2)
 }
 
 func (e *entorno) pedir(t *testing.T, metodo, ruta, clave string, cuerpo io.Reader, tipo string) (int, map[string]any, []byte) {

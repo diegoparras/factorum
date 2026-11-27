@@ -186,6 +186,10 @@ func (s *Server) Handler() http.Handler {
 	m.HandleFunc("GET /api/suite/apps", s.soloSesion(lect, s.appsSuite))
 	m.HandleFunc("POST /api/suite/abrir/{app}", s.soloSesion(lect, s.abrirApp))
 
+	// El aviso de la IA externa: qué pasa con los datos, y que cada persona lo vio.
+	m.HandleFunc("GET /api/ia/aviso", s.auth(lect, s.verAvisoIA))
+	m.HandleFunc("POST /api/ia/aviso/visto", s.soloSesion(lect, s.avisoIAVisto))
+
 	m.HandleFunc("POST /api/verificar", s.auth(lect, s.verificar))
 	m.HandleFunc("POST /api/lotes", s.auth(usu, s.crearLote))
 	m.HandleFunc("GET /api/lotes", s.auth(lect, s.lotes))
@@ -425,6 +429,10 @@ func (s *Server) verificar(w http.ResponseWriter, r *http.Request) {
 	if v, ok := campos["ia"]; ok {
 		ia = verdadero(v)
 	}
+	if ia && s.avisoPendiente(r) {
+		s.responderAvisoPendiente(w, r)
+		return
+	}
 	consultante, err := cuitEnAlcance(id, campos["cuit_consultante"])
 	if err != nil {
 		jsonErr(w, http.StatusForbidden, err.Error())
@@ -481,6 +489,10 @@ func (s *Server) crearLote(w http.ResponseWriter, r *http.Request) {
 	ia := cfg.IAPorDefecto
 	if v := r.FormValue("ia"); v != "" {
 		ia = verdadero(v)
+	}
+	if ia && s.avisoPendiente(r) {
+		s.responderAvisoPendiente(w, r)
+		return
 	}
 	constatar := cfg.ConstatarPorDefecto && hayArcanum
 	if v := r.FormValue("constatar"); v != "" {

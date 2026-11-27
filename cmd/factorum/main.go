@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -34,6 +35,7 @@ import (
 	"github.com/diegoparras/factorum/internal/api"
 	"github.com/diegoparras/factorum/internal/app"
 	"github.com/diegoparras/factorum/internal/arcanum"
+	"github.com/diegoparras/factorum/internal/avisoia"
 	"github.com/diegoparras/factorum/internal/config"
 	"github.com/diegoparras/factorum/internal/copias"
 	"github.com/diegoparras/factorum/internal/export"
@@ -148,7 +150,7 @@ func logger() *slog.Logger {
 	return slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 }
 
-func armarPipeline(c *config.Config, log *slog.Logger) *pipeline.Pipeline {
+func armarPipeline(c *config.Config, log *slog.Logger, vis *extractor.Vision) *pipeline.Pipeline {
 	motor := pdfx.NuevoPoppler(60 * time.Second)
 	if err := motor.Disponible(); err != nil {
 		log.Warn("sin poppler: no se van a poder leer PDFs", "error", err)
@@ -157,16 +159,20 @@ func armarPipeline(c *config.Config, log *slog.Logger) *pipeline.Pipeline {
 	if ocr == nil {
 		log.Info("tesseract no está instalado: sin OCR para escaneados")
 	}
-	return pipeline.Nuevo(motor, ocr, armarVision(c, log), c.ConcOCR, c.ConcIA)
+	return pipeline.Nuevo(motor, ocr, vis, c.ConcOCR, c.ConcIA)
 }
 
 func armarVision(c *config.Config, log *slog.Logger) *extractor.Vision {
 	if !c.IAConfigurada() {
 		return nil
 	}
-	vis := &extractor.Vision{BaseURL: c.LLMBaseURL, APIKey: c.LLMAPIKey, Modelo: c.LLMModelo, Timeout: c.LLMTimeout}
-	if !vis.Local() {
-		log.Warn("el modelo de visión no parece local: los comprobantes que necesiten IA van a salir de este servidor", "url", c.LLMBaseURL)
+	vis := app.ArmarVision(c)
+	d := avisoia.Detectar(c.LLMBaseURL)
+	switch {
+	case vis == nil:
+		log.Warn("la IA configurada es externa y ningún superadmin aceptó todavía el aviso de qué pasa con los datos: no se usa hasta que lo acepten en Configuración, IA (visión)", "proveedor", d.Nombre, "host", d.Host)
+	case d.Externa():
+		log.Warn("IA externa: los comprobantes que necesiten IA van a salir de este servidor", "proveedor", d.Nombre, "host", d.Host, "aceptado_por", c.IAAvisoPor)
 	}
 	return vis
 }
@@ -183,7 +189,7 @@ func firmaArcanum(c *config.Config) string {
 }
 
 func firmaIA(c *config.Config) string {
-	return strings.Join([]string{c.LLMBaseURL, c.LLMAPIKey, c.LLMModelo, c.LLMTimeout.String()}, "|")
+	return strings.Join([]string{c.LLMBaseURL, c.LLMAPIKey, c.LLMModelo, c.LLMTimeout.String(), c.IAAvisoHost, strconv.Itoa(c.IAAvisoVersion)}, "|")
 }
 
 func firmaR2(c *config.Config) string {
@@ -242,7 +248,7 @@ func servir() error {
 		alm.CambiarBackend(s3, disco)
 	}
 
-	a := &app.App{Cfg: c, Store: st, Almacen: alm, Pipeline: armarPipeline(c, log), Log: log}
+	a := &app.App{Cfg: c, Store: st, Almacen: alm, Pipeline: armarPipeline(c, log, armarVision(c, log)), Log: log}
 	a.SetArcanum(armarArcanum(c))
 	// El pase de lo del disco a R2 y las copias de la base: trabajos de la cola de mantenimiento.
 	mud := servicioMudanza(st, disco, alm.R2, "Factorum", log)
@@ -388,7 +394,16 @@ func procesar(args []string) error {
 	if err != nil {
 		return err
 	}
-	p := armarPipeline(c, log)
+	// Por consola no hay base donde guardar la aceptación del aviso: pedir -ia es la decisión de
+	// quien lo corre. Con una IA externa se avisa a dónde van los datos.
+	var vis *extractor.Vision
+	if *ia && c.IAConfigurada() {
+		vis = &extractor.Vision{BaseURL: c.LLMBaseURL, APIKey: c.LLMAPIKey, Modelo: c.LLMModelo, Timeout: c.LLMTimeout}
+		if d := avisoia.Detectar(c.LLMBaseURL); d.Externa() {
+			fmt.Fprintf(os.Stderr, "IA externa: %s (%s). Las páginas que la necesiten salen de esta máquina con todo lo que tengan (CUIT, importes, CAE). Qué pasa con los datos: README, «IA y privacidad».\n", d.Nombre, d.Host)
+		}
+	}
+	p := armarPipeline(c, log, vis)
 
 	var archivos []string
 	for _, a := range fsf.Args() {

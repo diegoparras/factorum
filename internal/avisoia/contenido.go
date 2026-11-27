@@ -47,7 +47,7 @@ const fechaLarga = "27 de noviembre de 2026"
 // Aviso arma el contenido para una detección. Cada afirmación sobre un proveedor sale de su página
 // oficial (las fuentes, leídas en la Fecha); lo común lo hace Factorum y se puede ver en el código.
 func Aviso(d Deteccion) Contenido {
-	c := Contenido{Version: Version, Fecha: Fecha}
+	c := Contenido{Version: Version, Fecha: Fecha, Tarjetas: []Tarjeta{}, Fuentes: []Fuente{}}
 	if d.Host == "" {
 		return c
 	}
@@ -147,9 +147,6 @@ func Aviso(d Deteccion) Contenido {
 		pie = "Factorum no tiene datos verificados de este proveedor."
 	}
 	c.Pie = pie
-	if c.Fuentes == nil {
-		c.Fuentes = []Fuente{}
-	}
 	return c
 }
 

@@ -33,8 +33,8 @@ func catalogoIA(c *config.Config) map[string]any {
 }
 
 // claveIA decide qué clave va a un proveedor: la escrita en pantalla o, si está vacía, la que ya
-// tiene la configuración (guardada o del entorno), pero solo si es para el mismo host: una clave
-// nunca viaja a otro lado. A Ollama no se le manda.
+// tiene la configuración (guardada o del entorno), pero solo si es para el mismo host (o, en OpenAI,
+// otra de sus regiones): una clave nunca viaja a otro lado. A Ollama no se le manda.
 func claveIA(actual *config.Config, prov, base, escrita string) (clave string, guardada bool) {
 	if prov == iaproveedor.Ollama {
 		return "", false
@@ -42,7 +42,7 @@ func claveIA(actual *config.Config, prov, base, escrita string) (clave string, g
 	if escrita = strings.TrimSpace(escrita); escrita != "" {
 		return escrita, false
 	}
-	if actual.LLMAPIKey != "" && iaproveedor.MismoHost(base, actual.LLMBaseURL) {
+	if actual.LLMAPIKey != "" && iaproveedor.MismoDestino(base, actual.LLMBaseURL) {
 		return actual.LLMAPIKey, true
 	}
 	return "", false
@@ -154,7 +154,7 @@ func (s *Server) probarIA(w http.ResponseWriter, r *http.Request, cambios map[st
 		return
 	}
 	cfg.LLMAPIKey, _ = claveIA(s.App.Config(), prov, cfg.LLMBaseURL, textoDe(cambios, "ia.api_key"))
-	if s.bloqueado("ia.api_key") && prov != iaproveedor.Ollama && iaproveedor.MismoHost(cfg.LLMBaseURL, s.App.Config().LLMBaseURL) {
+	if s.bloqueado("ia.api_key") && prov != iaproveedor.Ollama && iaproveedor.MismoDestino(cfg.LLMBaseURL, s.App.Config().LLMBaseURL) {
 		cfg.LLMAPIKey = s.App.Config().LLMAPIKey
 	}
 	p, _ := iaproveedor.Por(prov)
@@ -186,8 +186,8 @@ func (s *Server) probarIA(w http.ResponseWriter, r *http.Request, cambios map[st
 }
 
 // prepararCambiosIA controla, antes de guardar, que el proveedor y la URL vayan juntos, y saca la
-// clave guardada si cambia el host sin una clave nueva (no tiene que viajar a otro lado) o si el
-// proveedor es Ollama. Si algo está mal, responde y devuelve false.
+// clave guardada si cambia el host sin una clave nueva (no tiene que viajar a otro lado; una región
+// de OpenAI no es otro lado) o si el proveedor es Ollama. Si algo está mal, responde y devuelve false.
 func (s *Server) prepararCambiosIA(w http.ResponseWriter, cambios map[string]json.RawMessage) bool {
 	toca := false
 	for k := range cambios {
@@ -209,7 +209,7 @@ func (s *Server) prepararCambiosIA(w http.ResponseWriter, cambios map[string]jso
 		return true
 	}
 	prov := iaproveedor.Efectivo(previa.IAProveedor, previa.LLMBaseURL)
-	if prov == iaproveedor.Ollama || (previa.LLMBaseURL != "" && !iaproveedor.MismoHost(previa.LLMBaseURL, actual.LLMBaseURL)) {
+	if prov == iaproveedor.Ollama || (previa.LLMBaseURL != "" && !iaproveedor.MismoDestino(previa.LLMBaseURL, actual.LLMBaseURL)) {
 		cambios["ia.api_key"] = json.RawMessage("null")
 	}
 	return true

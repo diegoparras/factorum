@@ -108,6 +108,9 @@ func TestDeducir(t *testing.T) {
 	if !MismoHost("https://api.openai.com/v1", "https://API.openai.com/v1/") || MismoHost("https://api.openai.com/v1", "https://eu.api.openai.com/v1") || MismoHost("", "") {
 		t.Error("MismoHost")
 	}
+	if !MismoDestino("https://eu.api.openai.com/v1", "https://api.openai.com/v1") || MismoDestino("https://api.anthropic.com/v1", "https://api.openai.com/v1") || MismoDestino("https://api.openai.com.ejemplo.com/v1", "https://api.openai.com/v1") {
+		t.Error("MismoDestino")
+	}
 }
 
 func TestRecomendados(t *testing.T) {

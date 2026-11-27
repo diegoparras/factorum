@@ -158,9 +158,13 @@ func TestModelosIA(t *testing.T) {
 	if _, m := sup.pedir("POST", "/api/ia/modelos", map[string]any{"proveedor": "openai"}); m["exito"] != true || m["clave_guardada"] != true {
 		t.Errorf("con la clave guardada: %v", m)
 	}
-	antes := prov.lista.Load()
-	if _, m := sup.pedir("POST", "/api/ia/modelos", map[string]any{"proveedor": "openai", "url": "https://eu.api.openai.com/v1"}); m["exito"] != false || m["motivo"] != "sin_clave" || prov.lista.Load() != antes {
-		t.Errorf("la clave guardada no va a otro host (ni a otra región): %v", m)
+	// Otra región de OpenAI es la misma cuenta: la clave guardada sirve.
+	if _, m := sup.pedir("POST", "/api/ia/modelos", map[string]any{"proveedor": "openai", "url": "https://eu.api.openai.com/v1"}); m["exito"] != true || m["clave_guardada"] != true {
+		t.Errorf("la clave guardada en otra región de OpenAI: %v", m)
+	}
+	// A OpenRouter no le llega la clave de OpenAI (el de mentira pide la clave: dice que falta).
+	if _, m := sup.pedir("POST", "/api/ia/modelos", map[string]any{"proveedor": "openrouter"}); m["exito"] != false || m["motivo"] != "sin_clave" || m["clave_guardada"] != false {
+		t.Errorf("OpenRouter con la clave de OpenAI: %v", m)
 	}
 	if _, m := sup.pedir("POST", "/api/ia/modelos", map[string]any{"proveedor": "otro", "url": "https://gateway.ejemplo.com/v1"}); m["exito"] != false || m["motivo"] != "sin_clave" || m["mensaje"] != "El servidor pide una clave: escribila para ver sus modelos" {
 		t.Errorf("a otro host, sin clave: %v", m)
@@ -316,6 +320,11 @@ func TestGuardarProveedorIA(t *testing.T) {
 	// Otro modelo, mismo host: la clave sigue.
 	if st, _ := sup.pedir("PUT", "/api/configuracion", map[string]any{"cambios": map[string]any{"ia.modelo": "gpt-6.1-terra"}}); st != 200 || e.app.Config().LLMAPIKey != claveIA {
 		t.Fatalf("otro modelo: %d", st)
+	}
+	// Otra región de OpenAI: la misma cuenta, la clave sigue (y se acepta el aviso de ese host).
+	eu := map[string]any{"host": "eu.api.openai.com", "version": avisoia.Version}
+	if st, m := sup.pedir("PUT", "/api/configuracion", map[string]any{"cambios": map[string]any{"ia.url": "https://eu.api.openai.com/v1"}, "aceptar_aviso_ia": eu}); st != 200 || e.app.Config().LLMAPIKey != claveIA {
+		t.Fatalf("región de OpenAI: %d %v", st, m)
 	}
 	// Un proveedor con otra URL: no se guarda.
 	if st, m := sup.pedir("PUT", "/api/configuracion", map[string]any{"cambios": map[string]any{"ia.proveedor": "anthropic"}}); st != 400 || !strings.Contains(m["error"].(string), "no es de Anthropic") {

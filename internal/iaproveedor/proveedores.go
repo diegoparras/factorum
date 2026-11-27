@@ -177,9 +177,17 @@ func Efectivo(elegido, base string) string {
 	return Deducir(base)
 }
 
-// MismoHost dice si dos URLs apuntan al mismo host (y puerto). Una clave guardada solo se manda al
-// host para el que se guardó.
+// MismoHost dice si dos URLs apuntan al mismo host (y puerto).
 func MismoHost(a, b string) bool {
 	da, db := avisoia.Detectar(a), avisoia.Detectar(b)
 	return da.Host != "" && da.Host == db.Host
+}
+
+// MismoDestino dice si una clave guardada para la URL b puede ir a la URL a: el mismo host o, en
+// OpenAI, otra de sus regiones (la clave es la misma). A ningún otro lado.
+func MismoDestino(a, b string) bool {
+	if MismoHost(a, b) {
+		return true
+	}
+	return avisoia.Detectar(a).Proveedor == avisoia.OpenAI && avisoia.Detectar(b).Proveedor == avisoia.OpenAI
 }

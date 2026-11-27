@@ -73,7 +73,53 @@ type Config struct {
 	WhatsAppPermitidos []string // teléfonos (solo dígitos); vacío = nadie
 	WebhookToken       string
 	WebhookSalidaURL   string
-	CanalClienteCUIT   map[string]string // remitente -> CUIT del cliente (FACTORUM_CANAL_CLIENTES="5491155550000=20222222223,...")
+	CanalClienteCUIT   map[string]string // remitente -> CUIT del cliente (FACTORUM_CANAL_CLIENTES="5491155550000=20222222223,..."); también emails y @dominio
+
+	// Correo entrante: una sola forma a la vez.
+	CorreoForma      string   // imap (por defecto), cloudflare, proveedor, gmail o apagado
+	CorreoProveedor  string   // mailgun, postmark o sendgrid (con la forma proveedor)
+	CorreoPermitidos []string // emails o @dominio; vacío = todo queda retenido
+	CorreoMaxMB      int      // tope por mail
+	CorreoContestar  bool     // contestarle al remitente cuando termina el lote
+
+	IMAPHost             string
+	IMAPPuerto           int
+	IMAPTLS              string // implicito, starttls o ninguno
+	IMAPUsuario          string
+	IMAPClave            string
+	IMAPCarpeta          string
+	IMAPIntervalo        int    // segundos entre vueltas
+	IMAPProcesado        string // leido o mover
+	IMAPCarpetaProcesado string
+
+	CloudflareSecreto string // el secreto compartido con el Email Worker
+	MailgunClave      string // la HTTP webhook signing key de Mailgun
+	ProveedorToken    string // el de la URL de Postmark y SendGrid
+
+	GoogleClienteID      string
+	GoogleClienteSecreto string
+	GoogleRefreshToken   string // lo guarda «Conectar con Google», cifrado
+	GoogleCuenta         string // el email de la cuenta conectada
+	GmailEtiqueta        string
+	GmailProcesado       string // quitar o leido
+	GmailIntervalo       int
+
+	// Correo saliente.
+	SMTPHost       string
+	SMTPPuerto     int
+	SMTPTLS        string // starttls, implicito o ninguno
+	SMTPUsuario    string
+	SMTPClave      string
+	SMTPRemitente  string // Factorum <facturas@estudio.com.ar>
+	SMTPResponderA string
+
+	// Avisos por mail.
+	AvisoLote     bool
+	AvisoLoteA    []string // si quien cargó no tiene email (chats, correo, API)
+	AvisoAlertas  bool     // apócrifos y posibles adulteraciones, a los admins
+	AvisoAlertasA []string
+	AvisoSemanal  bool // lunes 8:00, hora de Buenos Aires
+	AvisoSemanalA []string
 }
 
 func env(k, def string) string {
@@ -157,6 +203,49 @@ func Leer() (*Config, error) {
 		WebhookToken:       env("FACTORUM_WEBHOOK_TOKEN", ""),
 		WebhookSalidaURL:   env("FACTORUM_WEBHOOK_SALIDA_URL", ""),
 		CanalClienteCUIT:   map[string]string{},
+
+		CorreoForma:      strings.ToLower(env("FACTORUM_CORREO_FORMA", "imap")),
+		CorreoProveedor:  strings.ToLower(env("FACTORUM_CORREO_PROVEEDOR", "mailgun")),
+		CorreoPermitidos: lista("FACTORUM_CORREO_PERMITIDOS"),
+		CorreoMaxMB:      envInt("FACTORUM_CORREO_MAX_MB", 25),
+		CorreoContestar:  envBool("FACTORUM_CORREO_CONTESTAR", true),
+
+		IMAPHost:             env("FACTORUM_IMAP_HOST", ""),
+		IMAPPuerto:           envInt("FACTORUM_IMAP_PUERTO", 993),
+		IMAPTLS:              strings.ToLower(env("FACTORUM_IMAP_TLS", "implicito")),
+		IMAPUsuario:          env("FACTORUM_IMAP_USUARIO", ""),
+		IMAPClave:            env("FACTORUM_IMAP_CLAVE", ""),
+		IMAPCarpeta:          env("FACTORUM_IMAP_CARPETA", "INBOX"),
+		IMAPIntervalo:        envInt("FACTORUM_IMAP_INTERVALO", 60),
+		IMAPProcesado:        strings.ToLower(env("FACTORUM_IMAP_PROCESADO", "leido")),
+		IMAPCarpetaProcesado: env("FACTORUM_IMAP_CARPETA_PROCESADO", "Factorum"),
+
+		CloudflareSecreto: env("FACTORUM_CLOUDFLARE_SECRETO", ""),
+		MailgunClave:      env("FACTORUM_MAILGUN_SIGNING_KEY", ""),
+		ProveedorToken:    env("FACTORUM_CORREO_TOKEN", ""),
+
+		GoogleClienteID:      env("FACTORUM_GOOGLE_CLIENT_ID", ""),
+		GoogleClienteSecreto: env("FACTORUM_GOOGLE_CLIENT_SECRET", ""),
+		GoogleRefreshToken:   env("FACTORUM_GOOGLE_REFRESH_TOKEN", ""),
+		GoogleCuenta:         env("FACTORUM_GOOGLE_CUENTA", ""),
+		GmailEtiqueta:        env("FACTORUM_GMAIL_ETIQUETA", "Facturas"),
+		GmailProcesado:       strings.ToLower(env("FACTORUM_GMAIL_PROCESADO", "quitar")),
+		GmailIntervalo:       envInt("FACTORUM_GMAIL_INTERVALO", 60),
+
+		SMTPHost:       env("FACTORUM_SMTP_HOST", ""),
+		SMTPPuerto:     envInt("FACTORUM_SMTP_PUERTO", 587),
+		SMTPTLS:        strings.ToLower(env("FACTORUM_SMTP_TLS", "starttls")),
+		SMTPUsuario:    env("FACTORUM_SMTP_USUARIO", ""),
+		SMTPClave:      env("FACTORUM_SMTP_CLAVE", ""),
+		SMTPRemitente:  env("FACTORUM_SMTP_REMITENTE", ""),
+		SMTPResponderA: env("FACTORUM_SMTP_RESPONDER_A", ""),
+
+		AvisoLote:     envBool("FACTORUM_AVISO_LOTE", false),
+		AvisoLoteA:    lista("FACTORUM_AVISO_LOTE_A"),
+		AvisoAlertas:  envBool("FACTORUM_AVISO_ALERTAS", true),
+		AvisoAlertasA: lista("FACTORUM_AVISO_ALERTAS_A"),
+		AvisoSemanal:  envBool("FACTORUM_AVISO_SEMANAL", false),
+		AvisoSemanalA: lista("FACTORUM_AVISO_SEMANAL_A"),
 	}
 	for _, par := range lista("FACTORUM_CANAL_CLIENTES") {
 		if k, v, ok := strings.Cut(par, "="); ok {
@@ -196,14 +285,75 @@ func (c *Config) Validar() error {
 	if c.LLMBaseURL != "" && c.LLMModelo == "" {
 		return fmt.Errorf("con la URL del modelo de visión hace falta el modelo (por ejemplo qwen2.5vl:7b)")
 	}
+	return c.validarCorreo()
+}
+
+// uno: el valor vacío (el de fábrica) o uno de los de la lista.
+func uno(v string, ok ...string) bool {
+	if v == "" {
+		return true
+	}
+	for _, x := range ok {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+func entre(v, desde, hasta int) bool { return v == 0 || (v >= desde && v <= hasta) }
+
+// validarCorreo controla el correo. Un cero o un vacío es «el de fábrica».
+func (c *Config) validarCorreo() error {
+	switch {
+	case !uno(c.CorreoForma, "imap", "cloudflare", "proveedor", "gmail", "apagado"):
+		return fmt.Errorf("la forma del correo entrante tiene que ser imap, cloudflare, proveedor, gmail o apagado")
+	case !uno(c.CorreoProveedor, "mailgun", "postmark", "sendgrid"):
+		return fmt.Errorf("el proveedor de correo tiene que ser mailgun, postmark o sendgrid")
+	case !uno(c.IMAPTLS, "implicito", "starttls", "ninguno"), !uno(c.SMTPTLS, "implicito", "starttls", "ninguno"):
+		return fmt.Errorf("el TLS del correo tiene que ser implicito, starttls o ninguno")
+	case !uno(c.IMAPProcesado, "leido", "mover"):
+		return fmt.Errorf("lo procesado en IMAP se marca como leído (leido) o se mueve (mover)")
+	case !uno(c.GmailProcesado, "quitar", "leido"):
+		return fmt.Errorf("lo procesado en Gmail se queda sin la etiqueta (quitar) o se marca como leído (leido)")
+	case !entre(c.IMAPPuerto, 1, 65535), !entre(c.SMTPPuerto, 1, 65535):
+		return fmt.Errorf("el puerto tiene que estar entre 1 y 65535")
+	case !entre(c.IMAPIntervalo, 15, 3600), !entre(c.GmailIntervalo, 15, 3600):
+		return fmt.Errorf("cada cuánto se mira el correo: entre 15 y 3600 segundos")
+	case !entre(c.CorreoMaxMB, 1, 100):
+		return fmt.Errorf("el tope por mail tiene que estar entre 1 y 100 MB")
+	}
 	return nil
 }
+
+// FormaCorreo es la forma del correo entrante (imap si no se eligió).
+func (c *Config) FormaCorreo() string {
+	if c.CorreoForma == "" {
+		return "imap"
+	}
+	return c.CorreoForma
+}
+
+// MaxMail es el tope de un mail entero, en bytes.
+func (c *Config) MaxMail() int64 {
+	if c.CorreoMaxMB <= 0 {
+		return 25 << 20
+	}
+	return int64(c.CorreoMaxMB) << 20
+}
+
+// SMTPConfigurado dice si se pueden mandar mails.
+func (c *Config) SMTPConfigurado() bool { return c.SMTPHost != "" && c.SMTPRemitente != "" }
 
 // Clonar copia la configuración, con sus listas y mapas.
 func (c *Config) Clonar() *Config {
 	n := *c
 	n.TelegramPermitidos = append([]string(nil), c.TelegramPermitidos...)
 	n.WhatsAppPermitidos = append([]string(nil), c.WhatsAppPermitidos...)
+	n.CorreoPermitidos = append([]string(nil), c.CorreoPermitidos...)
+	n.AvisoLoteA = append([]string(nil), c.AvisoLoteA...)
+	n.AvisoAlertasA = append([]string(nil), c.AvisoAlertasA...)
+	n.AvisoSemanalA = append([]string(nil), c.AvisoSemanalA...)
 	n.CanalClienteCUIT = make(map[string]string, len(c.CanalClienteCUIT))
 	for k, v := range c.CanalClienteCUIT {
 		n.CanalClienteCUIT[k] = v

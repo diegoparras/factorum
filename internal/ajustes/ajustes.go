@@ -38,7 +38,16 @@ const (
 	Secreto  Tipo = "secreto"  // nunca sale completo por la API
 	CUIT     Tipo = "cuit"     // un CUIT válido o vacío
 	Clientes Tipo = "clientes" // remitente -> CUIT de cliente
+	Entero   Tipo = "entero"   // un número entre Min y Max
+	Opcion   Tipo = "opcion"   // uno de Opciones
+	Emails   Tipo = "emails"   // lista de emails (o @dominio, si se permite)
 )
+
+// OpcionCampo es un valor posible de un campo de tipo opción.
+type OpcionCampo struct {
+	Valor    string `json:"valor"`
+	Etiqueta string `json:"etiqueta"`
+}
 
 // Campo es un valor configurable.
 type Campo struct {
@@ -49,6 +58,13 @@ type Campo struct {
 	Env      string `json:"env"`
 	Ayuda    string `json:"ayuda,omitempty"`
 	Ejemplo  string `json:"ejemplo,omitempty"`
+
+	Opciones []OpcionCampo `json:"opciones,omitempty"`
+	Min      int           `json:"min,omitempty"`
+	Max      int           `json:"max,omitempty"`
+	Dominios bool          `json:"dominios,omitempty"` // emails: también acepta @dominio
+	// Interno: lo guarda Factorum (por ejemplo, el permiso de Google), no la pantalla.
+	Interno bool `json:"-"`
 
 	get func(*config.Config) any
 	set func(*config.Config, any)
@@ -66,12 +82,28 @@ func lista(get func(*config.Config) *[]string) (func(*config.Config) any, func(*
 	return func(c *config.Config) any { return slices.Clone(*get(c)) }, func(c *config.Config, v any) { *get(c) = slices.Clone(v.([]string)) }
 }
 
+func entero(get func(*config.Config) *int) (func(*config.Config) any, func(*config.Config, any)) {
+	return func(c *config.Config) any { return *get(c) }, func(c *config.Config, v any) { *get(c) = v.(int) }
+}
+
+func numero(clave, seccion, etiqueta, env, ayuda string, min, max int, g func(*config.Config) any, s func(*config.Config, any)) Campo {
+	c := campo(clave, seccion, etiqueta, Entero, env, ayuda, "", g, s)
+	c.Min, c.Max = min, max
+	return c
+}
+
+func opcion(clave, seccion, etiqueta, env, ayuda string, ops []OpcionCampo, g func(*config.Config) any, s func(*config.Config, any)) Campo {
+	c := campo(clave, seccion, etiqueta, Opcion, env, ayuda, "", g, s)
+	c.Opciones = ops
+	return c
+}
+
 func campo(clave, seccion, etiqueta string, tipo Tipo, env, ayuda, ejemplo string, g func(*config.Config) any, s func(*config.Config, any)) Campo {
 	return Campo{Clave: clave, Seccion: seccion, Etiqueta: etiqueta, Tipo: tipo, Env: env, Ayuda: ayuda, Ejemplo: ejemplo, get: g, set: s}
 }
 
 // Secciones, en el orden de la pantalla.
-var Secciones = []string{"general", "arcanum", "telegram", "whatsapp", "webhook", "ia", "r2", "clientes"}
+var Secciones = []string{"general", "arcanum", "telegram", "whatsapp", "webhook", "correo_entrada", "correo_salida", "avisos", "ia", "r2", "clientes"}
 
 // Campos es todo lo que se configura desde la pantalla.
 var Campos = func() []Campo {
@@ -130,8 +162,10 @@ var Campos = func() []Campo {
 	g, s = texto(func(c *config.Config) *string { return &c.R2Prefijo })
 	add(campo("r2.prefijo", "r2", "Prefijo", Texto, "FACTORUM_R2_PREFIJO", "Carpeta dentro del bucket.", "factorum/", g, s))
 
+	camposCorreo(add)
+
 	add(campo("clientes.canales", "clientes", "Remitente y CUIT del cliente", Clientes, "FACTORUM_CANAL_CLIENTES",
-		"Lo que llega por chat de ese número o usuario se carga para ese cliente.", "5491155550000 = 20-22222222-3",
+		"Lo que llega por chat o por mail de ese número, usuario, email o @dominio se carga para ese cliente.", "5491155550000 = 20-22222222-3",
 		func(c *config.Config) any { return maps.Clone(c.CanalClienteCUIT) },
 		func(c *config.Config, v any) { c.CanalClienteCUIT = maps.Clone(v.(map[string]string)) }))
 	return cs
@@ -285,6 +319,9 @@ func (s *Servicio) Vista() []VistaCampo {
 	c := s.Actual()
 	res := make([]VistaCampo, 0, len(Campos))
 	for _, cp := range Campos {
+		if cp.Interno {
+			continue
+		}
 		v := VistaCampo{Campo: cp, Bloqueado: s.Bloqueado(cp), Origen: "defecto"}
 		f, guardado := g[cp.Clave]
 		switch {
@@ -317,6 +354,8 @@ func vacio(v any) bool {
 		return len(x) == 0
 	case map[string]string:
 		return len(x) == 0
+	case int:
+		return x == 0
 	case bool:
 		return false
 	}
@@ -492,6 +531,56 @@ func decodificar(c Campo, raw json.RawMessage) (any, error) {
 			}
 		}
 		return res, nil
+	case Entero:
+		var n int
+		if err := json.Unmarshal(raw, &n); err != nil {
+			var t string
+			if json.Unmarshal(raw, &t) != nil {
+				return nil, mal("tiene que ser un número")
+			}
+			if _, err := fmt.Sscan(strings.TrimSpace(t), &n); err != nil {
+				return nil, mal("tiene que ser un número")
+			}
+		}
+		if (c.Min != 0 || c.Max != 0) && (n < c.Min || n > c.Max) {
+			return nil, mal(fmt.Sprintf("tiene que estar entre %d y %d", c.Min, c.Max))
+		}
+		return n, nil
+	case Opcion:
+		var v string
+		if err := json.Unmarshal(raw, &v); err != nil {
+			return nil, mal("tiene que ser un texto")
+		}
+		v = strings.ToLower(strings.TrimSpace(v))
+		for _, o := range c.Opciones {
+			if o.Valor == v {
+				return v, nil
+			}
+		}
+		var ops []string
+		for _, o := range c.Opciones {
+			ops = append(ops, o.Valor)
+		}
+		return nil, mal("tiene que ser " + strings.Join(ops, ", "))
+	case Emails:
+		l, err := decodificar(Campo{Tipo: Lista, Etiqueta: c.Etiqueta}, raw)
+		if err != nil {
+			return nil, err
+		}
+		res := []string{}
+		for _, x := range l.([]string) {
+			x = strings.ToLower(x)
+			if !emailValido(x, c.Dominios) {
+				if c.Dominios {
+					return nil, mal(fmt.Sprintf("%q no es un email ni un @dominio", x))
+				}
+				return nil, mal(fmt.Sprintf("%q no es un email", x))
+			}
+			if !slices.Contains(res, x) {
+				res = append(res, x)
+			}
+		}
+		return res, nil
 	case Clientes:
 		m := map[string]string{}
 		var obj map[string]string
@@ -519,6 +608,9 @@ func decodificar(c Campo, raw json.RawMessage) (any, error) {
 		sort.Strings(keys)
 		for _, k := range keys {
 			rem := strings.TrimSpace(k)
+			if strings.Contains(rem, "@") {
+				rem = strings.ToLower(rem) // los emails no distinguen mayúsculas
+			}
 			cuit := arca.SoloDigitos(obj[k])
 			if rem == "" {
 				return nil, mal("falta el remitente")

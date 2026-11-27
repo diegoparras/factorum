@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/diegoparras/factorum/internal/config"
+	"github.com/diegoparras/factorum/internal/store"
 )
 
 func TestDecodificar(t *testing.T) {
@@ -31,6 +32,19 @@ func TestDecodificar(t *testing.T) {
 		{"clientes.canales", `"5491155550000 = 20-22222222-3\n@ana=30711111111"`, true},
 		{"clientes.canales", `"5491155550000 = 1"`, false},
 		{"clientes.canales", `{"x":"20222222223"}`, true},
+		{"clientes.canales", `"Juan@Cliente.com = 20-22222222-3\n@cliente.com = 30711111111"`, true},
+		{"imap.puerto", `993`, true},
+		{"imap.puerto", `"143"`, true},
+		{"imap.puerto", `70000`, false},
+		{"imap.intervalo", `5`, false},
+		{"imap.tls", `"STARTTLS"`, true},
+		{"imap.tls", `"ssl"`, false},
+		{"correo.forma", `"gmail"`, true},
+		{"correo.forma", `"pop3"`, false},
+		{"correo.permitidos", `"Juan@Cliente.com\n@proveedor.com.ar"`, true},
+		{"correo.permitidos", `"juan"`, false},
+		{"avisos.lote_a", `"a@b.com, c@d.com"`, true},
+		{"avisos.lote_a", `"@dominio.com"`, false},
 	}
 	for _, c := range casos {
 		v, err := decodificar(campoDe(c.clave), json.RawMessage(c.valor))
@@ -48,6 +62,14 @@ func TestDecodificar(t *testing.T) {
 	v, _ = decodificar(campoDe("telegram.permitidos"), json.RawMessage(`"1, 2\n3, 2"`))
 	if l := v.([]string); len(l) != 3 {
 		t.Errorf("lista: %v", l)
+	}
+	v, _ = decodificar(campoDe("correo.permitidos"), json.RawMessage(`"Juan@Cliente.com, juan@cliente.com"`))
+	if l := v.([]string); len(l) != 1 || l[0] != "juan@cliente.com" {
+		t.Errorf("permitidos: %v", l)
+	}
+	v, _ = decodificar(campoDe("imap.puerto"), json.RawMessage(`"143"`))
+	if v != 143 {
+		t.Errorf("puerto: %v", v)
 	}
 	v, _ = decodificar(campoDe("clientes.canales"), json.RawMessage(`"a = 20-22222222-3"`))
 	if m := v.(map[string]string); m["a"] != "20222222223" {
@@ -71,6 +93,14 @@ func TestCamposCompletos(t *testing.T) {
 			t.Errorf("%s: sección desconocida %s", cp.Clave, cp.Seccion)
 		}
 		_ = cp.get(c)
+	}
+	// Lo interno (el permiso de Google) no se muestra.
+	srv := &Servicio{base: c, Getenv: func(string) string { return "" }, guardado: map[string]store.FilaConfig{}}
+	srv.actual.Store(c)
+	for _, v := range srv.Vista() {
+		if v.Interno {
+			t.Errorf("%s es interno y aparece en la vista", v.Clave)
+		}
 	}
 	if ultimos("corto") != "" || ultimos("123456789012abcd") != "abcd" {
 		t.Error("últimos 4")

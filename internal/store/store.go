@@ -114,6 +114,7 @@ type Lote struct {
 	Procesados   int            `json:"procesados"`
 	ConError     int            `json:"con_error"`
 	Comprobantes map[string]int `json:"comprobantes"`
+	CreadoPor    *int64         `json:"-"`
 }
 
 type Documento struct {
@@ -212,12 +213,17 @@ func codigosTique() []int32 {
 type LoteNuevo struct {
 	Nombre, ClienteCUIT, Origen, Canal, Chat string
 	IA, Constatar                            bool
+	CreadoPor                                int64 // la persona que lo cargó desde la pantalla (0 = nadie: chat, correo, API)
 }
 
 func (s *Store) CrearLote(ctx context.Context, tx pgx.Tx, n LoteNuevo) (int64, error) {
 	var id int64
-	err := tx.QueryRow(ctx, `INSERT INTO lotes (nombre, cliente_cuit, origen, canal, chat, ia, constatar)
-		VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`, n.Nombre, n.ClienteCUIT, n.Origen, n.Canal, n.Chat, n.IA, n.Constatar).Scan(&id)
+	var por any
+	if n.CreadoPor > 0 {
+		por = n.CreadoPor
+	}
+	err := tx.QueryRow(ctx, `INSERT INTO lotes (nombre, cliente_cuit, origen, canal, chat, ia, constatar, creado_por)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`, n.Nombre, n.ClienteCUIT, n.Origen, n.Canal, n.Chat, n.IA, n.Constatar, por).Scan(&id)
 	return id, err
 }
 
@@ -234,7 +240,7 @@ func (s *Store) LoteAbiertoDeChat(ctx context.Context, tx pgx.Tx, canal, chat st
 	return id, err
 }
 
-const selLote = `SELECT l.id, l.nombre, l.cliente_cuit, l.origen, coalesce(l.canal,''), coalesce(l.chat,''), l.ia, l.constatar, l.creado, l.actualizado, l.terminado,
+const selLote = `SELECT l.id, l.nombre, l.cliente_cuit, l.origen, coalesce(l.canal,''), coalesce(l.chat,''), l.ia, l.constatar, l.creado, l.actualizado, l.terminado, l.creado_por,
 	(SELECT count(*) FROM documentos d WHERE d.lote_id=l.id),
 	(SELECT count(*) FROM documentos d WHERE d.lote_id=l.id AND d.estado NOT IN ('pendiente','procesando')),
 	(SELECT count(*) FROM documentos d WHERE d.lote_id=l.id AND d.estado='error'),
@@ -244,7 +250,7 @@ const selLote = `SELECT l.id, l.nombre, l.cliente_cuit, l.origen, coalesce(l.can
 func scanLote(r pgx.Row) (*Lote, error) {
 	var l Lote
 	var cb []byte
-	if err := r.Scan(&l.ID, &l.Nombre, &l.ClienteCUIT, &l.Origen, &l.Canal, &l.Chat, &l.IA, &l.Constatar, &l.Creado, &l.Actualizado, &l.Terminado,
+	if err := r.Scan(&l.ID, &l.Nombre, &l.ClienteCUIT, &l.Origen, &l.Canal, &l.Chat, &l.IA, &l.Constatar, &l.Creado, &l.Actualizado, &l.Terminado, &l.CreadoPor,
 		&l.Documentos, &l.Procesados, &l.ConError, &cb); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNoEncontrado

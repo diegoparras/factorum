@@ -87,17 +87,27 @@
   </button>
   <a class="logo-link" data-accion="ir" data-vista="inicio"><img class="logo-img" src="logo.svg" alt="" width="30" height="30"><h1 class="nombre-inst">Factorum</h1></a>
   <span class="crumb" id="crumb"></span>
-  <span class="sp"></span>
+  <div class="buscador-wrap">
+    <button type="button" class="buscador-btn" id="buscadorBtn" data-accion="buscar" aria-haspopup="dialog" aria-keyshortcuts="Control+K Meta+K">
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <span class="buscador-ph">Buscar comprobante, CUIT, proveedor, lote o ajuste</span>
+      <span class="buscador-kbd" aria-hidden="true"><kbd class="kbd-mod">Ctrl</kbd><kbd>K</kbd></span>
+    </button>
+  </div>
   <span class="estado-chip" id="saludChip"></span>
+  <button class="icon-btn plano buscar-movil" type="button" data-accion="buscar" aria-label="Buscar en Factorum" aria-haspopup="dialog">
+    <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+  </button>
   <div class="menu-wrap hidden" id="suiteWrap">
-    <button class="icon-btn plano" type="button" data-accion="suite" aria-label="Otras apps de la suite" aria-haspopup="true" title="Suite Escriba">
+    <button class="icon-btn plano" type="button" data-accion="suite" aria-label="Apps de la suite Escriba" aria-haspopup="true" aria-expanded="false" id="suiteBtn" title="Suite Escriba">
       <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><rect x="4" y="4" width="4" height="4" rx="1"/><rect x="10" y="4" width="4" height="4" rx="1"/><rect x="16" y="4" width="4" height="4" rx="1"/><rect x="4" y="10" width="4" height="4" rx="1"/><rect x="10" y="10" width="4" height="4" rx="1"/><rect x="16" y="10" width="4" height="4" rx="1"/><rect x="4" y="16" width="4" height="4" rx="1"/><rect x="10" y="16" width="4" height="4" rx="1"/><rect x="16" y="16" width="4" height="4" rx="1"/></svg>
     </button>
     <div class="menu menu-right hidden" id="suiteMenu"></div>
   </div>
   <div class="menu-wrap">
-    <button class="icon-btn plano" type="button" data-accion="menu" aria-label="Menú" aria-haspopup="true">
-      <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="19" r="1.7"/></svg>
+    <button class="yo-btn" type="button" id="yoBtn" data-accion="menu" aria-label="Tu cuenta y el menú" aria-haspopup="true" aria-expanded="false">
+      <span class="avatar chico" id="yoAvatar" aria-hidden="true"></span>
+      <span class="yo-txt" aria-hidden="true"><span class="yo-nombre" id="yoNombre"></span><span class="yo-rol" id="yoRol"></span></span>
     </button>
     <div class="menu menu-right hidden" id="menu"></div>
   </div>
@@ -284,10 +294,45 @@
     </section>
 
     <!-- Configuración -->
-    <section class="vista hidden" id="v-configuracion">
-      <div class="cabecera"><div><h2>Configuración</h2><p class="sub" id="confSub">Todo lo que antes iba en variables de entorno. Lo que fija el servidor gana y aparece bloqueado. Al guardar, se aplica sin reiniciar.</p></div></div>
-      <nav class="saltos" id="confSaltos" aria-label="Secciones de la configuración"></nav>
-      <div id="configuracion"></div>
+    <section class="vista hidden" id="v-configuracion" data-movil="lista">
+      <div class="conf-cab" id="confCab">
+        <div class="conf-cab-tit"><h2>Configuración</h2><p class="sub" id="confSub">Los cambios se aplican sin reiniciar. Lo que fija el servidor aparece con candado.</p></div>
+        <div class="conf-cab-der" id="confCabDer">
+          <div class="conf-progreso" id="confProgreso"></div>
+          <div class="seg" role="group" aria-label="Qué mostrar">
+            <button type="button" aria-pressed="true" data-accion="confVer" data-ver="todo">Todo</button>
+            <button type="button" aria-pressed="false" data-accion="confVer" data-ver="pendientes" id="confVerPend">Pendientes</button>
+          </div>
+        </div>
+      </div>
+      <div class="conf-layout">
+        <nav class="conf-indice" id="confIndice" aria-label="Secciones de la configuración">
+          <label class="conf-filtro"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+            <input type="search" id="confFiltro" placeholder="Filtrar ajustes" aria-label="Filtrar ajustes" autocomplete="off" spellcheck="false"></label>
+          <div id="confIndiceLista"></div>
+          <div class="conf-leyenda" aria-hidden="true">
+            <span><span class="dot n-listo"></span>Listo</span>
+            <span><span class="dot n-falta"></span>Falta configurar</span>
+            <span><span class="dot n-apagado"></span>Apagado (opcional)</span>
+          </div>
+        </nav>
+        <div class="conf-cuerpo">
+          <div class="conf-movil" id="confMovil">
+            <label class="conf-filtro"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+              <input type="search" id="confFiltroMovil" placeholder="Buscar un ajuste" aria-label="Buscar un ajuste" autocomplete="off" spellcheck="false"></label>
+            <div id="confMovilLista"></div>
+          </div>
+          <button type="button" class="conf-volver" data-accion="confVolver"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 6-6 6 6 6"/></svg>Configuración</button>
+          <p class="conf-vacio hidden" id="confVacio" role="status"></p>
+          <div id="configuracion"></div>
+          <div class="conf-barra hidden" id="confBarra" role="region" aria-label="Cambios sin guardar">
+            <span class="conf-barra-punto" aria-hidden="true"></span>
+            <span class="conf-barra-txt" id="confBarraTxt" aria-live="polite"></span>
+            <button type="button" class="conf-barra-desc" data-accion="confDescartar">Descartar</button>
+            <button type="button" class="conf-barra-guardar" data-accion="confGuardar" id="confGuardar">Guardar cambios</button>
+          </div>
+        </div>
+      </div>
     </section>
 
     <!-- Usuarios -->
@@ -353,6 +398,44 @@
       <details id="revCorrecciones"><summary>Correcciones</summary><div></div></details>
     </div>
   </div>
+</div>
+
+<!-- Buscador (Ctrl+K) -->
+<div class="paleta-back hidden" id="paleta" data-accion="paletaFondo">
+  <div class="paleta" id="paletaCard" role="dialog" aria-modal="true" aria-label="Buscar en Factorum">
+    <div class="paleta-cab">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <input id="paletaQ" type="text" role="combobox" aria-expanded="true" aria-controls="paletaLista" aria-autocomplete="list" aria-label="Buscar"
+        placeholder="Comprobante, CUIT, proveedor, lote o ajuste" autocomplete="off" spellcheck="false" enterkeyhint="go">
+      <div class="paleta-chips" role="group" aria-label="Período de los comprobantes">
+        <button type="button" aria-pressed="true" data-accion="paletaPeriodo" data-periodo="">Todo</button>
+        <button type="button" aria-pressed="false" data-accion="paletaPeriodo" data-periodo="mes">Este mes</button>
+      </div>
+      <button type="button" class="icon-btn plano paleta-cerrar" data-accion="paletaCerrar" aria-label="Cerrar el buscador">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+      </button>
+    </div>
+    <div class="paleta-lista" id="paletaLista" role="listbox" aria-label="Resultados"></div>
+    <p class="paleta-estado" id="paletaEstado" role="status" aria-live="polite"></p>
+    <div class="paleta-pie" aria-hidden="true">
+      <span><kbd>↑</kbd><kbd>↓</kbd>moverse</span><span><kbd>Enter</kbd>abrir</span><span><kbd>Esc</kbd>cerrar</span>
+      <span class="paleta-pie-ayuda">Busca por número, CUIT, razón social, importe o nombre de un ajuste</span>
+    </div>
+  </div>
+</div>
+
+<!-- Guía de una sección de la configuración -->
+<div class="guia-back hidden" id="guia" data-accion="guiaFondo">
+  <aside class="guia" id="guiaCard" role="dialog" aria-modal="true" aria-labelledby="guiaTit" tabindex="-1">
+    <div class="guia-cab">
+      <span class="guia-ico" aria-hidden="true"></span>
+      <div><p class="guia-sup">Cómo se configura</p><h3 id="guiaTit"></h3></div>
+      <button type="button" class="icon-btn plano" data-accion="guiaCerrar" aria-label="Cerrar la guía">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+      </button>
+    </div>
+    <div class="guia-cuerpo" id="guiaCuerpo"></div>
+  </aside>
 </div>
 
 <!-- Ventana (Novedades, Acerca de, formularios) -->

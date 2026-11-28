@@ -50,13 +50,22 @@ const I = {
   globo: svg('<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.7 3.8 5.7 3.8 9s-1.3 6.3-3.8 9c-2.5-2.7-3.8-5.7-3.8-9S9.5 5.7 12 3z"/>'),
   reloj: svg('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.2 2"/>'),
   chip: svg('<rect x="7" y="7" width="10" height="10" rx="2"/><path d="M10 3.5V7M14 3.5V7M10 17v3.5M14 17v3.5M3.5 10H7M3.5 14H7M17 10h3.5M17 14h3.5"/><path d="M10.5 12h3"/>'),
+  lupa: svg('<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>'),
+  campana: svg('<path d="M6 8a6 6 0 1 1 12 0c0 7 3 8 3 8H3s3-1 3-8"/><path d="M10.3 20a2 2 0 0 0 3.4 0"/>'),
+  base: svg('<ellipse cx="12" cy="5.5" rx="7.5" ry="2.8"/><path d="M4.5 5.5v6c0 1.5 3.4 2.8 7.5 2.8s7.5-1.3 7.5-2.8v-6"/><path d="M4.5 11.5v6c0 1.5 3.4 2.8 7.5 2.8s7.5-1.3 7.5-2.8v-6"/>'),
+  correoSale: svg('<path d="M21 12V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h9"/><path d="M3.5 6.5l8.5 6 8.5-6"/><path d="M17 17h5M19.5 14.5 22 17l-2.5 2.5"/>'),
+  enlace: svg('<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>'),
+  guia: svg('<path d="M2 4h7a3 3 0 0 1 3 3v13a2 2 0 0 0-2-2H2z"/><path d="M22 4h-7a3 3 0 0 0-3 3v13a2 2 0 0 1 2-2h8z"/>'),
+  flecha: svg('<path d="M5 12h14"/><path d="m13 6 6 6-6 6"/>'),
+  mas: svg('<path d="M12 5v14M5 12h14"/>'),
+  edificio: svg('<path d="M3 21h18"/><path d="M5 21V8l7-5 7 5v13"/><path d="M9 21v-6h6v6"/>'),
 };
 
 // Cada sección dice qué permiso hace falta para verla (el servidor lo hace cumplir igual).
 const NAV_TODO = [
   ['Trabajo', [['inicio', 'Inicio'], ['revisar', 'Revisar'], ['retenido', 'Correo retenido', 'retenido'], ['verificar', 'Verificar'], ['subir', 'Cargar facturas', 'cargar']]],
   ['Datos', [['lotes', 'Lotes'], ['comprobantes', 'Comprobantes'], ['resumen', 'Resumen'], ['conciliacion', 'Conciliación'], ['libro_iva', 'Libro IVA Digital', 'libro_iva'], ['papelera', 'Papelera', 'papelera']]],
-  ['Configuración', [['configuracion', 'Configuración', 'clientes'], ['usuarios', 'Usuarios', 'usuarios'], ['claves', 'Claves de API', 'claves'],
+  ['Administración', [['configuracion', 'Configuración', 'clientes'], ['usuarios', 'Usuarios', 'usuarios'], ['claves', 'Claves de API', 'claves'],
     ['conectar', 'Conectar'], ['auditoria', 'Auditoría', 'auditoria']]],
 ];
 const VISTAS = NAV_TODO.flatMap((g) => g[1]);
@@ -66,7 +75,7 @@ const sinClientes = () => !!(YO && YO.permisos && YO.permisos.sin_clientes);
 const navVisible = () => (sinClientes() ? [['Trabajo', [['inicio', 'Inicio']]]]
   : NAV_TODO.map(([g, items]) => [g, items.filter((it) => puede(it[2]))]).filter(([, items]) => items.length));
 const vistaPermitida = (v) => (sinClientes() ? v === 'inicio' : VISTAS.some((it) => it[0] === v && puede(it[2])));
-const PENDIENTES = { error: 0, revisar: 0, retenido: 0 };
+const PENDIENTES = { error: 0, revisar: 0, retenido: 0, config: 0 }; // config: secciones que faltan configurar
 let OLVIDE = false; // el login ofrece «Olvidé mi contraseña» (hay correo saliente)
 let LOCKATUS = { listo: false, solo: false }; // el login ofrece «Entrar con Lockatus»; solo: no hay login con contraseña
 // Lo que vuelve del inicio de sesión con Lockatus cuando no se pudo entrar (?lockatus=...).
@@ -157,6 +166,7 @@ function pintarNav() {
   $('#nav').innerHTML = navVisible().map(([grupo, items]) => `<div class="nav-g">${grupo}</div>` + items.map(([id, t]) => {
     let badge = id === 'revisar' && pend ? `<span class="nav-badge${PENDIENTES.error ? ' err' : ''}" aria-label="${pend} pendientes">${pend > 999 ? '999+' : pend}</span>` : '';
     if (id === 'retenido' && PENDIENTES.retenido) badge = `<span class="nav-badge" aria-label="${PENDIENTES.retenido} retenidos">${PENDIENTES.retenido > 999 ? '999+' : PENDIENTES.retenido}</span>`;
+    if (id === 'configuracion' && PENDIENTES.config) badge = `<span class="nav-badge" aria-label="${PENDIENTES.config} por configurar">${PENDIENTES.config}</span>`;
     return `<button type="button" class="nav-it${id === vista ? ' active' : ''}" data-accion="ir" data-vista="${id}" title="${t}" aria-label="${t}"${id === vista ? ' aria-current="page"' : ''}>${I[id]}<span>${t}</span>${badge}</button>`;
   }).join('')).join('');
 }
@@ -182,6 +192,13 @@ function ir(v) {
   }
   if (v === 'canales') v = 'configuracion'; // la pantalla Canales pasó a Configuración
   if (!vistaPermitida(v)) v = 'inicio';
+  // Con cambios sin guardar en Configuración: a otra vista, solo si se confirma; a la misma, sin
+  // volver a cargarla (se perderían).
+  if (vista === 'configuracion' && hayCambiosConf()) {
+    if (v === 'configuracion') { irASeccionPedida(); return; }
+    if (!confirm(`${textoCambios(cambiosPendientes())}. Si salís, se pierden. ¿Salir igual?`)) return;
+  }
+  if (vista === 'configuracion' && v !== 'configuracion') dejarConfiguracion();
   vista = v;
   $$('.vista').forEach((s) => s.classList.toggle('hidden', s.id !== 'v-' + v));
   pintarNav();
@@ -232,10 +249,26 @@ function pintarMenu() {
     <div class="menu-sep"></div>
     ${id.tipo === 'sesion' && !(YO.cuenta && YO.cuenta.origen === 'lockatus') ? `<button class="menu-item" data-accion="miClave">${I.llave}<span>Cambiar mi contraseña</span></button>` : ''}
     <button class="menu-item" data-accion="tema">${dark ? I.sol : I.luna}<span>${dark ? 'Tema claro' : 'Tema oscuro'}</span></button>
+    <button class="menu-item" data-accion="buscar">${I.lupa}<span>Buscar</span><span class="mi-sub">${esMac ? '⌘' : 'Ctrl'} K</span></button>
     <button class="menu-item" data-accion="novedades">${I.novedades}<span>Novedades</span></button>
     <button class="menu-item" data-accion="acerca">${I.info}<span>Acerca de Factorum</span></button>
     <div class="menu-sep"></div>
     <button class="menu-item" data-accion="salir">${I.salir}<span>Cerrar sesión</span></button>`;
+}
+
+// pintarYo: quién entró y con qué rol, en la cabecera (el botón abre el menú de siempre).
+function pintarYo() {
+  const id = (YO && YO.identidad) || {};
+  const quien = id.nombre || id.email || (id.clave ? 'Clave ' + id.clave : 'Factorum');
+  $('#yoAvatar').textContent = iniciales(quien);
+  $('#yoNombre').textContent = String(id.nombre || id.email || '').split(/[\s@]/)[0];
+  $('#yoRol').textContent = String(ROLES[id.rol] || id.rol || '').toLowerCase();
+  $('#yoBtn').setAttribute('aria-label', `Tu cuenta: ${quien}, ${ROLES[id.rol] || id.rol || ''}. Abre el menú`);
+}
+
+function cerrarMenus() {
+  $('#menu').classList.add('hidden'); $('#suiteMenu').classList.add('hidden');
+  $('#yoBtn').setAttribute('aria-expanded', 'false'); $('#suiteBtn').setAttribute('aria-expanded', 'false');
 }
 
 async function cargarSalud() {
@@ -397,6 +430,7 @@ async function iniciarApp() {
     if (id.cuits && id.cuits.length) i.placeholder = id.cuits.length === 1 ? cuit(id.cuits[0]) : 'Elegí uno de tus clientes';
   }
   $('#loteCliente').closest('label').firstChild.textContent = id.cuits && id.cuits.length > 1 ? 'CUIT del cliente' : 'CUIT del cliente (opcional)';
+  pintarYo();
   await cargarSalud();
   pintarNav();
   // Con la contraseña temporal no se carga nada más hasta que la cambie (el servidor tampoco deja).
@@ -409,6 +443,7 @@ async function iniciarApp() {
   }
   actualizarPendientes();
   cargarSuite();
+  if (puede('configuracion') && vista !== 'configuracion') contarPendientesConf();
   verNovedades(false);
 }
 
@@ -1909,7 +1944,7 @@ function cerrarAvisoIA(ok) {
 }
 // El foco no sale del aviso mientras está abierto.
 function atraparFoco(ev, caja) {
-  const f = $$('button, a[href], summary, [tabindex]:not([tabindex="-1"])', caja).filter((x) => !x.disabled && x.offsetParent !== null);
+  const f = $$('button, a[href], summary, input:not([type=hidden]), select, textarea, [tabindex]:not([tabindex="-1"])', caja).filter((x) => !x.disabled && x.offsetParent !== null);
   if (!f.length) { ev.preventDefault(); return; }
   const primero = f[0], ultimo = f[f.length - 1];
   if (ev.shiftKey && (document.activeElement === primero || document.activeElement === caja)) { ev.preventDefault(); ultimo.focus(); }
@@ -1936,6 +1971,7 @@ async function confirmarIAPersona() {
 // Desde Configuración: aceptar el aviso de la IA que fija el entorno (no hay nada más que guardar).
 async function aceptarAvisoIA(btn) {
   const a = CONF && CONF.ia_aviso;
+  if (!confirmarDescartar()) return;
   if (!a || !(await abrirAvisoIA(a, 'admin'))) return;
   if (btn) btn.disabled = true;
   try {
@@ -2270,7 +2306,8 @@ async function probarIA(btn) {
   const cambios = cambiosIA(true);
   const prov = iaProvDe(iaEl('ia.proveedor').value);
   if (!prov) { caja.className = 'prueba mal'; caja.innerHTML = `${I.alerta}<span>Elegí un proveedor.</span>`; return; }
-  btn.disabled = true; btn.textContent = 'Probando...';
+  const txtBtn = btn.querySelector('span') || btn;
+  btn.disabled = true; txtBtn.textContent = 'Probando...';
   const lento = prov.id === 'ollama' ? ' Con Ollama sin GPU puede tardar uno o dos minutos.' : '';
   caja.className = 'prueba'; caja.innerHTML = `<span class="girando" aria-hidden="true"></span><span>Mandándole el ticket de prueba a ${esc(prov.corto)}…${lento}</span>`;
   const pedir = (acepta) => api('/api/configuracion/probar/ia', { method: 'POST', json: { cambios, aceptar_aviso_ia: acepta || undefined } });
@@ -2290,7 +2327,7 @@ async function probarIA(btn) {
     const filas = (r.leido || []).map((f) => `<tr><th scope="row">${esc(f.campo)}</th><td class="mono">${esc(f.valor)}</td><td>${f.bien === true ? `<span class="ia-ok">${I.check}Bien</span>` : f.bien === false ? `<span class="ia-mal">${I.cruz}Era ${esc(f.esperado)}</span>` : ''}</td></tr>`).join('');
     caja.innerHTML = `${r.exito ? I.check : I.alerta}<div class="prueba-ia"><span>${esc(r.mensaje)}</span>${filas ? `<table class="ia-leido"><caption>Qué leyó del ticket de prueba</caption><tbody>${filas}</tbody></table>` : ''}</div>`;
   } catch (e) { caja.className = 'prueba mal'; caja.innerHTML = `${I.alerta}<span>${esc(e.message)}</span>`; }
-  finally { btn.disabled = false; btn.textContent = 'Probar'; }
+  finally { btn.disabled = false; txtBtn.textContent = 'Probar'; }
 }
 
 // ---------- Ventana: Novedades y Acerca de ----------
@@ -2416,7 +2453,7 @@ const SECCIONES = {
       'URL pública: la que ves en el navegador cuando usás Arcanum.',
       'Pegá la clave, guardá y tocá Probar: Factorum consulta /api/health y una lista de solo lectura.',
       'Para el camino inverso (de Arcanum a Factorum), creá acá en Claves de API una clave con «Puede abrir sesiones de la suite» y cargala en Arcanum como FACTORUM_TOKEN.'] },
-  lockatus: { t: 'Lockatus (inicio de sesión único)', d: 'Entrar con la cuenta de la suite Escriba: una sola contraseña para Factorum, Arcanum y las demás.', probar: true,
+  lockatus: { t: 'Lockatus', d: 'Inicio de sesión único: entrar con la cuenta de la suite Escriba, una sola contraseña para Factorum, Arcanum y las demás.', probar: true,
     clave: ['lockatus.emisor', 'lockatus.client_id', 'lockatus.client_secret'],
     como: ['En Lockatus, como administrador, registrá una aplicación nueva para Factorum: tipo confidencial (con client secret), flujo Authorization Code con PKCE (S256).',
       'Redirect URI: copiá la de arriba tal cual (tu URL pública más /api/auth/oidc/callback). Tiene que coincidir exacta, con https y sin barra al final. Si no aparece, completá primero la URL pública en General.',
@@ -2594,12 +2631,11 @@ const WORKER_CF = [
   '};',
 ].join('\n');
 
-function comoHTML(cfg) {
-  if (!cfg || (!cfg.como && !cfg.grupos)) return '';
+// comoCuerpo: el paso a paso de una sección (lo que muestra el panel de la Guía).
+function comoCuerpo(cfg) {
+  if (!cfg || (!cfg.como && !cfg.grupos)) return '<p class="muted">Esta sección no tiene pasos: alcanza con lo que dice cada campo.</p>';
   const ol = (l) => `<ol>${l.map((x) => `<li>${esc(x)}</li>`).join('')}</ol>`;
-  // En el proveedor, cada grupo es de uno (Mailgun, Postmark, SendGrid): se ve el del elegido.
-  const prov = (t) => (['Mailgun', 'Postmark', 'SendGrid'].includes(t) && cfg.porProveedor ? ` data-prov="${t.toLowerCase()}"` : '');
-  return `<details class="como"><summary>Cómo se configura</summary>${cfg.como ? ol(cfg.como) : ''}${(cfg.grupos || []).map(([t, l]) => `<div${prov(t)}><h4>${esc(t)}</h4>${ol(l)}</div>`).join('')}</details>`;
+  return `${cfg.como ? ol(cfg.como) : ''}${(cfg.grupos || []).map(([t, l]) => `<section class="guia-grupo"><h4>${esc(t)}</h4>${ol(l)}</section>`).join('')}`;
 }
 
 const urlCorreo = (k) => ((CONF && CONF.correo && CONF.correo.urls) || {})[k] || '';
@@ -2673,7 +2709,7 @@ function cuerpoCorreoEntrada(campos) {
       return PROV_DE[c.clave] ? `<div class="prov-campo" data-prov="${PROV_DE[c.clave]}">${h}</div>` : h;
     }).join('');
     const cuerpo = f === 'apagado' ? '<p class="muted">No entra nada por mail. Lo que ya se cargó sigue igual.</p>'
-      : `<div class="conf-campos">${cs}</div>${extraForma(f)}${comoHTML({ grupos: COMO_CORREO[f], porProveedor: f === 'proveedor' })}`;
+      : `<div class="conf-campos">${cs}</div>${extraForma(f)}<p class="nota-conf muted">Los pasos para ${esc((FORMAS.find((x) => x[0] === f) || [])[1] || f)} están en la <button type="button" class="link" data-accion="guia" data-sec="correo_entrada">Guía</button>.</p>`;
     return `<div class="grupo-forma${f === forma ? '' : ' hidden'}" data-forma="${f}">${cuerpo}</div>`;
   };
   return `<input type="hidden" id="${idCampo('correo.forma')}" data-clave="correo.forma" data-orig="${esc(forma)}" value="${esc(forma)}"${bloq ? ' disabled' : ''}>
@@ -2694,6 +2730,7 @@ function cambiarForma(f) {
   const est = $('#conf-correo_entrada .estado-correo'); // el estado es de la forma guardada
   if (est) est.classList.toggle('hidden', f !== (h ? h.dataset.orig : f));
   $('#conf-correo_entrada .prueba').classList.add('hidden');
+  actualizarBarra();
 }
 
 function mostrarProveedor() {
@@ -2721,10 +2758,10 @@ function extraSeccion(sec) {
 }
 
 async function conectarGoogle(btn) {
-  const cambios = cambiosDe('correo_entrada', false);
   btn.disabled = true;
   try {
-    if (Object.keys(cambios).length) CONF = await api('/api/configuracion', { method: 'PUT', json: { cambios } });
+    // Antes de ir a Google se guarda todo lo que está sin guardar (el client ID y el secreto, sobre todo).
+    if (hayCambiosConf() && !(await guardarTodo(null, true))) { btn.disabled = false; return; }
     const { url } = await api('/api/correo/google/conectar', { method: 'POST' });
     location.href = url;
   } catch (e) { toast(e, true); btn.disabled = false; }
@@ -2732,6 +2769,7 @@ async function conectarGoogle(btn) {
 
 async function desconectarGoogle() {
   if (!confirm('¿Desconectar Gmail? Factorum deja de leer la etiqueta y le saca el permiso en tu cuenta de Google.')) return;
+  if (!confirmarDescartar()) return;
   try {
     const r = await api('/api/correo/google/desconectar', { method: 'POST' });
     toast(r.aviso || 'Gmail desconectado', !!r.aviso);
@@ -2759,95 +2797,519 @@ function valorCampoTexto(c) {
   return c.valor ?? '';
 }
 
+// campoConfHTML: un campo con su etiqueta, la ayuda debajo, el candado si lo fija el servidor y el
+// lugar para el error. Las casillas son interruptores (role="switch") en su propia fila.
 function campoConfHTML(c) {
   const id = idCampo(c.clave);
   const bloq = c.bloqueado ? ' disabled' : '';
-  const nota = c.bloqueado ? `<span class="fijado">${I.llave}Fijado por el servidor (variable ${esc(c.env)})</span>`
-    : c.origen === 'pantalla' && c.actualizado_por ? `<span class="muted">Cambiado por ${esc(c.actualizado_por)}, ${fechaHora(c.actualizado)}</span>` : '';
-  let ayuda = c.ayuda ? `<span class="ayuda">${esc(c.ayuda)}</span>` : '';
-  if (c.tipo === 'secreto' && c.configurado) ayuda = `<span class="ayuda"><strong>Configurado${c.ultimos ? ', termina en ' + esc(c.ultimos) : ''}.</strong> Escribí para reemplazarlo. ${esc(c.ayuda || '')}</span>`;
+  const candado = c.bloqueado ? `<span class="fijado">${I.llave}Fijado por el servidor</span>` : '';
+  let ayuda = esc(c.ayuda || '');
+  if (c.tipo === 'secreto' && c.configurado) ayuda = `<strong>Guardada cifrada${c.ultimos ? ', termina en ' + esc(c.ultimos) : ''}.</strong> ${c.bloqueado ? '' : 'Escribí otra para reemplazarla. '}${ayuda}`;
+  if (c.bloqueado) ayuda += `${ayuda ? ' ' : ''}Se cambia en la variable <code>${esc(c.env)}</code>.`;
+  const quien = !c.bloqueado && c.origen === 'pantalla' && c.actualizado_por ? ` <span class="cambiado-por">${esc(conPunto(`Cambiado por ${c.actualizado_por}, ${fechaHora(c.actualizado)}`))}</span>` : '';
+  const pie = `<span class="ayuda" id="${id}-ayuda">${ayuda}${quien}<span class="sin-guardar"> Cambiado, sin guardar.</span></span><span class="err-campo" id="${id}-err"></span>`;
+  const desc = ` aria-describedby="${id}-ayuda ${id}-err"`;
   if (c.tipo === 'bool') {
-    return `<div class="campo-conf"><label class="chk"><input type="checkbox" id="${id}" data-clave="${c.clave}" data-orig="${c.valor ? '1' : ''}"${c.valor ? ' checked' : ''}${bloq}> ${esc(c.etiqueta)}</label>${ayuda}${nota}</div>`;
+    return `<div class="campo-conf campo-sw" data-campo="${c.clave}"><div class="sw-txt"><label class="et" for="${id}">${esc(c.etiqueta)}${candado}</label>${pie}</div>
+      <label class="switch"><input type="checkbox" role="switch" id="${id}" data-clave="${c.clave}" data-orig="${c.valor ? '1' : ''}"${c.valor ? ' checked' : ''}${desc}${bloq}><span class="track" aria-hidden="true"></span></label></div>`;
   }
   let control;
   if (c.tipo === 'secreto') {
-    const ph = c.configurado ? 'Configurado' : 'Sin configurar';
-    control = `<div class="fila-secreto">${campoClave(id, `data-clave="${c.clave}" data-orig="" autocomplete="off" spellcheck="false" placeholder="${esc(ph)}"${bloq}`)}
+    const ph = c.configurado ? 'Guardada' : 'Sin configurar';
+    control = `<div class="fila-secreto">${campoClave(id, `data-clave="${c.clave}" data-orig="" autocomplete="off" spellcheck="false" placeholder="${esc(ph)}"${desc}${bloq}`)}
       ${GENERABLES.includes(c.clave) && !c.bloqueado ? `<button type="button" class="ghost mini" data-accion="generarToken" data-para="${id}">Generar</button>` : ''}
-      ${c.configurado && !c.bloqueado && c.origen === 'pantalla' ? `<button type="button" class="ghost mini" data-accion="borrarSecreto" data-clave="${c.clave}">Borrar</button>` : ''}</div>`;
+      ${c.configurado && !c.bloqueado && c.origen === 'pantalla' ? `<button type="button" class="ghost mini" data-accion="borrarSecreto" data-clave="${c.clave}" aria-pressed="false">Borrar</button>` : ''}</div>`;
   } else if (c.tipo === 'lista' || c.tipo === 'clientes' || c.tipo === 'emails') {
     const v = valorCampoTexto(c);
-    control = `<textarea id="${id}" data-clave="${c.clave}" data-orig="${esc(v)}" rows="${c.tipo === 'clientes' ? 4 : 3}" placeholder="${c.ejemplo ? 'Por ejemplo: ' + esc(c.ejemplo) : ''}" spellcheck="false"${bloq}>${esc(v)}</textarea>`;
+    control = `<textarea id="${id}" data-clave="${c.clave}" data-orig="${esc(v)}" rows="${c.tipo === 'clientes' ? 4 : 3}" placeholder="${c.ejemplo ? 'Por ejemplo: ' + esc(c.ejemplo) : ''}" spellcheck="false"${desc}${bloq}>${esc(v)}</textarea>`;
   } else if (c.tipo === 'opcion') {
     const ops = c.opciones || [];
     const v = ops.some((o) => o.valor === c.valor) ? c.valor : (ops[0] || {}).valor || '';
-    control = `<select id="${id}" data-clave="${c.clave}" data-orig="${esc(v)}"${bloq}>${ops.map((o) => `<option value="${esc(o.valor)}"${o.valor === v ? ' selected' : ''}>${esc(o.etiqueta)}</option>`).join('')}</select>`;
+    control = `<select id="${id}" data-clave="${c.clave}" data-orig="${esc(v)}"${desc}${bloq}>${ops.map((o) => `<option value="${esc(o.valor)}"${o.valor === v ? ' selected' : ''}>${esc(o.etiqueta)}</option>`).join('')}</select>`;
   } else if (c.tipo === 'entero') {
     const v = String(c.valor ?? '');
-    control = `<input id="${id}" type="number" inputmode="numeric" min="${c.min || 0}" ${c.max ? `max="${c.max}"` : ''} step="1" data-clave="${c.clave}" data-orig="${esc(v)}" value="${esc(v)}"${bloq}>`;
+    control = `<input id="${id}" type="number" inputmode="numeric" min="${c.min || 0}" ${c.max ? `max="${c.max}"` : ''} step="1" data-clave="${c.clave}" data-orig="${esc(v)}" value="${esc(v)}"${desc}${bloq}>`;
   } else if (c.tipo === 'hora') {
     const v = String(c.valor || '');
-    control = `<input id="${id}" type="time" step="60" data-clave="${c.clave}" data-orig="${esc(v)}" value="${esc(v)}"${bloq}>`;
+    control = `<input id="${id}" type="time" step="60" data-clave="${c.clave}" data-orig="${esc(v)}" value="${esc(v)}"${desc}${bloq}>`;
   } else {
     const v = valorCampoTexto(c);
-    control = `<input id="${id}" data-clave="${c.clave}" data-orig="${esc(v)}" value="${esc(v)}" placeholder="${c.ejemplo ? 'Por ejemplo: ' + esc(c.ejemplo) : ''}" ${c.tipo === 'url' ? 'inputmode="url"' : ''} spellcheck="false"${bloq}>`;
+    control = `<input id="${id}" data-clave="${c.clave}" data-orig="${esc(v)}" value="${esc(v)}" placeholder="${c.ejemplo ? 'Por ejemplo: ' + esc(c.ejemplo) : ''}" ${c.tipo === 'url' ? 'inputmode="url"' : ''}${c.tipo === 'cuit' ? ' inputmode="numeric" class="mono"' : ''} spellcheck="false"${desc}${bloq}>`;
   }
-  return `<label class="campo-conf${c.tipo === 'lista' || c.tipo === 'clientes' || c.clave === 'correo.permitidos' ? ' ancho' : ''}"><span class="et">${esc(c.etiqueta)}</span>${control}${ayuda}${nota}</label>`;
+  const ancho = c.tipo === 'lista' || c.tipo === 'clientes' || c.tipo === 'emails';
+  return `<div class="campo-conf${ancho ? ' ancho' : ''}" data-campo="${c.clave}"><label class="et" for="${id}">${esc(c.etiqueta)}${candado}</label>${control}${pie}</div>`;
 }
 
-function estadoSeccion(sec, campos) {
-  const cfg = SECCIONES[sec];
-  if (sec === 'lockatus' && CONF.lockatus && CONF.lockatus.solo) return '<span class="est ok">Solo Lockatus</span>';
-  if (sec === 'ia' && CONF.ia_aviso && CONF.ia_aviso.configurada && !CONF.ia_aviso.en_uso) return '<span class="est error">Sin usar: falta aceptar el aviso</span>';
-  if (sec === 'correo_entrada') {
-    const e = (CONF.correo && CONF.correo.estado) || {};
-    if (e.forma === 'apagado') return '<span class="est">Apagado</span>';
-    if (e.error) return '<span class="est revisar">Con problemas</span>';
-    return e.activo ? '<span class="est ok">Activo</span>' : '<span class="est">Sin configurar</span>';
-  }
-  if (sec === 'avisos') {
-    const on = campos.filter((c) => c.tipo === 'bool' && c.valor).length;
-    if (!(CONF.correo && CONF.correo.smtp)) return '<span class="est">Falta el correo saliente</span>';
-    return on ? `<span class="est ok">${on} prendido(s)</span>` : '<span class="est">Apagados</span>';
-  }
-  const porClave = Object.fromEntries(campos.map((c) => [c.clave, c]));
-  const todos = campos.length && campos.every((c) => c.bloqueado);
-  const ok = cfg.clave.every((k) => porClave[k] && porClave[k].configurado && (porClave[k].tipo !== 'bool' || porClave[k].valor));
+// ---------- Configuración: el estado de cada sección ----------
+// Tres niveles: listo, falta configurar (lo que conviene resolver) y apagado (opcional, no hace
+// falta). Opcionales: Lockatus, Telegram, WhatsApp, Webhook, Clientes y canales, IA (visión),
+// Almacenamiento R2 y Avisos; el correo entrante, si se apaga a propósito. Lo demás es necesario
+// para usar Factorum bien: la URL pública, Arcanum, el correo entrante y el saliente y las copias.
+// La base es la misma de antes: una sección está configurada si tiene sus claves (cfg.clave).
+const GRUPOS_CONF = [
+  ['Instalación', ['general']],
+  ['Suite Escriba', ['arcanum', 'lockatus']],
+  ['Correo', ['correo_entrada', 'correo_salida', 'avisos']],
+  ['Canales', ['telegram', 'whatsapp', 'webhook', 'clientes']],
+  ['Inteligencia', ['ia']],
+  ['Datos', ['r2', 'copias', 'papelera']],
+];
+const ICONO_SEC = { general: 'configuracion', arcanum: 'verificar', lockatus: 'llave', telegram: 'enviar', whatsapp: 'canales', webhook: 'conectar',
+  correo_entrada: 'correo', correo_salida: 'correoSale', avisos: 'campana', ia: 'chip', r2: 'nube', copias: 'base', papelera: 'papelera', clientes: 'enlace' };
+const NIVELES = { listo: 'Listo', falta: 'Falta configurar', apagado: 'Apagado (opcional)' };
+const camposDe = (sec) => ((CONF && CONF.campos) || []).filter((c) => c.seccion === sec);
+
+function estadoDe(sec) {
+  const cfg = SECCIONES[sec] || { clave: [] };
+  const campos = camposDe(sec);
+  const pc = Object.fromEntries(campos.map((c) => [c.clave, c]));
+  const listo = (et) => ({ nivel: 'listo', etiqueta: et || 'Listo' });
+  const falta = (motivo, et) => ({ nivel: 'falta', etiqueta: et || 'Falta configurar', motivo });
+  const apagado = (motivo, et) => ({ nivel: 'apagado', etiqueta: et || 'Apagado', motivo });
+  const ok = (cfg.clave || []).every((k) => pc[k] && pc[k].configurado && (pc[k].tipo !== 'bool' || pc[k].valor));
+  const fijado = campos.length && campos.every((c) => c.bloqueado);
   const canal = (CONF.canales || []).find((x) => x.canal === sec);
-  if (canal && canal.habilitado) return canal.conectado ? '<span class="est ok">Conectado</span>' : `<span class="est revisar">${esc(canal.detalle || 'Desconectado')}</span>`;
-  if (todos) return '<span class="est">Fijado por el servidor</span>';
-  return ok ? '<span class="est ok">Configurado</span>' : '<span class="est">Sin configurar</span>';
+  switch (sec) {
+    case 'general':
+      return ok ? listo() : falta('Falta la URL pública: sin ella no anda el pase entre las apps de la suite, ni los links de los mails, ni las cookies seguras.');
+    case 'arcanum':
+      return ok ? listo(fijado ? 'Fijado por el servidor' : 'Conectado') : falta('Faltan la URL y la clave de Arcanum: sin Arcanum no se constata con ARCA ni se buscan apócrifos.');
+    case 'lockatus':
+      if (CONF.lockatus && CONF.lockatus.solo) return listo('Solo Lockatus');
+      return ok ? listo() : apagado('Opcional: sin Lockatus se entra con email y contraseña.');
+    case 'telegram': case 'whatsapp': case 'webhook':
+      if (canal && canal.habilitado) return canal.conectado ? listo('Conectado') : falta(canal.detalle ? conPunto(canal.detalle) : 'Está activo pero no conectado.', sec === 'whatsapp' ? 'Falta vincular' : 'Desconectado');
+      return ok ? listo() : apagado('Opcional: un canal más para que te manden facturas.');
+    case 'clientes': {
+      const n = Object.keys((pc['clientes.canales'] || {}).valor || {}).length;
+      return n ? listo(n === 1 ? '1 remitente' : `${n} remitentes`) : apagado('Opcional: sin asociar, lo que llega por chat o por mail se carga sin cliente (salvo facturas+CUIT@).', 'Sin remitentes');
+    }
+    case 'correo_entrada': {
+      const e = (CONF.correo && CONF.correo.estado) || {};
+      if (e.forma === 'apagado') return apagado('No entra nada por mail.');
+      if (e.error) return falta(conPunto(e.error), 'Con problemas');
+      return e.activo ? listo('Activo') : falta('Elegí cómo entran las facturas por mail y completá sus datos, o apagalo si no lo vas a usar.');
+    }
+    case 'correo_salida':
+      return ok ? listo() : falta('Sin correo saliente no salen las invitaciones, los links para elegir contraseña ni los avisos.');
+    case 'avisos': {
+      const on = campos.filter((c) => c.tipo === 'bool' && c.valor).length;
+      if (!(CONF.correo && CONF.correo.smtp)) return on ? falta('Los avisos salen por el correo saliente, que todavía no está configurado.', 'Falta el correo saliente') : apagado('Opcional.', 'Apagados');
+      return on ? listo(on === 1 ? '1 prendido' : `${on} prendidos`) : apagado('Opcional.', 'Apagados');
+    }
+    case 'ia': {
+      const a = CONF.ia_aviso;
+      if (a && a.configurada && !a.en_uso) return falta('Es una IA externa y nadie aceptó todavía el aviso de qué pasa con los datos: hasta entonces no se usa.', 'Falta aceptar el aviso');
+      return ok ? listo('Configurada') : apagado('Opcional: sin IA, Factorum lee con el QR, el texto del PDF y el OCR.', 'Sin IA');
+    }
+    case 'r2':
+      return ok ? listo('Activo') : apagado('Opcional: sin R2 los archivos quedan en el disco del servidor.', 'En el disco');
+    case 'copias':
+      return pc['copias.activo'] && pc['copias.activo'].valor ? listo('Activas')
+        : falta('La copia diaria está apagada: si se rompe el servidor, se pierde la base.', 'Apagadas');
+    case 'papelera': {
+      const d = (pc['papelera.dias'] || {}).valor;
+      return listo(d ? `${d} días` : 'Listo');
+    }
+    default:
+      return ok ? listo() : falta('');
+  }
 }
+
+// Las secciones que ve quien entra, en el orden del índice.
+function seccionesConf() {
+  const secs = (CONF && CONF.secciones) || [];
+  const orden = GRUPOS_CONF.flatMap(([, l]) => l);
+  return [...secs].sort((a, b) => (orden.indexOf(a) + 1 || 99) - (orden.indexOf(b) + 1 || 99));
+}
+
+// contarPendientesConf: el número de Configuración en el menú, sin entrar a la pantalla.
+async function contarPendientesConf() {
+  try {
+    if (!CONF) CONF = await api('/api/configuracion');
+    PENDIENTES.config = seccionesConf().filter((s) => estadoDe(s).nivel === 'falta').length;
+    pintarNav();
+  } catch { /* sin el número */ }
+}
+
+// ---------- Configuración: la pantalla ----------
+// Arriba el progreso y Todo / Pendientes; a la izquierda el índice (con el filtro y la sección que se
+// ve); a la derecha las tarjetas. Hay un solo guardado: la barra de abajo junta los cambios de todas
+// las secciones. En el celular, la lista de secciones y cada una en su pantalla.
+const CONFUI = { ver: 'todo', filtro: '', movil: '', pruebas: {}, obs: null, ro: null, ultimoMovil: '' };
+let IR_CAMPO = '';
+
+function tarjetaConf(sec) {
+  const cfg = SECCIONES[sec] || { t: sec, d: '', clave: [] };
+  const campos = camposDe(sec);
+  const e = estadoDe(sec);
+  const cuerpo = sec === 'correo_entrada' ? cuerpoCorreoEntrada(campos)
+    : sec === 'ia' && CONF.ia ? `${cuerpoIA()}${extraSeccion(sec)}`
+      : `<div class="conf-campos">${campos.map(campoConfHTML).join('')}</div>${extraSeccion(sec)}`;
+  const guia = cfg.como || cfg.grupos || sec === 'correo_entrada';
+  const aviso = sec === 'copias' ? '<div id="copiasAviso"></div>'
+    : e.nivel === 'falta' && e.motivo ? `<div class="conf-pend" role="note">${I.alerta}<p>${esc(e.motivo)}</p></div>` : '';
+  const prueba = CONFUI.pruebas[sec];
+  const abrirArcanum = sec === 'arcanum' && SUITE.some((a) => a.app === 'arcanum')
+    ? `<button type="button" class="link conf-abrir" data-accion="abrirApp" data-app="arcanum">Abrir Arcanum${I.externo}</button>` : '';
+  return `<section class="conf-sec" id="conf-${sec}" data-sec="${sec}" data-nivel="${e.nivel}" aria-labelledby="t-${sec}">
+    <div class="conf-sec-cab">
+      <span class="conf-ico" aria-hidden="true">${I[ICONO_SEC[sec]] || I.configuracion}</span>
+      <div class="conf-sec-tit"><h3 id="t-${sec}" tabindex="-1">${esc(cfg.t)}</h3><p>${esc(cfg.d)}</p></div>
+      <div class="conf-sec-acc"><span class="nivel n-${e.nivel}">${esc(e.etiqueta)}</span>
+        ${guia ? `<button type="button" class="ghost mini" data-accion="guia" data-sec="${sec}" aria-haspopup="dialog">${I.guia}<span>Guía</span></button>` : ''}</div>
+    </div>
+    ${aviso}
+    <div class="conf-sec-cuerpo">${cuerpo}</div>
+    ${cfg.probar || abrirArcanum ? `<div class="conf-sec-pie">
+      ${cfg.probar ? `<button type="button" class="ghost" data-accion="probarConf" data-sec="${sec}">${I.flecha}<span>Probar</span></button>` : ''}
+      <div class="prueba${prueba ? ' ' + prueba.cls : ' hidden'}" aria-live="polite">${prueba ? prueba.html + cuandoPrueba(prueba) : ''}</div>
+      ${abrirArcanum}</div>` : ''}
+  </section>`;
+}
+
+const cuandoPrueba = (p) => {
+  const min = Math.round((Date.now() - p.cuando) / 60000);
+  return `<span class="prueba-cuando">· probado ${min < 1 ? 'recién' : min === 1 ? 'hace 1 minuto' : `hace ${min} minutos`}</span>`;
+};
 
 function pintarConfiguracion() {
-  const secs = CONF.secciones || [];
+  const secs = seccionesConf();
+  const varias = secs.length > 1;
   $('#confSub').textContent = puede('configuracion')
-    ? 'Todo lo que antes iba en variables de entorno. Lo que fija el servidor gana y aparece bloqueado. Al guardar, se aplica sin reiniciar.'
-    : 'Como admin podés cambiar qué cliente es cada remitente de chat. El resto de la configuración lo maneja un superadmin.';
-  $('#confSaltos').innerHTML = secs.length > 1 ? secs.map((s) => `<a class="salto" href="#conf-${s}" data-accion="saltar" data-sec="${s}">${esc(SECCIONES[s].t)}</a>`).join('') : '';
-  $('#configuracion').innerHTML = secs.map((sec) => {
-    const cfg = SECCIONES[sec] || { t: sec, d: '', clave: [] };
-    const campos = CONF.campos.filter((c) => c.seccion === sec);
-    const editables = campos.some((c) => !c.bloqueado);
-    const cuerpo = sec === 'correo_entrada' ? cuerpoCorreoEntrada(campos)
-      : sec === 'ia' && CONF.ia ? `${cuerpoIA()}${extraSeccion(sec)}${comoHTML(cfg)}`
-        : `<div class="conf-campos">${campos.map(campoConfHTML).join('')}</div>${extraSeccion(sec)}${comoHTML(cfg)}`;
-    return `<section class="card conf" id="conf-${sec}" data-sec="${sec}">
-      <div class="card-cab"><div><h3>${esc(cfg.t)}</h3><p class="muted conf-d">${esc(cfg.d)}</p></div>${estadoSeccion(sec, campos)}</div>
-      ${cuerpo}
-      <div class="prueba hidden"></div>
-      <div class="fila pie-conf">
-        ${cfg.probar ? `<button type="button" class="ghost" data-accion="probarConf" data-sec="${sec}">Probar</button>` : ''}
-        <span class="sp"></span>
-        ${editables ? `<button type="button" data-accion="guardarConf" data-sec="${sec}">Guardar</button>` : ''}
-      </div></section>`;
-  }).join('');
+    ? 'Los cambios se aplican sin reiniciar. Lo que fija el servidor aparece con candado.'
+    : 'Como admin podés cambiar qué cliente es cada remitente de chat o de mail. El resto de la configuración lo maneja un superadmin.';
+  $('#v-configuracion').classList.toggle('conf-una', !varias);
+  $('#configuracion').innerHTML = secs.map(tarjetaConf).join('');
+  pintarEstadosConf();
   refrescarWhatsApp();
   if ($('#conf-correo_entrada')) { mostrarProveedor(); actualizarUrlsCorreo(); }
   iaIniciar();
-  if (IR_SECCION) { const sec = IR_SECCION; IR_SECCION = ''; setTimeout(() => document.getElementById('conf-' + sec)?.scrollIntoView({ block: 'start' }), 30); }
   refrescarPase();
   cargarCopias();
+  aplicarFiltroConf();
+  if (!varias && secs[0]) CONFUI.movil = secs[0];
+  mostrarMovil();
+  observarSecciones();
+  actualizarBarra();
+  irASeccionPedida();
+}
+
+// pintarEstadosConf: el progreso, Pendientes (N), el índice, la lista del celular y el número del menú.
+function pintarEstadosConf() {
+  const secs = seccionesConf();
+  const est = Object.fromEntries(secs.map((s) => [s, estadoDe(s)]));
+  const pend = secs.filter((s) => est[s].nivel === 'falta');
+  const listas = secs.length - pend.length;
+  const pct = secs.length ? Math.round((listas / secs.length) * 100) : 0;
+  $('#confProgreso').innerHTML = `<span><strong>${listas} de ${secs.length}</strong> secciones listas</span>
+    <span class="prog conf-prog" role="progressbar" aria-label="Secciones listas" aria-valuemin="0" aria-valuemax="${secs.length}" aria-valuenow="${listas}"><span></span></span>`;
+  $('#confProgreso .conf-prog > span').style.width = pct + '%';
+  $('#confVerPend').textContent = `Pendientes (${pend.length})`;
+  if (puede('configuracion')) { PENDIENTES.config = pend.length; pintarNav(); }
+  const fila = (s) => `<a class="conf-idx" href="#conf-${s}" data-accion="saltar" data-sec="${s}"><span class="dot n-${est[s].nivel}" aria-hidden="true"></span>
+    <span class="idx-t">${esc(SECCIONES[s].t)}</span>${est[s].nivel === 'apagado' ? '<span class="idx-st" aria-hidden="true">apagado</span>' : ''}<span class="idx-cambio" hidden>sin guardar</span>
+    <span class="sr-only">: ${esc(NIVELES[est[s].nivel])}</span></a>`;
+  $('#confIndiceLista').innerHTML = GRUPOS_CONF.map(([g, l]) => {
+    const ss = l.filter((s) => secs.includes(s));
+    return ss.length ? `<div class="conf-idx-g" role="group" aria-label="${esc(g)}"><span class="conf-idx-gt" aria-hidden="true">${esc(g)}</span>${ss.map(fila).join('')}</div>` : '';
+  }).join('');
+  // El celular: lo pendiente arriba y el resto por grupo (sin repetir).
+  const filaM = (s) => `<button type="button" class="conf-fila" data-accion="confAbrir" data-sec="${s}"><span class="dot n-${est[s].nivel}" aria-hidden="true"></span>
+    <span class="cf-t">${esc(SECCIONES[s].t)}</span><span class="cf-st">${est[s].nivel === 'listo' && est[s].etiqueta === 'Listo' ? '' : esc(est[s].etiqueta.toLowerCase())}</span>
+    <span class="sr-only">: ${esc(NIVELES[est[s].nivel])}</span><span class="cf-chev" aria-hidden="true">›</span></button>`;
+  const caja = (t, l, cls = '') => (l.length ? `<h3 class="cf-grp">${esc(t)}</h3><div class="cf-caja${cls}">${l.map(filaM).join('')}</div>` : '');
+  $('#confMovilLista').innerHTML = (hayVarias(secs) ? caja('Pendientes', pend, ' pend') : '')
+    + GRUPOS_CONF.map(([g, l]) => caja(g, l.filter((s) => secs.includes(s) && !(hayVarias(secs) && pend.includes(s))))).join('');
+}
+const hayVarias = (secs) => secs.length > 1;
+
+// ---------- Configuración: lo que se ve (Todo / Pendientes, el filtro y el índice) ----------
+const sinTildes = (t) => String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+
+function aplicarFiltroConf() {
+  const q = sinTildes(CONFUI.filtro.trim());
+  const soloPend = CONFUI.ver === 'pendientes';
+  let visibles = 0;
+  for (const card of $$('#configuracion .conf-sec')) {
+    const sec = card.dataset.sec;
+    const cfg = SECCIONES[sec] || {};
+    let coincide = !q;
+    $$('.campo-conf', card).forEach((c) => c.classList.remove('coincide'));
+    if (q) {
+      const deSec = sinTildes(`${cfg.t} ${cfg.d}`).includes(q);
+      const campos = $$('.campo-conf', card).filter((c) => sinTildes(c.textContent).includes(q));
+      if (!deSec) campos.forEach((c) => c.classList.add('coincide'));
+      coincide = deSec || campos.length > 0 || sinTildes([...(cfg.como || []), ...(cfg.grupos || []).flat(2)].join(' ')).includes(q);
+    }
+    const ver = coincide && (!soloPend || card.dataset.nivel === 'falta');
+    card.classList.toggle('oculta', !ver);
+    if (ver) visibles++;
+    const idx = $(`.conf-idx[data-sec="${sec}"]`);
+    if (idx) idx.classList.toggle('hidden', !ver);
+    const fm = $$(`.conf-fila[data-sec="${sec}"]`);
+    fm.forEach((f) => f.classList.toggle('hidden', !coincide));
+  }
+  $$('.conf-idx-g').forEach((g) => g.classList.toggle('hidden', !$$('.conf-idx:not(.hidden)', g).length));
+  $$('#confMovilLista .cf-caja').forEach((c) => {
+    const vacia = !$$('.conf-fila:not(.hidden)', c).length;
+    c.classList.toggle('hidden', vacia);
+    c.previousElementSibling.classList.toggle('hidden', vacia);
+  });
+  $$('#v-configuracion .seg button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.ver === CONFUI.ver)));
+  const v = $('#confVacio');
+  v.classList.toggle('hidden', visibles > 0);
+  v.textContent = q ? `Ningún ajuste coincide con «${CONFUI.filtro.trim()}».` : 'No hay nada pendiente: todas las secciones están listas o apagadas a propósito.';
+}
+
+// observarSecciones: el índice marca la sección que se está viendo al desplazarse.
+function observarSecciones() {
+  if (CONFUI.obs) CONFUI.obs.disconnect();
+  if (!('IntersectionObserver' in window)) return;
+  const vistas = new Set();
+  const arriba = () => parseInt(getComputedStyle(document.documentElement).getPropertyValue('--top-h'), 10) + ($('#confCab').offsetHeight || 0);
+  CONFUI.obs = new IntersectionObserver((ents) => {
+    for (const e of ents) { if (e.isIntersecting) vistas.add(e.target); else vistas.delete(e.target); }
+    const top = arriba();
+    const actual = [...vistas].filter((s) => !s.classList.contains('oculta'))
+      .sort((a, b) => Math.abs(a.getBoundingClientRect().top - top) - Math.abs(b.getBoundingClientRect().top - top))[0];
+    if (actual) marcarIndice(actual.dataset.sec);
+  }, { rootMargin: `-${arriba()}px 0px -55% 0px`, threshold: [0, 0.01] });
+  $$('#configuracion .conf-sec').forEach((s) => CONFUI.obs.observe(s));
+  // El alto de la cabecera fija (cambia con el ancho): el índice y los saltos se acomodan.
+  if (!CONFUI.ro && 'ResizeObserver' in window) {
+    CONFUI.ro = new ResizeObserver(() => document.documentElement.style.setProperty('--conf-cab-h', $('#confCab').offsetHeight + 'px'));
+    CONFUI.ro.observe($('#confCab'));
+  }
+}
+
+function marcarIndice(sec) {
+  $$('.conf-idx').forEach((a) => { if (a.dataset.sec === sec) a.setAttribute('aria-current', 'true'); else a.removeAttribute('aria-current'); });
+}
+
+const sinMovimiento = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+const enCelular = () => matchMedia('(max-width: 760px)').matches;
+
+function saltarA(sec, foco) {
+  const card = document.getElementById('conf-' + sec);
+  if (!card) return;
+  if (enCelular()) { abrirSecMovil(sec); return; }
+  if (card.classList.contains('oculta')) { CONFUI.ver = 'todo'; CONFUI.filtro = ''; $('#confFiltro').value = ''; $('#confFiltroMovil').value = ''; aplicarFiltroConf(); }
+  card.scrollIntoView({ behavior: sinMovimiento() ? 'auto' : 'smooth', block: 'start' });
+  marcarIndice(sec);
+  if (foco) $('h3', card).focus({ preventScroll: true });
+}
+
+// El celular: la lista o una sección en su pantalla.
+function abrirSecMovil(sec) {
+  CONFUI.movil = sec;
+  CONFUI.ultimoMovil = sec;
+  mostrarMovil();
+  window.scrollTo(0, 0);
+  const card = document.getElementById('conf-' + sec);
+  if (card) $('h3', card).focus({ preventScroll: true });
+}
+function mostrarMovil() {
+  const v = $('#v-configuracion');
+  v.dataset.movil = CONFUI.movil ? 'sec' : 'lista';
+  $$('#configuracion .conf-sec').forEach((c) => c.classList.toggle('abierta', c.dataset.sec === CONFUI.movil));
+}
+function volverMovil() {
+  CONFUI.movil = '';
+  mostrarMovil();
+  const f = $(`.conf-fila[data-sec="${CONFUI.ultimoMovil}"]`);
+  if (f) { f.scrollIntoView({ block: 'center' }); f.focus({ preventScroll: true }); }
+}
+
+// irASeccionPedida: al llegar desde el buscador o desde otra pantalla, la sección (y el campo, resaltado).
+function irASeccionPedida() {
+  if (!IR_SECCION) return;
+  const sec = IR_SECCION, clave = IR_CAMPO;
+  IR_SECCION = ''; IR_CAMPO = '';
+  setTimeout(() => {
+    saltarA(sec, !clave);
+    if (!clave) return;
+    const el = document.getElementById(idCampo(clave));
+    const campo = el && el.closest('.campo-conf');
+    if (!campo || !campo.offsetParent) return;
+    campo.scrollIntoView({ behavior: 'auto', block: 'center' });
+    campo.classList.remove('resaltado'); void campo.offsetWidth; campo.classList.add('resaltado');
+    setTimeout(() => campo.classList.remove('resaltado'), 2600);
+    if (!el.disabled) el.focus({ preventScroll: true });
+  }, 40);
+}
+
+function dejarConfiguracion() {
+  if (CONFUI.obs) { CONFUI.obs.disconnect(); CONFUI.obs = null; }
+  document.documentElement.classList.remove('con-barra');
+  cerrarGuia();
+  CONFUI.movil = '';
+}
+
+// ---------- Configuración: un solo guardado ----------
+// cambiosPendientes junta lo que cambió en todas las secciones (la IA, con su propio armado).
+function cambiosPendientes() {
+  const cambios = {};
+  const secs = [];
+  for (const sec of seccionesConf()) {
+    if (!document.getElementById('conf-' + sec)) continue;
+    let c = {};
+    if (sec === 'ia') {
+      const p = iaEl('ia.proveedor');
+      c = IAUI && p && (p.value || p.value !== (p.dataset.orig || '')) ? cambiosIA(false) : {};
+    } else c = cambiosDe(sec, false);
+    if (Object.keys(c).length) { Object.assign(cambios, c); secs.push(sec); }
+  }
+  return { cambios, secs };
+}
+const hayCambiosConf = () => vista === 'configuracion' && !!CONF && Object.keys(cambiosPendientes().cambios).length > 0;
+const textoCambios = ({ cambios, secs }) => {
+  const n = Object.keys(cambios).length;
+  return `${n} ${n === 1 ? 'cambio' : 'cambios'} sin guardar en ${secs.map((s) => SECCIONES[s].t).join(', ')}`;
+};
+function confirmarDescartar() {
+  return !hayCambiosConf() || confirm(`${textoCambios(cambiosPendientes())}. Se van a perder. ¿Seguir?`);
+}
+
+// actualizarBarra: la barra de abajo, los campos cambiados y el aviso en el índice.
+function actualizarBarra() {
+  if (!$('#configuracion') || !CONF) return;
+  const p = cambiosPendientes();
+  const n = Object.keys(p.cambios).length;
+  const barra = $('#confBarra');
+  barra.classList.toggle('hidden', !n);
+  document.documentElement.classList.toggle('con-barra', !!n);
+  if (n) {
+    const err = barra.dataset.error;
+    $('#confBarraTxt').innerHTML = err ? `<strong>No se guardó.</strong> ${esc(err)}`
+      : `${n} ${n === 1 ? 'cambio' : 'cambios'} sin guardar en <strong>${esc(p.secs.map((s) => SECCIONES[s].t).join(', '))}</strong>`;
+    barra.classList.toggle('con-error', !!err);
+  } else { delete barra.dataset.error; barra.classList.remove('con-error'); }
+  $$('#configuracion [data-clave]').forEach((el) => {
+    const c = el.closest('.campo-conf');
+    if (!c) return;
+    const cambio = !el.disabled && (el.type === 'checkbox' ? (el.checked ? '1' : '') !== el.dataset.orig
+      : el.type === 'password' || el.dataset.borrar ? !!el.value || !!el.dataset.borrar : el.value !== el.dataset.orig);
+    c.classList.toggle('cambiado', cambio);
+  });
+  $$('.conf-idx').forEach((a) => { const x = $('.idx-cambio', a); if (x) x.hidden = !p.secs.includes(a.dataset.sec); });
+}
+
+function limpiarErrores() {
+  $$('#configuracion .con-error').forEach((c) => {
+    c.classList.remove('con-error');
+    const i = $('[aria-invalid]', c); if (i) i.removeAttribute('aria-invalid');
+    const e = $('.err-campo', c); if (e) e.textContent = '';
+  });
+  delete $('#confBarra').dataset.error;
+}
+
+// marcarError: el error en su campo (y en la barra, que no se va). Sin campo, solo en la barra.
+function marcarError(clave, msg) {
+  const el = clave && document.getElementById(idCampo(clave));
+  const c = el && el.closest('.campo-conf');
+  $('#confBarra').dataset.error = msg;
+  if (c) {
+    c.classList.add('con-error');
+    el.setAttribute('aria-invalid', 'true');
+    $('.err-campo', c).textContent = msg;
+    const sec = c.closest('.conf-sec');
+    if (sec && enCelular()) abrirSecMovil(sec.dataset.sec);
+    if (sec && sec.classList.contains('oculta')) { CONFUI.ver = 'todo'; CONFUI.filtro = ''; aplicarFiltroConf(); }
+    c.scrollIntoView({ behavior: 'auto', block: 'center' });
+    el.focus({ preventScroll: true });
+  }
+  actualizarBarra();
+}
+
+// guardarTodo guarda de una vez todo lo que cambió. sinPintar: para seguir a otro lado (Google).
+async function guardarTodo(btn, sinPintar) {
+  const { cambios, secs } = cambiosPendientes();
+  if (!Object.keys(cambios).length) { toast('No hay cambios'); return true; }
+  limpiarErrores();
+  // Lo que el navegador ya sabe que está mal (un número fuera de rango, una hora incompleta).
+  const malo = $$('#configuracion [data-clave]').find((el) => !el.disabled && el.willValidate && !el.checkValidity());
+  if (malo) { marcarError(malo.dataset.clave, `${(CONF.campos.find((c) => c.clave === malo.dataset.clave) || {}).etiqueta || 'Un campo'}: ${malo.validationMessage}`); return false; }
+  if (btn) { btn.disabled = true; btn.textContent = 'Guardando...'; }
+  try {
+    try {
+      CONF = await api('/api/configuracion', { method: 'PUT', json: { cambios } });
+    } catch (e) {
+      // Una IA externa nueva (o de otro host): antes de guardarla, el aviso de qué pasa con los datos.
+      if (!(e.datos && e.datos.codigo === 'aviso_ia')) throw e;
+      const a = e.datos.aviso_ia;
+      // Si lo acaba de aceptar para probarla (el mismo host y el mismo aviso), no se lo pide de nuevo.
+      const ap = IAUI && IAUI.aceptadoPrueba;
+      const yaVisto = ap && ap.host === a.host && ap.version === a.version;
+      if (!yaVisto && !(await abrirAvisoIA(a, 'admin'))) {
+        $('#confBarra').dataset.error = 'La IA externa no se usa hasta que aceptes el aviso de qué pasa con los datos.';
+        actualizarBarra();
+        return false;
+      }
+      CONF = await api('/api/configuracion', { method: 'PUT', json: { cambios, aceptar_aviso_ia: { host: a.host, version: a.version } } });
+    }
+    if (!sinPintar) pintarConfiguracion();
+    cargarSalud(); cargarSuite();
+    api('/api/sesion').then((r) => { YO = r; }).catch(() => {}); // por si cambió el correo saliente (invitar por mail)
+    toast((CONF.cambiadas || []).length ? `Guardado (${secs.map((s) => SECCIONES[s].t).join(', ')}): ya se está usando, sin reiniciar.` : 'No había cambios');
+    return true;
+  } catch (e) {
+    if (e.silencioso) return false;
+    marcarError(e.datos && e.datos.campo, e.message);
+    return false;
+  } finally { if (btn) { btn.disabled = false; btn.textContent = 'Guardar cambios'; } }
+}
+
+function descartarConf() {
+  limpiarErrores();
+  pintarConfiguracion();
+  toast('Cambios descartados');
+}
+
+// Copias de seguridad: lo recomendado (todos los días a las 03:30, 14 diarias y 12 mensuales) queda
+// en la barra para guardar.
+function copiasRecomendadas() {
+  const poner = { 'copias.activo': true, 'copias.hora': '03:30', 'copias.diarias': '14', 'copias.mensuales': '12' };
+  for (const [k, v] of Object.entries(poner)) {
+    const el = document.getElementById(idCampo(k));
+    if (!el || el.disabled) continue;
+    if (el.type === 'checkbox') el.checked = v; else el.value = v;
+  }
+  actualizarBarra();
+  if (enCelular()) abrirSecMovil('copias');
+  toast('Listo: quedó en los cambios sin guardar. Tocá «Guardar cambios».');
+  $('#confGuardar').focus();
+}
+
+// ---------- Configuración: la Guía de cada sección (panel lateral) ----------
+let GUIA = null; // { previo }
+function abrirGuia(sec, btn) {
+  const cfg = SECCIONES[sec];
+  if (!cfg) return;
+  let html;
+  if (sec === 'correo_entrada') {
+    const f = (document.getElementById(idCampo('correo.forma')) || {}).value || 'imap';
+    const nombre = (FORMAS.find((x) => x[0] === f) || [])[1] || f;
+    const prov = (document.getElementById(idCampo('correo.proveedor')) || {}).value || '';
+    const grupos = (COMO_CORREO[f] || []).filter(([t]) => f !== 'proveedor' || !prov || t.toLowerCase() === prov);
+    html = f === 'apagado' ? '<p>El correo entrante está apagado: no entra nada por mail. Elegí una forma en la tarjeta para ver sus pasos.</p>'
+      : `<p class="guia-intro">Para la forma elegida: <strong>${esc(nombre)}</strong>. Si cambiás de forma en la tarjeta, la guía cambia.</p>${comoCuerpo({ grupos })}`;
+  } else html = comoCuerpo(cfg);
+  $('#guiaTit').textContent = cfg.t;
+  $('#guiaCard .guia-ico').innerHTML = I[ICONO_SEC[sec]] || I.configuracion;
+  $('#guiaCuerpo').innerHTML = html;
+  GUIA = { previo: btn || document.activeElement };
+  $('#guia').classList.remove('hidden');
+  document.documentElement.classList.add('sin-scroll');
+  $('#guiaCard').focus();
+}
+function cerrarGuia() {
+  if (!GUIA) return;
+  const previo = GUIA.previo;
+  GUIA = null;
+  $('#guia').classList.add('hidden');
+  document.documentElement.classList.remove('sin-scroll');
+  if (previo && previo.focus) previo.focus();
 }
 let IR_SECCION = '';
 
@@ -2863,50 +3325,43 @@ function cambiosDe(sec, todo) {
       return;
     }
     const v = el.value;
-    if (c.tipo === 'secreto') { if (v) out[c.clave] = v; return; }
+    if (c.tipo === 'secreto') {
+      if (v) out[c.clave] = v;
+      else if (el.dataset.borrar && !todo) out[c.clave] = null; // «Borrar»: vuelve al valor del servidor, al guardar
+      return;
+    }
     if (!todo && v === el.dataset.orig) return;
     out[c.clave] = v;
   });
   return out;
 }
 
-async function guardarConf(sec, cambios, btn) {
-  cambios = cambios || (sec === 'ia' && IAUI && $('#conf-ia') ? cambiosIA(false) : cambiosDe(sec, false));
-  if (!Object.keys(cambios).length) { toast('No hay cambios'); return; }
-  if (btn) btn.disabled = true;
-  try {
-    try {
-      CONF = await api('/api/configuracion', { method: 'PUT', json: { cambios } });
-    } catch (e) {
-      // Una IA externa nueva (o de otro host): antes de guardarla, el aviso de qué pasa con los datos.
-      if (!(e.datos && e.datos.codigo === 'aviso_ia')) throw e;
-      const a = e.datos.aviso_ia;
-      // Si lo acaba de aceptar para probarla (el mismo host y el mismo aviso), no se lo pide de nuevo.
-      const ap = IAUI && IAUI.aceptadoPrueba;
-      const yaVisto = ap && ap.host === a.host && ap.version === a.version;
-      if (!yaVisto && !(await abrirAvisoIA(a, 'admin'))) { toast('No se guardó. La IA externa no se usa hasta que aceptes el aviso.'); return; }
-      CONF = await api('/api/configuracion', { method: 'PUT', json: { cambios, aceptar_aviso_ia: { host: a.host, version: a.version } } });
-    }
-    pintarConfiguracion();
-    cargarSalud(); cargarSuite();
-    api('/api/sesion').then((r) => { YO = r; }).catch(() => {}); // por si cambió el correo saliente (invitar por mail)
-    toast((CONF.cambiadas || []).length ? 'Guardado: ya se está usando, sin reiniciar.' : 'No había cambios');
-    document.getElementById('conf-' + sec)?.scrollIntoView({ block: 'nearest' });
-  } catch (e) { toast(e, true); } finally { if (btn) btn.disabled = false; }
-}
+
 
 async function probarConf(sec, btn) {
-  if (sec === 'ia' && IAUI && $('#conf-ia')) { probarIA(btn); return; }
   const caja = $(`#conf-${sec} .prueba`);
-  btn.disabled = true; btn.textContent = 'Probando...';
+  const txt = btn.querySelector('span');
+  if (sec === 'ia' && IAUI && $('#conf-ia')) {
+    await probarIA(btn);
+    if (!caja.classList.contains('hidden') && /bien|mal/.test(caja.className)) {
+      CONFUI.pruebas.ia = { cls: caja.classList.contains('bien') ? 'bien' : 'mal', html: caja.innerHTML, cuando: Date.now() };
+      caja.insertAdjacentHTML('beforeend', cuandoPrueba(CONFUI.pruebas.ia));
+    }
+    return;
+  }
+  btn.disabled = true; txt.textContent = 'Probando...';
   caja.className = 'prueba'; caja.textContent = 'Probando...';
+  let p;
   try {
     const destino = sec === 'correo_salida' && $('#smtpDestino') ? $('#smtpDestino').value.trim() : '';
     const r = await api('/api/configuracion/probar/' + sec, { method: 'POST', json: { cambios: cambiosDe(sec, true), destino } });
-    caja.className = 'prueba ' + (r.exito ? 'bien' : 'mal');
-    caja.innerHTML = `${r.exito ? I.check : I.alerta}<span>${esc(r.mensaje)}</span>`;
-  } catch (e) { caja.className = 'prueba mal'; caja.innerHTML = `${I.alerta}<span>${esc(e.message)}</span>`; }
-  finally { btn.disabled = false; btn.textContent = 'Probar'; }
+    p = { cls: r.exito ? 'bien' : 'mal', html: `${r.exito ? I.check : I.alerta}<span>${esc(r.mensaje)}</span>` };
+  } catch (e) { p = { cls: 'mal', html: `${I.alerta}<span>${esc(e.message)}</span>` }; }
+  finally { btn.disabled = false; txt.textContent = 'Probar'; }
+  p.cuando = Date.now();
+  CONFUI.pruebas[sec] = p;
+  caja.className = 'prueba ' + p.cls;
+  caja.innerHTML = p.html + cuandoPrueba(p);
 }
 
 // WhatsApp: estado, QR y vinculación (lo que antes estaba en Canales).
@@ -3059,6 +3514,7 @@ function pintarCopias() {
   const tabla = l.length
     ? `<div class="tabla-scroll"><table class="t"><thead><tr><th>Cuándo</th><th>Tipo</th><th>Dónde</th><th>Tamaño</th><th>Filas</th><th>Estado</th><th></th></tr></thead><tbody>${filas}</tbody></table></div>`
     : '<p class="muted">Todavía no hay copias.</p>';
+  pintarAvisoCopias(l);
   const ejemplo = (l.find((c) => c.estado === 'ok') || {}).clave || 'copias/factorum-20261127-033000.copia';
   const nombre = ejemplo.split('/').pop();
   caja.innerHTML = `<div class="pase-cab"><strong>Copias</strong><span class="sp"></span><button type="button" class="ghost mini" data-accion="hacerCopia"${cargarCopias.esperando ? ' disabled' : ''}>${cargarCopias.esperando ? 'Haciendo la copia...' : 'Hacer una copia ahora'}</button></div>
@@ -3075,6 +3531,29 @@ function pintarCopias() {
       <p class="muted">Con una copia descargada: subila al servidor (por ejemplo a /data) y pasá la ruta del archivo. En una base nueva y vacía funciona igual.</p>
     </details>`;
   tarjetas('#copiasLista');
+}
+
+// pintarAvisoCopias: lo pendiente de las copias, arriba de la tarjeta. Sin copias o con la diaria
+// apagada, el aviso y «Activar con lo recomendado» (si el servidor no las fija).
+function pintarAvisoCopias(l) {
+  const caja = $('#copiasAviso');
+  if (!caja) return;
+  const ca = CONF.campos.find((c) => c.clave === 'copias.activo') || {};
+  const buenas = l.filter((c) => c.estado === 'ok');
+  const ultima = l[0];
+  let txt = '', boton = false, cls = '';
+  if (!ca.valor) {
+    txt = buenas.length ? `${conPunto(`La copia diaria está apagada: la última buena es del ${fechaHora(buenas[0].creado)}`)} Si se rompe el servidor, se pierde lo que se cargó desde entonces.`
+      : 'Todavía no hay ninguna copia. Si se rompe el servidor, se pierde la base.';
+    txt += COPIAS && COPIAS.destino === 'r2' ? ' Con R2 activo, las copias van a tu bucket.' : ' Conviene activar R2: una copia en el mismo disco no sirve si se rompe el disco.';
+    if (ca.bloqueado) txt += ` Las apaga el servidor: se prenden en la variable ${ca.env}.`;
+    boton = !ca.bloqueado;
+  } else if (ultima && ultima.estado === 'error') {
+    txt = `La última copia falló (${fechaHora(ultima.creado)}): ${ultima.error || 'sin detalle'}. Probá «Hacer una copia ahora».`; cls = ' mal';
+  } else if (!buenas.length) {
+    txt = `Todavía no hay ninguna copia: la primera se hace hoy a las ${COPIAS.hora || '03:30'} (Buenos Aires), o tocá «Hacer una copia ahora».`; cls = ' info';
+  }
+  caja.innerHTML = txt ? `<div class="conf-pend${cls}" role="note">${cls === ' info' ? I.info : I.alerta}<p>${esc(txt)}</p>${boton ? '<button type="button" data-accion="copiasRecomendadas">Activar con lo recomendado</button>' : ''}</div>` : '';
 }
 
 async function hacerCopia(btn) {
@@ -3405,11 +3884,270 @@ async function cargarAuditoria() {
   } catch (e) { toast(e, true); }
 }
 
+// ---------- Buscador (Ctrl+K o Cmd+K) ----------
+// Una paleta que busca a la vez comprobantes, proveedores, lotes y ajustes (GET /api/buscar, con los
+// permisos de quien busca) y las acciones de la pantalla. Es un diálogo: el foco no sale, Esc cierra,
+// las flechas se mueven por la lista (aria-activedescendant) y Enter abre.
+const esMac = /Mac|iPhone|iPad/i.test(navigator.platform || navigator.userAgent || '');
+const PAL = { abierta: false, q: '', periodo: '', items: [], activo: -1, ctrl: null, timer: 0, previo: null, datos: null, buscando: false };
+
+// accionesPaleta: lo que se puede hacer desde el buscador, según los permisos.
+function accionesPaleta() {
+  const L = [];
+  const add = (t, pal, ico, fn) => L.push({ tipo: 'accion', t, pal, ico, fn });
+  const v = (id, t, pal) => { if (vistaPermitida(id)) add(t, pal, id, () => ir(id)); };
+  v('inicio', 'Ir a Inicio', 'panel resumen hoy');
+  v('revisar', 'Revisar lo pendiente', 'bandeja errores para revisar');
+  v('retenido', 'Correo retenido', 'mails remitentes');
+  v('verificar', 'Verificar una factura', 'legal constatar ticket');
+  if (vistaPermitida('subir') && !sinClientes()) add('Cargar facturas', 'subir pdf zip fotos lote', 'subir', () => ir('subir'));
+  v('lotes', 'Lotes', 'cargas');
+  v('comprobantes', 'Comprobantes', 'facturas tickets listado exportar excel');
+  v('resumen', 'Resumen por alícuota y rubro', 'iva totales');
+  v('conciliacion', 'Conciliación con ARCA', 'mis comprobantes cruzar');
+  v('libro_iva', 'Libro IVA Digital', 'exportar arca compras ventas importaciones zip');
+  v('papelera', 'Papelera', 'borrados restaurar');
+  v('configuracion', 'Configuración', 'ajustes');
+  v('usuarios', 'Usuarios', 'personas roles');
+  if (vistaPermitida('usuarios')) add('Nueva persona', 'usuario alta invitar crear', 'mas', () => { ir('usuarios'); formUsuario(null); });
+  v('claves', 'Claves de API', 'token');
+  if (vistaPermitida('claves')) add('Nueva clave de API', 'token crear', 'mas', () => { ir('claves'); formClave(); });
+  v('conectar', 'Conectar (API y MCP)', 'mcp asistentes claude');
+  v('auditoria', 'Auditoría', 'registro quién hizo qué');
+  const dark = document.documentElement.getAttribute('data-theme') === 'dark';
+  add(dark ? 'Tema claro' : 'Tema oscuro', 'modo noche colores apariencia', dark ? 'sol' : 'luna', alternarTema);
+  add('Novedades', 'cambios versión changelog', 'novedades', () => verNovedades(true));
+  add('Acerca de Factorum', 'versión', 'info', acercaDe);
+  const id = (YO && YO.identidad) || {};
+  if (id.tipo === 'sesion' && !(YO.cuenta && YO.cuenta.origen === 'lockatus')) add('Cambiar mi contraseña', 'clave', 'llave', () => pedirCambioClave(false));
+  add('Cerrar sesión', 'salir', 'salir', () => { if (confirmarDescartar()) salir(); });
+  return L;
+}
+
+// Con un CUIT de cliente escrito entero: cargar a su nombre, sus comprobantes y su Libro IVA.
+function accionesDeCUIT(q) {
+  const d = soloDig(q);
+  if (d.length !== 11 || !cuitValido(d) || sinClientes()) return [];
+  const yo = (YO && YO.identidad) || {};
+  if (yo.cuits && !yo.cuits.includes(d)) return [];
+  const c = cuit(d);
+  const L = [];
+  if (vistaPermitida('subir')) L.push({ tipo: 'accion', t: `Cargar facturas para el cliente ${c}`, ico: 'subir', fn: () => { ir('subir'); $('#loteCliente').value = c; $('#archSubir').focus(); } });
+  L.push({ tipo: 'accion', t: `Comprobantes del cliente ${c}`, ico: 'comprobantes', fn: () => { Object.assign(filtro, { estado: '', clase: '', rubro: '', q: '', cliente: d, desde: '', hasta: '', lote: '', offset: 0 }); ir('comprobantes'); } });
+  if (vistaPermitida('libro_iva')) L.push({ tipo: 'accion', t: `Libro IVA Digital del cliente ${c}, ${mesTxt(mesAtajo('mes_pasado'))}`, ico: 'libro_iva', fn: () => { Object.assign(LIB, { cliente: d, periodo: mesAtajo('mes_pasado') }); ir('libro_iva'); } });
+  return L;
+}
+
+function alternarTema() {
+  const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', next);
+  try { localStorage.setItem('factorum.tema', next); } catch { /* nada */ }
+  pintarMenu();
+}
+
+// marcarTexto resalta lo buscado (sin distinguir mayúsculas ni tildes) sobre el texto escapado.
+function marcarTexto(texto, q) {
+  const t = String(texto || '');
+  const palabras = sinTildes(q).split(/\s+/).filter((w) => w.length >= 2);
+  const chars = [...t];
+  const n = chars.map((ch) => sinTildes(ch));
+  if (!palabras.length || n.some((x) => x.length !== 1)) return esc(t);
+  const plano = n.join('');
+  const marca = new Array(chars.length).fill(false);
+  for (const w of palabras) {
+    let i = plano.indexOf(w);
+    while (i >= 0) { for (let k = i; k < i + w.length; k++) marca[k] = true; i = plano.indexOf(w, i + w.length); }
+  }
+  let out = '', abierto = false;
+  chars.forEach((ch, i) => {
+    if (marca[i] && !abierto) { out += '<mark>'; abierto = true; }
+    if (!marca[i] && abierto) { out += '</mark>'; abierto = false; }
+    out += esc(ch);
+  });
+  return out + (abierto ? '</mark>' : '');
+}
+
+function abrirPaleta() {
+  if (!YO || PAL.abierta) return;
+  cerrarMenus();
+  PAL.abierta = true;
+  PAL.previo = document.activeElement;
+  $('#paleta').classList.remove('hidden');
+  document.documentElement.classList.add('sin-scroll');
+  const i = $('#paletaQ');
+  i.value = PAL.q;
+  i.select();
+  i.focus();
+  buscarPaleta(true);
+}
+
+function cerrarPaleta() {
+  if (!PAL.abierta) return;
+  PAL.abierta = false;
+  clearTimeout(PAL.timer);
+  if (PAL.ctrl) PAL.ctrl.abort();
+  $('#paleta').classList.add('hidden');
+  document.documentElement.classList.remove('sin-scroll');
+  if (PAL.previo && PAL.previo.focus && document.contains(PAL.previo)) PAL.previo.focus();
+}
+
+function primeroDelMes() { const d = new Date(); return isoLocal(new Date(d.getFullYear(), d.getMonth(), 1)); }
+
+// buscarPaleta pide los resultados al servidor (lo último que se escribió gana).
+function buscarPaleta(ya) {
+  clearTimeout(PAL.timer);
+  const q = PAL.q.trim();
+  if (q.length < 2) { PAL.datos = null; PAL.buscando = false; pintarPaleta(); return; }
+  PAL.buscando = true;
+  pintarPaleta();
+  PAL.timer = setTimeout(async () => {
+    if (PAL.ctrl) PAL.ctrl.abort();
+    const ctrl = new AbortController();
+    PAL.ctrl = ctrl;
+    const qs = new URLSearchParams({ q, limite: '5' });
+    if (PAL.periodo === 'mes') qs.set('desde', primeroDelMes());
+    try {
+      const r = await fetch('/api/buscar?' + qs, { headers: { 'X-Factorum': '1' }, credentials: 'same-origin', signal: ctrl.signal });
+      if (r.status === 401) { cerrarPaleta(); sinSesion(); return; }
+      const d = await r.json();
+      if (!r.ok || d.ok === false) throw new Error(d.error || `Error ${r.status}`);
+      if (ctrl !== PAL.ctrl) return;
+      PAL.datos = Object.assign(d, { periodo: PAL.periodo });
+    } catch (e) {
+      if (e.name === 'AbortError') return;
+      PAL.datos = { q, error: e.message };
+    }
+    PAL.buscando = false;
+    pintarPaleta();
+  }, ya ? 0 : 180);
+}
+
+const ICO_PAL = { comprobante: 'comprobantes', proveedor: 'edificio', lote: 'lotes', ajuste: 'configuracion' };
+
+function opcionPaleta(it, i) {
+  const q = PAL.q.trim();
+  let t, m = '', der = '';
+  if (it.tipo === 'comprobante') {
+    const c = it.c;
+    const nro = c.despacho ? `Despacho ${c.despacho}` : `${TIPOS[c.tipo] || 'Comprobante'} ${String(c.punto_venta || 0).padStart(5, '0')}-${String(c.numero || 0).padStart(8, '0')}`;
+    t = `${marcarTexto(nro, q)}${c.razon_social_emisor ? ' · ' + marcarTexto(c.razon_social_emisor, q) : ''}`;
+    m = [fecha(c.fecha), c.cuit_emisor ? 'CUIT ' + cuit(c.cuit_emisor) : '', ETQ[c.estado] || c.estado, `lote ${c.lote_id}`].filter(Boolean).map(esc).join(' · ');
+    der = c.total ? esc(montoMon(c.total, c.moneda)) : '';
+  } else if (it.tipo === 'proveedor') {
+    const p = it.p;
+    t = marcarTexto(p.razon_social || cuit(p.cuit), q);
+    m = esc(`CUIT ${cuit(p.cuit)} · ${mil(p.comprobantes)} ${p.comprobantes === 1 ? 'comprobante' : 'comprobantes'}${p.ultimo ? ' · el último del ' + fecha(p.ultimo) : ''}`);
+    der = '<span class="pal-ver">Ver todos ›</span>';
+  } else if (it.tipo === 'lote') {
+    const l = it.l;
+    t = marcarTexto(nombreLote(l), q);
+    m = esc([`lote ${l.id}`, l.cliente_cuit ? 'cliente ' + cuit(l.cliente_cuit) : 'sin cliente', `${mil(l.comprobantes)} ${l.comprobantes === 1 ? 'comprobante' : 'comprobantes'}`, fechaCorta(l.creado)].join(' · '));
+  } else if (it.tipo === 'ajuste') {
+    const a = it.a;
+    t = marcarTexto(a.clave ? a.titulo : a.seccion_titulo, q);
+    m = esc(a.clave ? `Configuración › ${a.seccion_titulo}` : 'Una sección de la configuración');
+  } else if (it.tipo === 'todos') {
+    t = esc(it.t);
+  } else {
+    t = marcarTexto(it.t, q);
+  }
+  const ico = I[it.ico || ICO_PAL[it.tipo]] || I.flecha;
+  return `<div class="pal-it" role="option" id="po-${i}" data-i="${i}" aria-selected="${i === PAL.activo}">
+    <span class="pal-ico" aria-hidden="true">${ico}</span>
+    <span class="pal-txt"><span class="pal-t">${t}</span>${m ? `<span class="pal-m">${m}</span>` : ''}</span>
+    ${der ? `<span class="pal-der">${der}</span>` : ''}<kbd class="pal-enter" aria-hidden="true">Enter</kbd></div>`;
+}
+
+function pintarPaleta() {
+  const q = PAL.q.trim();
+  const d = PAL.datos && PAL.datos.q === q ? PAL.datos : null;
+  const items = [];
+  let html = '';
+  const grupo = (id, titulo, lista, total) => {
+    if (!lista.length) return;
+    const cuenta = total ? ` · ${mil(total)}` : '';
+    html += `<div class="pal-grupo" role="group" aria-labelledby="pg-${id}"><div class="pal-grp" id="pg-${id}" role="presentation">${esc(titulo)}${cuenta}</div>
+      ${lista.map((it) => opcionPaleta(it, items.push(it) - 1)).join('')}</div>`;
+  };
+  const norm = sinTildes(q);
+  const palabras = norm.split(/\s+/).filter(Boolean);
+  const acciones = accionesPaleta().filter((a) => !q || palabras.every((w) => sinTildes(`${a.t} ${a.pal}`).includes(w)));
+  if (d && !d.error) {
+    const cbs = d.comprobantes.map((c) => ({ tipo: 'comprobante', c }));
+    // Ver todos en Comprobantes: su filtro busca por razón social, CUIT y número (no por importe).
+    if (d.total_comprobantes > d.comprobantes.length && (!/^\$?\s*[\d.,]+$/.test(q) || /^\d+$/.test(q))) {
+      cbs.push({ tipo: 'todos', t: `Ver los ${mil(d.total_comprobantes)} comprobantes en Comprobantes`, ico: 'comprobantes' });
+    }
+    grupo('cb', 'Comprobantes', cbs, d.total_comprobantes);
+    grupo('pr', 'Proveedores', d.proveedores.map((p) => ({ tipo: 'proveedor', p })), d.total_proveedores);
+    grupo('lo', 'Lotes', d.lotes.map((l) => ({ tipo: 'lote', l })), d.total_lotes);
+    grupo('aj', 'Ajustes', (d.ajustes || []).map((a) => ({ tipo: 'ajuste', a })), 0);
+  }
+  grupo('ac', q ? 'Acciones' : 'Ir a', [...accionesDeCUIT(q), ...acciones].slice(0, q ? 6 : 10), 0);
+  PAL.items = items;
+  if (PAL.activo >= items.length || PAL.activo < 0) PAL.activo = items.length ? 0 : -1;
+  $('#paletaLista').innerHTML = html || (q.length >= 2 && !PAL.buscando ? `<p class="pal-vacio">${d && d.error ? esc(d.error) : `No encontramos nada con «${esc(q)}».`}</p>` : '');
+  $('#paletaLista').classList.toggle('cargando', PAL.buscando);
+  marcarActivo(false);
+  $('#paletaEstado').textContent = PAL.buscando ? 'Buscando…'
+    : q.length >= 2 ? `${items.length} ${items.length === 1 ? 'resultado' : 'resultados'}` : 'Escribí al menos 2 letras o números para buscar.';
+  $$('#paleta [data-accion="paletaPeriodo"]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.periodo === PAL.periodo)));
+}
+
+function marcarActivo(scroll) {
+  const input = $('#paletaQ');
+  $$('#paletaLista .pal-it').forEach((o) => o.setAttribute('aria-selected', String(Number(o.dataset.i) === PAL.activo)));
+  if (PAL.activo >= 0) {
+    input.setAttribute('aria-activedescendant', 'po-' + PAL.activo);
+    if (scroll) { const o = document.getElementById('po-' + PAL.activo); if (o) o.scrollIntoView({ block: 'nearest' }); }
+  } else input.removeAttribute('aria-activedescendant');
+}
+
+function moverPaleta(paso) {
+  if (!PAL.items.length) return;
+  PAL.activo = (PAL.activo + paso + PAL.items.length) % PAL.items.length;
+  marcarActivo(true);
+}
+
+// ejecutarPaleta abre lo elegido.
+function ejecutarPaleta(i) {
+  const it = PAL.items[i];
+  if (!it) return;
+  const q = PAL.q.trim();
+  cerrarPaleta();
+  if (it.tipo === 'comprobante') { listado = [{ id: it.c.id }]; abrirRevision(0); return; }
+  if (it.tipo === 'proveedor') {
+    Object.assign(filtro, { estado: '', clase: '', rubro: '', q: it.p.cuit, cliente: '', desde: '', hasta: '', lote: '', offset: 0 });
+    ir('comprobantes'); return;
+  }
+  if (it.tipo === 'todos') {
+    Object.assign(filtro, { estado: '', clase: '', rubro: '', q, cliente: '', desde: PAL.periodo === 'mes' ? primeroDelMes() : '', hasta: '', lote: '', offset: 0 });
+    ir('comprobantes'); return;
+  }
+  if (it.tipo === 'lote') { Object.assign(filtro, { lote: String(it.l.id), estado: '', q: '', cliente: '', desde: '', hasta: '', clase: '', rubro: '', offset: 0 }); ir('comprobantes'); return; }
+  if (it.tipo === 'ajuste') { IR_SECCION = it.a.seccion; IR_CAMPO = it.a.clave || ''; ir('configuracion'); return; }
+  it.fn();
+}
+
+function teclaPaleta(ev) {
+  if (ev.key === 'Escape') { ev.preventDefault(); cerrarPaleta(); return; }
+  if (ev.key === 'Tab') { atraparFoco(ev, $('#paletaCard')); return; }
+  if (ev.target.id !== 'paletaQ') return;
+  if (ev.key === 'ArrowDown') { ev.preventDefault(); moverPaleta(1); }
+  else if (ev.key === 'ArrowUp') { ev.preventDefault(); moverPaleta(-1); }
+  else if (ev.key === 'Enter') { ev.preventDefault(); if (!PAL.buscando || PAL.items.length) ejecutarPaleta(Math.max(PAL.activo, 0)); }
+}
+
 // ---------- Eventos ----------
 document.addEventListener('click', (ev) => {
+  // Un resultado del buscador.
+  const op = ev.target.closest('#paletaLista .pal-it');
+  if (op) { ejecutarPaleta(Number(op.dataset.i)); return; }
+  // En Configuración, cualquier clic puede cambiar algo (Generar, Usar un modelo...): la barra se pone al día.
+  if (ev.target.closest('#configuracion')) setTimeout(actualizarBarra, 0);
   const el = ev.target.closest('[data-accion]');
   if (!el || !el.closest('.menu-wrap')) {
-    if (!ev.target.closest('.menu-wrap')) { $('#menu').classList.add('hidden'); $('#suiteMenu').classList.add('hidden'); }
+    if (!ev.target.closest('.menu-wrap')) cerrarMenus();
     if (!el) return;
   }
   const a = el.dataset.accion;
@@ -3417,19 +4155,41 @@ document.addEventListener('click', (ev) => {
     case 'ir': ir(el.dataset.vista); break;
     case 'nav': toggleNav(); break;
     case 'cerrarNav': document.documentElement.removeAttribute('data-nav-movil'); break;
-    case 'menu': pintarMenu(); $('#suiteMenu').classList.add('hidden'); $('#menu').classList.toggle('hidden'); break;
-    case 'suite': pintarSuite(); $('#menu').classList.add('hidden'); $('#suiteMenu').classList.toggle('hidden'); break;
+    case 'menu': {
+      pintarMenu(); $('#suiteMenu').classList.add('hidden'); $('#suiteBtn').setAttribute('aria-expanded', 'false');
+      const abierto = $('#menu').classList.toggle('hidden') === false;
+      $('#yoBtn').setAttribute('aria-expanded', String(abierto));
+      break;
+    }
+    case 'suite': {
+      pintarSuite(); $('#menu').classList.add('hidden'); $('#yoBtn').setAttribute('aria-expanded', 'false');
+      const abierto = $('#suiteMenu').classList.toggle('hidden') === false;
+      $('#suiteBtn').setAttribute('aria-expanded', String(abierto));
+      break;
+    }
+    case 'buscar': cerrarMenus(); abrirPaleta(); break;
+    case 'paletaCerrar': cerrarPaleta(); break;
+    case 'paletaFondo': if (ev.target === el) cerrarPaleta(); break;
+    case 'paletaPeriodo': PAL.periodo = el.dataset.periodo; buscarPaleta(true); $('#paletaQ').focus(); break;
+    case 'guia': abrirGuia(el.dataset.sec, el); break;
+    case 'guiaCerrar': cerrarGuia(); break;
+    case 'guiaFondo': if (ev.target === el) cerrarGuia(); break;
+    case 'confVer': CONFUI.ver = el.dataset.ver; aplicarFiltroConf(); break;
+    case 'confAbrir': abrirSecMovil(el.dataset.sec); break;
+    case 'confVolver': volverMovil(); break;
+    case 'confGuardar': guardarTodo(el); break;
+    case 'confDescartar': descartarConf(); break;
+    case 'copiasRecomendadas': copiasRecomendadas(); break;
     case 'abrirApp': abrirApp(el.dataset.app, el); break;
     case 'miClave': $('#menu').classList.add('hidden'); pedirCambioClave(false); break;
     case 'copiar': copiar(el.dataset.texto); break;
     case 'modalCerrarFijo': cerrarModal(true); break;
-    case 'saltar': ev.preventDefault(); document.getElementById('conf-' + el.dataset.sec)?.scrollIntoView({ behavior: 'smooth', block: 'start' }); break;
-    case 'guardarConf': guardarConf(el.dataset.sec, null, el); break;
+    case 'saltar': ev.preventDefault(); saltarA(el.dataset.sec, true); break;
     case 'pase': accionPase(el.dataset.que, '', el); break;
     case 'liberarDisco': pedirLiberar(); break;
     case 'liberarConfirmar': accionPase('liberar', $('#liberarConf').value.trim().toLowerCase(), el).then((ok) => { if (ok) cerrarModal(); }); break;
     case 'hacerCopia': hacerCopia(el); break;
-    case 'verCopias': ir('configuracion'); setTimeout(() => document.getElementById('conf-copias')?.scrollIntoView({ block: 'start' }), 400); break;
+    case 'verCopias': IR_SECCION = 'copias'; ir('configuracion'); break;
     case 'probarConf': probarConf(el.dataset.sec, el); break;
     case 'iaRecargar': iaPedirModelos(true); break;
     case 'iaUsar': iaUsar(el.dataset.modelo); break;
@@ -3443,8 +4203,14 @@ document.addEventListener('click', (ev) => {
       break;
     }
     case 'borrarSecreto': {
-      const c = CONF.campos.find((x) => x.clave === el.dataset.clave);
-      if (c && confirm(`¿Borrar «${c.etiqueta}»? Vuelve al valor del servidor, si hay uno.`)) guardarConf(c.seccion, { [c.clave]: null });
+      // Queda en los cambios sin guardar: al guardar vuelve al valor del servidor, si hay uno.
+      const i = document.getElementById(idCampo(el.dataset.clave));
+      if (!i) break;
+      const borrar = !i.dataset.borrar;
+      if (borrar) { i.dataset.borrar = '1'; i.value = ''; i.placeholder = 'Se borra al guardar'; } else { delete i.dataset.borrar; i.placeholder = 'Guardada'; }
+      el.textContent = borrar ? 'No borrar' : 'Borrar';
+      el.setAttribute('aria-pressed', String(borrar));
+      actualizarBarra();
       break;
     }
     case 'nuevoUsuario': formUsuario(null); break;
@@ -3462,14 +4228,8 @@ document.addEventListener('click', (ev) => {
     case 'nuevaClave': formClave(); break;
     case 'revocarClave': revocarClave(el.dataset.id); break;
     case 'audPagina': audOffset = Math.max(0, audOffset + Number(el.dataset.dir) * AUD_LIM); cargarAuditoria(); break;
-    case 'tema': {
-      const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
-      document.documentElement.setAttribute('data-theme', next);
-      try { localStorage.setItem('factorum.tema', next); } catch { /* nada */ }
-      pintarMenu();
-      break;
-    }
-    case 'salir': $('#menu').classList.add('hidden'); salir(); break;
+    case 'tema': alternarTema(); break;
+    case 'salir': cerrarMenus(); if (confirmarDescartar()) salir(); break;
     case 'ojo': {
       const i = document.getElementById(el.dataset.para);
       i.type = i.type === 'password' ? 'text' : 'password';
@@ -3587,6 +4347,7 @@ document.addEventListener('submit', (ev) => {
 });
 
 document.addEventListener('change', (ev) => {
+  if (ev.target.closest('#configuracion')) setTimeout(actualizarBarra, 0);
   // Marcar «Usar IA si hace falta» con una IA externa: la primera vez, el aviso.
   if ((ev.target.id === 'iaVerificar' || ev.target.id === 'loteIA') && ev.target.checked) {
     const ck = ev.target;
@@ -3607,6 +4368,18 @@ document.addEventListener('change', (ev) => {
 });
 
 document.addEventListener('input', (ev) => {
+  if (ev.target.id === 'paletaQ') { PAL.q = ev.target.value; PAL.activo = 0; buscarPaleta(false); return; }
+  if (ev.target.id === 'confFiltro' || ev.target.id === 'confFiltroMovil') {
+    CONFUI.filtro = ev.target.value;
+    $(ev.target.id === 'confFiltro' ? '#confFiltroMovil' : '#confFiltro').value = ev.target.value;
+    aplicarFiltroConf();
+    return;
+  }
+  if (ev.target.closest('#configuracion')) {
+    const c = ev.target.closest('.con-error');
+    if (c) { c.classList.remove('con-error'); ev.target.removeAttribute('aria-invalid'); $('.err-campo', c).textContent = ''; delete $('#confBarra').dataset.error; }
+    actualizarBarra();
+  }
   if (ev.target.id === 'liberarConf') { const b = $('[data-accion="liberarConfirmar"]'); if (b) b.disabled = ev.target.value.trim().toLowerCase() !== 'liberar'; }
   if (ev.target.id === 'borrarLoteConf') { const b = $('[data-accion="borrarLoteConfirmar"]'); if (b) b.disabled = ev.target.value.trim().toLowerCase() !== ev.target.dataset.esperado; }
   if (ev.target.id === 'borrarYaConf') { const b = $('[data-accion="borrarYaConfirmar"]'); if (b) b.disabled = ev.target.value.trim().toLowerCase() !== 'borrar'; }
@@ -3625,9 +4398,29 @@ document.addEventListener('keydown', (ev) => {
     if (ev.key === 'Escape') { ev.preventDefault(); cerrarAvisoIA(false); } else if (ev.key === 'Tab') atraparFoco(ev, $('#aiaCard'));
     return;
   }
+  const mod = (ev.ctrlKey || ev.metaKey) && !ev.altKey && !ev.shiftKey;
+  // Ctrl+K (Cmd+K en Mac): el buscador, desde cualquier vista.
+  if (mod && ev.key.toLowerCase() === 'k' && YO && $('#login').classList.contains('hidden') && $('#modal').classList.contains('hidden')) {
+    ev.preventDefault();
+    if (PAL.abierta) cerrarPaleta(); else { cerrarGuia(); abrirPaleta(); }
+    return;
+  }
+  if (PAL.abierta) { teclaPaleta(ev); return; }
+  if (GUIA) {
+    if (ev.key === 'Escape') { ev.preventDefault(); cerrarGuia(); } else if (ev.key === 'Tab') atraparFoco(ev, $('#guiaCard'));
+    return;
+  }
+  // Ctrl+S (Cmd+S) en Configuración: guardar los cambios.
+  if (mod && ev.key.toLowerCase() === 's' && vista === 'configuracion' && $('#modal').classList.contains('hidden') && hayCambiosConf()) {
+    ev.preventDefault(); guardarTodo($('#confGuardar')); return;
+  }
   if (ev.key === 'Escape' && !$('#modal').classList.contains('hidden')) { cerrarModal(); return; }
   if (!$('#modal').classList.contains('hidden')) return; // con una ventana abierta, el teclado es de la ventana
-  if (ev.key === 'Escape') { $('#menu').classList.add('hidden'); $('#suiteMenu').classList.add('hidden'); }
+  if (ev.key === 'Escape') {
+    const abierto = !$('#menu').classList.contains('hidden') ? '#yoBtn' : !$('#suiteMenu').classList.contains('hidden') ? '#suiteBtn' : '';
+    cerrarMenus();
+    if (abierto) $(abierto).focus();
+  }
   if (!rev || $('#revision').classList.contains('hidden')) return;
   if (ev.key === 'Escape') cerrarRevision();
   const escribiendo = ev.target.closest && ev.target.closest('input, textarea, select');
@@ -3694,7 +4487,19 @@ for (const [zona, sel] of [['#zonaVerificar', '#archVerificar'], ['#zonaSubir', 
   input.form.addEventListener('reset', () => setTimeout(() => mostrarArchivos(z, input)));
 }
 
+// El mouse sobre un resultado del buscador lo marca (sin mover la lista).
+$('#paletaLista').addEventListener('mousemove', (ev) => {
+  const op = ev.target.closest('.pal-it');
+  if (op && Number(op.dataset.i) !== PAL.activo) { PAL.activo = Number(op.dataset.i); marcarActivo(false); }
+});
+// Cerrar la pestaña o recargar con cambios sin guardar en Configuración: el aviso del navegador.
+window.addEventListener('beforeunload', (ev) => {
+  if (hayCambiosConf()) { ev.preventDefault(); ev.returnValue = ''; }
+});
+
 // ---------- Arranque ----------
+$$('.kbd-mod').forEach((k) => { k.textContent = esMac ? '⌘' : 'Ctrl'; });
+$('#buscadorBtn').setAttribute('aria-label', `Buscar en Factorum (${esMac ? 'Cmd' : 'Ctrl'}+K)`);
 $$('.pass-toggle').forEach((b) => { b.innerHTML = I.ojo; });
 arrancar();
 

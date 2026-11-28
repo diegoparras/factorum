@@ -3,6 +3,7 @@ package ajustes
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/diegoparras/factorum/internal/config"
@@ -104,5 +105,40 @@ func TestCamposCompletos(t *testing.T) {
 	}
 	if ultimos("corto") != "" || ultimos("123456789012abcd") != "abcd" {
 		t.Error("últimos 4")
+	}
+}
+
+// El remitente y "Responder a" se validan al guardar, con la forma correcta cuando se adivina.
+func TestDecodificarDireccion(t *testing.T) {
+	campoDe := func(k string) Campo {
+		c, ok := CampoPorClave(k)
+		if !ok {
+			t.Fatalf("falta %s", k)
+		}
+		return c
+	}
+	for _, c := range []struct {
+		clave, valor, quiere string
+	}{
+		{"smtp.remitente", `"Factorum <diego@gmail.com>"`, ""},
+		{"smtp.remitente", `"diego@gmail.com"`, ""},
+		{"smtp.remitente", `""`, ""},
+		{"smtp.remitente", `"Factorum (diego@gmail.com)"`, "Escribila así: Factorum <diego@gmail.com>"},
+		{"smtp.remitente", `"Factorum diego arroba gmail"`, "no es una dirección válida"},
+		{"smtp.responder_a", `"(estudio@estudio.com.ar)"`, "Escribila así: estudio@estudio.com.ar"},
+	} {
+		_, err := decodificar(campoDe(c.clave), json.RawMessage(c.valor))
+		if c.quiere == "" {
+			if err != nil {
+				t.Errorf("%s %s: %v", c.clave, c.valor, err)
+			}
+			continue
+		}
+		if err == nil || !strings.Contains(err.Error(), c.quiere) {
+			t.Errorf("%s %s: error %v, quería que diga %q", c.clave, c.valor, err, c.quiere)
+		}
+		if CampoDelError(err) != c.clave {
+			t.Errorf("%s: el error no marca el campo (%q)", c.clave, CampoDelError(err))
+		}
 	}
 }

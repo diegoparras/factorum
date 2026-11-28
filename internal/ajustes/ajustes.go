@@ -25,6 +25,7 @@ import (
 	"github.com/diegoparras/factorum/internal/almacen"
 	"github.com/diegoparras/factorum/internal/arca"
 	"github.com/diegoparras/factorum/internal/config"
+	"github.com/diegoparras/factorum/internal/correo"
 	"github.com/diegoparras/factorum/internal/iaproveedor"
 	"github.com/diegoparras/factorum/internal/store"
 )
@@ -66,6 +67,8 @@ type Campo struct {
 	Min      int           `json:"min,omitempty"`
 	Max      int           `json:"max,omitempty"`
 	Dominios bool          `json:"dominios,omitempty"` // emails: también acepta @dominio
+	// Direccion: un remitente o una dirección ("Nombre <mail>" o "mail"): se valida al guardar.
+	Direccion bool `json:"-"`
 	// Interno: lo guarda Factorum (por ejemplo, el permiso de Google), no la pantalla.
 	Interno bool `json:"-"`
 
@@ -603,6 +606,11 @@ func decodificar(c Campo, raw json.RawMessage) (any, error) {
 		v = strings.TrimSpace(v)
 		if len(v) > 4096 {
 			return nil, mal("es demasiado largo")
+		}
+		if c.Direccion {
+			if p := correo.ProblemaDireccion(v); p != "" {
+				return nil, mal(p)
+			}
 		}
 		switch c.Tipo {
 		case URL:

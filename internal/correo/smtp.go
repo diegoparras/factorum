@@ -105,7 +105,7 @@ func (s SMTP) Conectar(ctx context.Context) (*Conexion, error) {
 		return nil, ErrSinSMTP
 	}
 	if _, err := mail.ParseAddress(s.Remitente); err != nil {
-		return nil, fmt.Errorf("el remitente %q no es una dirección válida (por ejemplo: Factorum <facturas@estudio.com.ar>)", s.Remitente)
+		return nil, errRemitente(s.Remitente)
 	}
 	to := s.timeout()
 	addr := net.JoinHostPort(s.Host, strconv.Itoa(s.puerto()))
@@ -165,7 +165,7 @@ func (s SMTP) Enviar(ctx context.Context, m Mail) (string, error) {
 	}
 	de, err := mail.ParseAddress(s.Remitente)
 	if err != nil {
-		return "", fmt.Errorf("el remitente %q no es una dirección válida", s.Remitente)
+		return "", errRemitente(s.Remitente)
 	}
 	var para []string
 	for _, p := range m.Para {
@@ -200,7 +200,7 @@ func (s SMTP) Enviar(ctx context.Context, m Mail) (string, error) {
 func (s SMTP) Componer(m Mail, ahora time.Time) (string, []byte, error) {
 	de, err := mail.ParseAddress(s.Remitente)
 	if err != nil {
-		return "", nil, fmt.Errorf("el remitente %q no es una dirección válida", s.Remitente)
+		return "", nil, errRemitente(s.Remitente)
 	}
 	dom := dominio(de.Address)
 	if dom == "" {

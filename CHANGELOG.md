@@ -2,6 +2,15 @@
 
 Cada versión publicada tiene su sección. La imagen Docker toma la versión de la primera.
 
+## [0.11.1] - 2026-11-28
+
+### Arreglos
+
+- **Configuración en pantallas medianas**: la sección IA (visión) ya no se encima. Si la tarjeta queda angosta, «Probados por Factorum» pasa abajo del modelo y los nombres no se parten letra por letra.
+- **El resultado de «Probar»** ya no se sale de la tarjeta.
+- **Remitente mal escrito**: al guardar, Factorum marca el campo y dice cómo va. Por ejemplo, con «Factorum (facturas@estudio.com.ar)» explica que la dirección va entre < > y propone «Factorum <facturas@estudio.com.ar>». Lo mismo con «Responder a».
+- La barra de cambios sin guardar mantiene juntos «Descartar» y «Guardar cambios».
+
 ## [0.11.0] - 2026-11-28
 
 ### Buscar desde cualquier pantalla

@@ -114,9 +114,13 @@ func camposCorreo(add func(Campo)) {
 	g, s = texto(func(c *config.Config) *string { return &c.SMTPClave })
 	add(campo("smtp.clave", cs, "Contraseña", Secreto, "FACTORUM_SMTP_CLAVE", "En Gmail y Microsoft 365, una contraseña de aplicación; en un servicio transaccional, su clave de API o de SMTP.", "", g, s))
 	g, s = texto(func(c *config.Config) *string { return &c.SMTPRemitente })
-	add(campo("smtp.remitente", cs, "Remitente", Texto, "FACTORUM_SMTP_REMITENTE", "Nombre y dirección. El dominio tiene que estar autorizado en el servidor (SPF y DKIM).", "Factorum <facturas@estudio.com.ar>", g, s))
+	rem := campo("smtp.remitente", cs, "Remitente", Texto, "FACTORUM_SMTP_REMITENTE", "Nombre y dirección, con la dirección entre < >: Factorum <facturas@estudio.com.ar>. El dominio tiene que estar autorizado en el servidor (SPF y DKIM).", "Factorum <facturas@estudio.com.ar>", g, s)
+	rem.Direccion = true
+	add(rem)
 	g, s = texto(func(c *config.Config) *string { return &c.SMTPResponderA })
-	add(campo("smtp.responder_a", cs, "Responder a", Texto, "FACTORUM_SMTP_RESPONDER_A", "Opcional: a dónde van las respuestas (por ejemplo, el mail del estudio).", "estudio@estudio.com.ar", g, s))
+	resp := campo("smtp.responder_a", cs, "Responder a", Texto, "FACTORUM_SMTP_RESPONDER_A", "Opcional: a dónde van las respuestas (por ejemplo, el mail del estudio).", "estudio@estudio.com.ar", g, s)
+	resp.Direccion = true
+	add(resp)
 
 	// Avisos.
 	g, s = booleano(func(c *config.Config) *bool { return &c.AvisoLote })

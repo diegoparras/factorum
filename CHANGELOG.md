@@ -2,6 +2,31 @@
 
 Cada versión publicada tiene su sección. La imagen Docker toma la versión de la primera.
 
+## [0.11.0] - 2026-11-28
+
+### Buscar desde cualquier pantalla
+
+- Arriba, en el centro, el **buscador**: tocalo o apretá **Ctrl+K** (**Cmd+K** en Mac). En el celular, la lupa lo abre a pantalla completa.
+- Busca a la vez **comprobantes** (por número, como 0003-00045678, 3-45678 o solo 45678; por CUIT del emisor o del cliente; por razón social y por importe, como 44.062,50), **proveedores** (con cuántos comprobantes tienen), **lotes** (por nombre o número), **ajustes** de la configuración y **acciones** (Cargar facturas, Libro IVA Digital, Nueva persona, Tema oscuro...). Con «Este mes», solo los comprobantes del mes.
+- Con el teclado: flechas para moverse, Enter para abrir y Esc para cerrar. Un comprobante se abre en la revisión; un proveedor, en Comprobantes con sus facturas; un ajuste, en su sección de Configuración con el campo resaltado. Con un CUIT de cliente entero, además: cargar facturas a su nombre, sus comprobantes y su Libro IVA.
+- Cada uno ve solo lo suyo: los comprobantes y lotes de sus clientes, nada de la papelera, y los ajustes solo quien entra a Configuración.
+- A la derecha de la cabecera estás vos, con tu rol: ese botón abre el menú de siempre (tu contraseña, el tema, Novedades, Acerca de y Cerrar sesión).
+
+### Configuración, más clara
+
+- Arriba, cuántas secciones están **listas** («9 de 14») y el filtro **Todo / Pendientes**. A la izquierda, el **índice** por grupos (Instalación, Suite Escriba, Correo, Canales, Inteligencia, Datos) con el estado de cada sección y un filtro de ajustes; marca la sección que estás viendo.
+- Cada sección dice si está **lista**, si **falta configurar** (y por qué) o si está **apagada** porque es opcional (Lockatus, Telegram, WhatsApp, Webhook, Clientes y canales, IA, R2 y los avisos; el correo entrante, si lo apagás vos).
+- El paso a paso de cada sección pasó al botón **Guía**, que abre un panel al costado. Las casillas son interruptores y lo que fija el servidor aparece con el candado «Fijado por el servidor» y la variable.
+- **Un solo guardado**: abajo aparece la barra «2 cambios sin guardar en General, Papelera» con **Descartar** y **Guardar cambios**, que guarda todas las secciones juntas (también con Ctrl+S). Si algo está mal, el campo queda marcado y no se guarda nada. Si te vas de la pantalla o cerrás la pestaña con cambios sin guardar, te avisa. «Borrar» una clave guardada también espera a que guardes.
+- **Copias de seguridad** apagadas o sin ninguna copia: el aviso y **Activar con lo recomendado** (todos los días a las 03:30, 14 diarias y 12 mensuales), que queda en la barra para guardar.
+- **Probar** queda abajo de cada sección con el último resultado y cuándo fue.
+- En el **celular**, la lista de secciones con lo pendiente arriba; cada sección se abre en su pantalla, con «‹ Configuración» para volver.
+
+### API
+
+- `GET /api/buscar?q=` (lectura): comprobantes, proveedores, lotes y, para quien configura, ajustes; con `limite` por grupo y `desde`. Ver docs/API.md.
+- `PUT /api/configuracion` dice en un error de validación de qué campo es (`campo`).
+
 ## [0.10.0] - 2026-11-27
 
 ### Libro IVA Digital: ventas e importaciones

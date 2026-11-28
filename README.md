@@ -123,6 +123,10 @@ Las compras, las ventas y las importaciones de un cliente en un mes, listas para
 
 El diseño de registro, las fuentes oficiales de ARCA y lo que no se pudo confirmar están en [docs/libro-iva-digital.md](docs/libro-iva-digital.md).
 
+## Buscar
+
+Arriba, en el centro de todas las pantallas, el buscador (**Ctrl+K**, o **Cmd+K** en Mac; en el celular, la lupa). Busca a la vez comprobantes (por número, CUIT del emisor o del cliente, razón social o importe), proveedores con cuántos comprobantes tienen, lotes, ajustes de la configuración (lleva a la sección y resalta el campo) y acciones (Cargar facturas, Libro IVA Digital, Nueva persona...). Se maneja con el teclado: flechas, Enter y Esc. Cada uno ve solo lo de sus clientes, nada de la papelera, y los ajustes solo quien configura. Por API, `GET /api/buscar?q=`.
+
 ## Velocidad
 
 Medido en 4 núcleos, sin IA:
@@ -179,7 +183,7 @@ No necesita base de datos. Usa todos los núcleos.
 
 ## Configuración
 
-Hacen falta solo tres variables de entorno; todo lo demás se configura desde la pantalla **Configuración** (superadmin), con un botón **Probar** por sección y el paso a paso de cada una. Al guardar, se aplica sin reiniciar (Arcanum, el modelo de visión, el almacén, Telegram, WhatsApp, el webhook y el correo).
+Hacen falta solo tres variables de entorno; todo lo demás se configura desde la pantalla **Configuración** (superadmin). Arriba dice cuántas secciones están listas y deja ver solo las **Pendientes**; a la izquierda, el índice por grupos (Instalación, Suite Escriba, Correo, Canales, Inteligencia, Datos) con el estado de cada una: **lista**, **falta configurar** (con el motivo) o **apagada**, porque es opcional (Lockatus, Telegram, WhatsApp, Webhook, Clientes y canales, IA, R2 y los avisos; el correo entrante, si se apaga a propósito). Cada sección tiene **Probar** y una **Guía** con el paso a paso. Hay un solo guardado: la barra de abajo junta los cambios de todas las secciones y los guarda juntos (si uno está mal, lo marca y no guarda nada); al salir con cambios sin guardar, avisa. Al guardar, se aplica sin reiniciar (Arcanum, el modelo de visión, el almacén, Telegram, WhatsApp, el webhook y el correo). En el celular, cada sección se abre en su pantalla.
 
 | Variable | Para qué |
 |---|---|
@@ -308,7 +312,7 @@ También hay `factorum copia`, que hace una copia en el momento (por ejemplo, an
 - **Scopes**: `openid profile email`. Factorum reconoce a cada persona por su **email verificado**: si Lockatus no lo manda, o lo manda con `email_verified: false`, no entra.
 - **Rol**: mandá el rol de la persona para Factorum en el claim `role` del `id_token`: `superadmin`, `admin`, `usuario` (u `operador`) o `lectura`. Puede ser una palabra, varias o una lista; gana la de más permisos. Con otro nombre (o anidado, como `realm_access.roles`), ponelo en «Claim del rol».
 
-**2. En Factorum**, Configuración, **Lockatus (inicio de sesión único)** (superadmin): el emisor (la URL de Lockatus, tal como la publica en `/.well-known/openid-configuration`), el client ID y el client secret (queda cifrado). **Probar** lee el discovery y las claves. Al guardar se aplica sin reiniciar. También se puede fijar todo por el entorno (`FACTORUM_OIDC_*`, ver [.env.example](.env.example)). Hace falta la URL pública.
+**2. En Factorum**, Configuración, **Lockatus** (superadmin): el emisor (la URL de Lockatus, tal como la publica en `/.well-known/openid-configuration`), el client ID y el client secret (queda cifrado). **Probar** lee el discovery y las claves. Al guardar se aplica sin reiniciar. También se puede fijar todo por el entorno (`FACTORUM_OIDC_*`, ver [.env.example](.env.example)). Hace falta la URL pública.
 
 **Quién entra y con qué rol:**
 

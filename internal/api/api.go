@@ -223,6 +223,7 @@ func (s *Server) Handler() http.Handler {
 	m.HandleFunc("GET /api/libro-iva", s.auth(usu, s.libroIVA))
 	m.HandleFunc("GET /api/libro-iva/archivos.zip", s.auth(usu, s.libroIVAZip))
 	m.HandleFunc("GET /api/panel", s.auth(lect, s.panel))
+	m.HandleFunc("GET /api/buscar", s.auth(lect, s.buscar))
 	m.HandleFunc("GET /api/novedades", s.novedades)
 	m.HandleFunc("GET /api/rubros", s.auth(lect, s.rubros))
 	m.HandleFunc("GET /api/canales", s.auth(lect, s.canales))

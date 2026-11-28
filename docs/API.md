@@ -227,6 +227,29 @@ Las notas de crédito restan y los comprobantes en moneda extranjera no se suman
 
 `GET /api/novedades` (sin clave) devuelve las versiones del CHANGELOG, de la más nueva a la más vieja: `{ "ok": true, "novedades": [{ "version", "fecha", "cuerpo" }] }`.
 
+## Buscar
+
+`GET /api/buscar?q=texto` (lectura) es el buscador de la cabecera (Ctrl+K). Busca a la vez:
+
+- **Comprobantes**, por número (`0003-00045678`, `3-45678` o solo `45678`), CUIT del emisor o del cliente (con guiones o sin ellos, entero o el principio), razón social del emisor (un pedazo, sin distinguir mayúsculas), número de despacho e importe (`44.062,50`, `$ 44062,5` o `44062.50`; las notas de crédito también).
+- **Proveedores**: los emisores que coinciden, con cuántos comprobantes tienen y la fecha del último.
+- **Lotes**, por nombre, por número (`12`, `#12` o `lote 12`) o por el CUIT del cliente.
+- **Ajustes**: las secciones y los campos de la configuración por su título (o por la variable de entorno). Solo para quien entra a Configuración con sesión, y solo de lo que ve: un superadmin, todo; un admin, Clientes y canales. Una clave de API nunca recibe ajustes.
+
+Respeta el alcance de quien busca (solo sus clientes) y deja afuera lo de la papelera. Hacen falta al menos 2 caracteres. Opcionales: `limite` (por grupo, 5 si no va, hasta 20) y `desde` (AAAA-MM-DD: solo comprobantes con fecha desde ese día).
+
+```json
+{ "ok": true, "q": "trebol",
+  "comprobantes": [ { "id": 12, "lote_id": 3, "cliente_cuit": "20222222223", "tipo": 6, "punto_venta": 3, "numero": 45678, "fecha": "2026-11-22",
+      "cuit_emisor": "30708888881", "razon_social_emisor": "EL TREBOL S.R.L.", "total": "44062.50", "moneda": "PES", "estado": "ok", "es_tique": false } ],
+  "total_comprobantes": 7,
+  "proveedores": [ { "cuit": "30708888881", "razon_social": "EL TREBOL S.R.L.", "comprobantes": 7, "ultimo": "2026-11-25" } ], "total_proveedores": 1,
+  "lotes": [], "total_lotes": 0,
+  "ajustes": [ { "seccion": "copias", "seccion_titulo": "Copias de seguridad", "clave": "copias.hora", "titulo": "Hora (Buenos Aires)", "detalle": "FACTORUM_COPIAS_HORA" } ] }
+```
+
+Los `total_*` cuentan todo lo que coincide, no solo lo que vuelve. Un ajuste sin `clave` es la sección entera.
+
 ## Conciliación con ARCA
 
 Cruza lo cargado de un cliente con lo que ARCA dice que ese CUIT **recibió** (Mis Comprobantes, que baja Arcanum). Necesita Arcanum 2.3.0 o superior conectado, con una clave que tenga ese CUIT (alcanza con rol lectura en Arcanum).
@@ -492,7 +515,7 @@ Una IA (visión) externa no se usa hasta que un superadmin acepta su aviso para 
 ## Configuración (con sesión)
 
 - `GET /api/configuracion` (admin) → `{ campos, secciones, canales, url_publica, webhook_entrada }`. Un superadmin ve todas las secciones (`general`, `arcanum`, `lockatus`, `telegram`, `whatsapp`, `webhook`, `correo_entrada`, `correo_salida`, `avisos`, `ia`, `r2`, `copias`, `papelera`, `clientes`) y además `correo: { urls, estado, smtp, google: { conectado, cuenta, fijado } }` (las URLs para cada servicio, sin tokens) y `lockatus: { redirect, listo, solo, login_local, sesion_lockatus }` (la Redirect URI para registrar en Lockatus, si se puede entrar, si solo se entra así, si está la salida de emergencia y si la sesión de quien mira se abrió con Lockatus) e `ia_aviso` (como `GET /api/ia/aviso`) e `ia: { proveedores, recomendados, prueba, proveedor, region }` (los proveedores con su URL, si piden clave y dónde se saca; el proveedor elegido o, si no se eligió nunca, el que sale de la URL); un admin, solo `clientes`. Al guardar, el proveedor y la URL tienen que ir juntos (`400` si no) y, si cambia el host sin una clave nueva o se elige Ollama, la clave guardada se borra. Los campos de tipo `opcion` traen `opciones: [ { valor, etiqueta } ]` y los `entero`, `min` y `max`. Cada campo: `{ clave, seccion, etiqueta, tipo, env, ayuda, ejemplo, valor, configurado, ultimos, bloqueado, origen, actualizado_por, actualizado }`. Un secreto nunca trae `valor`: solo `configurado` y, si es largo, `ultimos` (los últimos 4 caracteres).
-- `PUT /api/configuracion` `{ cambios: { "telegram.token": "...", "telegram.permitidos": ["1","2"], "general.url_publica": null } }` → la vista nueva más `cambiadas`. `null` borra lo guardado (vuelve al entorno o al valor de fábrica); un secreto `""` no se toca. Un campo fijado por una variable de entorno da `409`; un valor inválido, `400`. Al guardar se reconfiguran sin reiniciar Arcanum, Lockatus, el modelo de visión, el almacén y los canales. Prender `lockatus.solo` desde una sesión que no se abrió con Lockatus da `409` (para no quedar afuera). Guardar una IA externa sin `aceptar_aviso_ia` da `409` (ver [Aviso de la IA](#aviso-de-la-ia-externa)).
+- `PUT /api/configuracion` `{ cambios: { "telegram.token": "...", "telegram.permitidos": ["1","2"], "general.url_publica": null } }` → la vista nueva más `cambiadas`. `null` borra lo guardado (vuelve al entorno o al valor de fábrica); un secreto `""` no se toca. Un campo fijado por una variable de entorno da `409`; un valor inválido, `400` con `campo` (la clave del que está mal, para marcarlo en la pantalla; vacío si el problema es de varios juntos). Con un error no se guarda nada: se pueden mandar los cambios de varias secciones juntos. Al guardar se reconfiguran sin reiniciar Arcanum, Lockatus, el modelo de visión, el almacén y los canales. Prender `lockatus.solo` desde una sesión que no se abrió con Lockatus da `409` (para no quedar afuera). Guardar una IA externa sin `aceptar_aviso_ia` da `409` (ver [Aviso de la IA](#aviso-de-la-ia-externa)).
 - `POST /api/configuracion/probar/{seccion}` (superadmin) `{ cambios }` → `{ exito, mensaje }`. Prueba con lo que está en pantalla, sin guardar: `general` (la URL pública responde), `arcanum` (`/api/health` y `/api/tenants`), `lockatus` (lee el discovery del emisor, controla que tenga los endpoints de autorización, token y claves, PKCE S256 y RS256 o ES256, y lee el JWKS), `telegram` (`getMe`), `webhook` (un aviso firmado a la URL de salida), `ia` (le manda el ticket de prueba al modelo y devuelve además `segundos`, `modelo` y `leido: [ { campo, valor, esperado, bien } ]`; si es una IA externa sin el aviso aceptado para ese host, `409` con `codigo: aviso_ia` y el aviso, hasta que el pedido traiga `aceptar_aviso_ia: { host, version }`, que no deja nada aceptado y queda en la auditoría como `ia.aviso_aceptado_prueba`), `r2` (pone y borra un objeto), `correo_entrada` (IMAP: entra y cuenta los mensajes de la carpeta; Gmail: la cuenta y la etiqueta; Cloudflare y proveedores: que la URL pública responda y el secreto esté) y `correo_salida` (con `destino` en el cuerpo, manda un mail de prueba; sin él, solo entra).
 
 | Clave | Variable | Tipo |

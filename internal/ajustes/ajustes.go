@@ -591,7 +591,9 @@ func normalizarJSON(b []byte) []byte {
 
 // decodificar lee y valida el valor de un campo.
 func decodificar(c Campo, raw json.RawMessage) (any, error) {
-	mal := func(msg string) error { return fmt.Errorf("%w: %s: %s", ErrInvalido, c.Etiqueta, msg) }
+	mal := func(msg string) error {
+		return &ErrorCampo{Clave: c.Clave, Err: fmt.Errorf("%w: %s: %s", ErrInvalido, c.Etiqueta, msg)}
+	}
 	switch c.Tipo {
 	case Texto, Secreto, URL, CUIT:
 		var v string
@@ -684,7 +686,7 @@ func decodificar(c Campo, raw json.RawMessage) (any, error) {
 		}
 		return nil, mal("tiene que ser " + strings.Join(ops, ", "))
 	case Emails:
-		l, err := decodificar(Campo{Tipo: Lista, Etiqueta: c.Etiqueta}, raw)
+		l, err := decodificar(Campo{Tipo: Lista, Etiqueta: c.Etiqueta, Clave: c.Clave}, raw)
 		if err != nil {
 			return nil, err
 		}

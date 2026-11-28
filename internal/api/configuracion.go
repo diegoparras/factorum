@@ -122,7 +122,9 @@ func (s *Server) guardarConfiguracion(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusConflict, capital(err.Error()))
 		return
 	case errors.Is(err, ajustes.ErrInvalido):
-		jsonErr(w, http.StatusBadRequest, capital(strings.TrimPrefix(err.Error(), ajustes.ErrInvalido.Error()+": ")))
+		// campo: la clave del que está mal, para que la pantalla lo marque ("" si son varios).
+		jsonCrudo(w, http.StatusBadRequest, map[string]any{"ok": false, "error": capital(strings.TrimPrefix(err.Error(), ajustes.ErrInvalido.Error()+": ")),
+			"campo": ajustes.CampoDelError(err)})
 		return
 	case err != nil:
 		s.fallo(w, err)

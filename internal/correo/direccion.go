@@ -44,3 +44,22 @@ func errRemitente(s string) error {
 type errTexto struct{ s string }
 
 func (e *errTexto) Error() string { return e.s }
+
+// claveApp: una contraseña de aplicación como la muestra Google, en cuatro grupos de cuatro
+// letras ("abcd efgh ijkl mnop"), con espacios comunes o duros entre los grupos.
+var claveApp = regexp.MustCompile(`^[A-Za-z]{4}(?:[\s\x{00a0}]+[A-Za-z]{4}){3}$`)
+
+// ClaveAplicacion le saca los espacios a una contraseña de aplicación copiada con el formato de
+// Google. Cualquier otra clave queda igual (salvo los espacios de las puntas).
+func ClaveAplicacion(s string) string {
+	s = strings.TrimSpace(s)
+	if !claveApp.MatchString(s) {
+		return s
+	}
+	return strings.Map(func(r rune) rune {
+		if r == ' ' || r == ' ' || r == '\t' || r == '\n' || r == '\r' {
+			return -1
+		}
+		return r
+	}, s)
+}

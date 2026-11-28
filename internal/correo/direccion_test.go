@@ -25,3 +25,18 @@ func TestProblemaDireccion(t *testing.T) {
 		t.Fatalf("Conectar: %v", err)
 	}
 }
+
+func TestClaveAplicacion(t *testing.T) {
+	for _, c := range []struct{ en, sale string }{
+		{"abcd efgh ijkl mnop", "abcdefghijklmnop"},
+		{"  abcd  efgh ijkl mnop \n", "abcdefghijklmnop"},
+		{"abcdefghijklmnop", "abcdefghijklmnop"},
+		{"mi clave con espacios", "mi clave con espacios"}, // no es de aplicación: queda igual
+		{"re_ABC123 xyz", "re_ABC123 xyz"},
+		{"abcd efgh ijkl", "abcd efgh ijkl"},
+	} {
+		if got := ClaveAplicacion(c.en); got != c.sale {
+			t.Errorf("%q: %q, quería %q", c.en, got, c.sale)
+		}
+	}
+}

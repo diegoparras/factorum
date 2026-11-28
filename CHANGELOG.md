@@ -2,6 +2,12 @@
 
 Cada versión publicada tiene su sección. La imagen Docker toma la versión de la primera.
 
+## [0.11.2] - 2026-11-28
+
+### Arreglos
+
+- **Contraseñas de aplicación con espacios**: Google las muestra en cuatro grupos («abcd efgh ijkl mnop»). Si la pegás así en el correo entrante o el saliente, Factorum le saca los espacios al guardarla y al usarla. Cualquier otra clave queda tal cual.
+
 ## [0.11.1] - 2026-11-28
 
 ### Arreglos

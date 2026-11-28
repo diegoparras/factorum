@@ -69,6 +69,8 @@ type Campo struct {
 	Dominios bool          `json:"dominios,omitempty"` // emails: también acepta @dominio
 	// Direccion: un remitente o una dirección ("Nombre <mail>" o "mail"): se valida al guardar.
 	Direccion bool `json:"-"`
+	// ClaveApp: una contraseña que puede ser de aplicación: se guarda sin los espacios de Google.
+	ClaveApp bool `json:"-"`
 	// Interno: lo guarda Factorum (por ejemplo, el permiso de Google), no la pantalla.
 	Interno bool `json:"-"`
 
@@ -606,6 +608,9 @@ func decodificar(c Campo, raw json.RawMessage) (any, error) {
 		v = strings.TrimSpace(v)
 		if len(v) > 4096 {
 			return nil, mal("es demasiado largo")
+		}
+		if c.ClaveApp {
+			v = correo.ClaveAplicacion(v)
 		}
 		if c.Direccion {
 			if p := correo.ProblemaDireccion(v); p != "" {

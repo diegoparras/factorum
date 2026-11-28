@@ -120,7 +120,7 @@ func (b IMAP) conectar(ctx context.Context) (*imapclient.Client, func(), error) 
 		cerrar()
 		return nil, nil, fmt.Errorf("el servidor %s no saludó bien: %s", addr, ErrorDeRed(err))
 	}
-	if err := c.Login(b.Usuario, b.Clave).Wait(); err != nil {
+	if err := c.Login(strings.TrimSpace(b.Usuario), ClaveAplicacion(b.Clave)).Wait(); err != nil {
 		cerrar()
 		var ie *imap.Error
 		if errors.As(err, &ie) {

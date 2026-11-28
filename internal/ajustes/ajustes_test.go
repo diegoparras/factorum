@@ -142,3 +142,21 @@ func TestDecodificarDireccion(t *testing.T) {
 		}
 	}
 }
+
+// Las contraseñas de correo pegadas como las muestra Google se guardan sin espacios.
+func TestDecodificarClaveApp(t *testing.T) {
+	for _, k := range []string{"imap.clave", "smtp.clave"} {
+		c, ok := CampoPorClave(k)
+		if !ok {
+			t.Fatalf("falta %s", k)
+		}
+		v, err := decodificar(c, json.RawMessage(`"abcd efgh ijkl mnop "`))
+		if err != nil || v != "abcdefghijklmnop" {
+			t.Errorf("%s: %v %v", k, v, err)
+		}
+		v, _ = decodificar(c, json.RawMessage(`"una clave larga con espacios"`))
+		if v != "una clave larga con espacios" {
+			t.Errorf("%s: no tenía que tocar otra clave: %v", k, v)
+		}
+	}
+}

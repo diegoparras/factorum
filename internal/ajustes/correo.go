@@ -54,7 +54,9 @@ func camposCorreo(add func(Campo)) {
 	g, s = texto(func(c *config.Config) *string { return &c.IMAPUsuario })
 	add(campo("imap.usuario", ce, "Usuario", Texto, "FACTORUM_IMAP_USUARIO", "Casi siempre, el email entero.", "facturas@estudio.com.ar", g, s))
 	g, s = texto(func(c *config.Config) *string { return &c.IMAPClave })
-	add(campo("imap.clave", ce, "Contraseña", Secreto, "FACTORUM_IMAP_CLAVE", "En Gmail y Microsoft 365, una contraseña de aplicación (no la de siempre).", "", g, s))
+	ic := campo("imap.clave", ce, "Contraseña", Secreto, "FACTORUM_IMAP_CLAVE", "En Gmail y Microsoft 365, una contraseña de aplicación (no la de siempre). Si la pegás con los espacios de Google, Factorum los saca.", "", g, s)
+	ic.ClaveApp = true
+	add(ic)
 	g, s = texto(func(c *config.Config) *string { return &c.IMAPCarpeta })
 	add(campo("imap.carpeta", ce, "Carpeta", Texto, "FACTORUM_IMAP_CARPETA", "Factorum mira los mails sin leer de esta carpeta.", "INBOX", g, s))
 	g, s = entero(func(c *config.Config) *int { return &c.IMAPIntervalo })
@@ -112,7 +114,9 @@ func camposCorreo(add func(Campo)) {
 	g, s = texto(func(c *config.Config) *string { return &c.SMTPUsuario })
 	add(campo("smtp.usuario", cs, "Usuario", Texto, "FACTORUM_SMTP_USUARIO", "Vacío si el servidor no pide usuario.", "facturas@estudio.com.ar", g, s))
 	g, s = texto(func(c *config.Config) *string { return &c.SMTPClave })
-	add(campo("smtp.clave", cs, "Contraseña", Secreto, "FACTORUM_SMTP_CLAVE", "En Gmail y Microsoft 365, una contraseña de aplicación; en un servicio transaccional, su clave de API o de SMTP.", "", g, s))
+	sc := campo("smtp.clave", cs, "Contraseña", Secreto, "FACTORUM_SMTP_CLAVE", "En Gmail y Microsoft 365, una contraseña de aplicación (si la pegás con los espacios de Google, Factorum los saca); en un servicio transaccional, su clave de API o de SMTP.", "", g, s)
+	sc.ClaveApp = true
+	add(sc)
 	g, s = texto(func(c *config.Config) *string { return &c.SMTPRemitente })
 	rem := campo("smtp.remitente", cs, "Remitente", Texto, "FACTORUM_SMTP_REMITENTE", "Nombre y dirección, con la dirección entre < >: Factorum <facturas@estudio.com.ar>. El dominio tiene que estar autorizado en el servidor (SPF y DKIM).", "Factorum <facturas@estudio.com.ar>", g, s)
 	rem.Direccion = true

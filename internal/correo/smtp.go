@@ -145,9 +145,9 @@ func (s SMTP) Conectar(ctx context.Context) (*Conexion, error) {
 		var a sasl.Client
 		switch {
 		case c.SupportsAuth("PLAIN"):
-			a = sasl.NewPlainClient("", s.Usuario, s.Clave)
+			a = sasl.NewPlainClient("", s.Usuario, ClaveAplicacion(s.Clave))
 		case c.SupportsAuth("LOGIN"):
-			a = sasl.NewLoginClient(s.Usuario, s.Clave)
+			a = sasl.NewLoginClient(s.Usuario, ClaveAplicacion(s.Clave))
 		default:
 			return falla(errors.New("el servidor no ofrece entrar con usuario y contraseña (AUTH PLAIN o LOGIN)"))
 		}
